@@ -178,7 +178,7 @@ class GUIApp(ctk.CTk):
         self.sb_frame = ctk.CTkFrame(self, corner_radius=15, fg_color=("gray85", "gray17"))
         self.sb_frame.pack(fill="x", padx=20, pady=10)
         
-        self.btn_import = ctk.CTkButton(self.sb_frame, text="📥 Import SimBrief Flight Plan", 
+        self.btn_import = ctk.CTkButton(self.sb_frame, text="Import SimBrief Flight Plan", 
                                         font=ctk.CTkFont(size=16, weight="bold"), height=50,
                                         command=self.fetch_simbrief)
         self.btn_import.pack(fill="x", padx=20, pady=20)
@@ -206,7 +206,7 @@ class GUIApp(ctk.CTk):
             self.show_settings()
             return
             
-        self.btn_import.configure(text="⏳ Importing...", state="disabled")
+        self.btn_import.configure(text="Importing...", state="disabled")
         self.update()
         
         try:
@@ -215,7 +215,7 @@ class GUIApp(ctk.CTk):
         except Exception as e:
             messagebox.showerror("Simbrief Error", f"Unable to fetch flight plan.\nCheck your ID.\n{str(e)}")
         finally:
-            self.btn_import.configure(text="📥 Import SimBrief Flight Plan", state="normal")
+            self.btn_import.configure(text="Import SimBrief Flight Plan", state="normal")
 
     def render_results(self, result):
         for widget in self.results_frame.winfo_children():
@@ -260,10 +260,10 @@ class GUIApp(ctk.CTk):
                     gateText = "Stand " + gateText
                     
                 color = "#374151" if airport_data.get('osm') else "#059669"
-                ctk.CTkLabel(t_frame, text=f"✅ {gateText}", fg_color=color, corner_radius=5, padx=15, pady=8, font=ctk.CTkFont(size=14, weight="bold")).pack(side="left", padx=5)
+                ctk.CTkLabel(t_frame, text=f"{gateText}", fg_color=color, corner_radius=5, padx=15, pady=8, font=ctk.CTkFont(size=14, weight="bold")).pack(side="left", padx=5)
 
-        render_section("🛫 DEPARTURE", result.get('departure'))
-        render_section("🛬 ARRIVAL", result.get('arrival'))
+        render_section("DEPARTURE", result.get('departure'))
+        render_section("ARRIVAL", result.get('arrival'))
         
         self.update_idletasks()
         req_height = min(self.winfo_reqheight() + 50, 950)
