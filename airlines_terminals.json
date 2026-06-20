@@ -1,8 +1,15 @@
 {
   "LFPO": {
-    "TVF": ["Terminal G", "Terminal E"],
-    "CCM": ["Terminal R", "Terminal E"],
-    "AFR": ["Terminal M", "Terminal U"],
-    "EZY": ["Terminal T", "Terminal V"]
+    "mapping": {
+      "Orly 1": ["Terminal A", "Terminal B"],
+      "Orly 2": ["Terminal C"],
+      "Orly 3": ["Terminal T", "Terminal U", "Terminal M", "Terminal G", "Terminal E"],
+      "Orly 4": ["Terminal R", "Terminal F"]
+    },
+    "rules": {
+      "TVF": ["Orly 3"],
+      "AFR": ["Orly 1", "Orly 2", "Orly 3"],
+      "CCM": ["Orly 3", "Orly 4"]
+    }
   }
 }

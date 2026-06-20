@@ -266,14 +266,31 @@ class GateFinderBackend:
                 if g['name'] not in existing_names:
                     all_gates.append(g)
             
-            cloud_rules = self.cloud_ruleset.get(icao, {}).get(airline, [])
+            airport_cloud_data = self.cloud_ruleset.get(icao, {})
+            cloud_rules = []
+            mapping = {}
+            if "rules" in airport_cloud_data:
+                cloud_rules = airport_cloud_data["rules"].get(airline, [])
+                mapping = airport_cloud_data.get("mapping", {})
+            else:
+                cloud_rules = airport_cloud_data.get(airline, [])
             
             compatible_gates = []
             for g in all_gates:
                 if g['wingspan'] >= wingspan:
                     t = get_terminal(g['name'])
-                    if cloud_rules and t not in cloud_rules:
-                        continue
+                    if cloud_rules:
+                        matched_real_terminals = []
+                        for real_term, aliases in mapping.items():
+                            if t in aliases:
+                                matched_real_terminals.append(real_term)
+                        
+                        if mapping:
+                            if not any(rt in cloud_rules for rt in matched_real_terminals):
+                                continue
+                        else:
+                            if t not in cloud_rules:
+                                continue
                     compatible_gates.append(g['name'])
                     
             if not compatible_gates:
