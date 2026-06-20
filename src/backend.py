@@ -90,7 +90,8 @@ class GateFinderBackend:
                             except ValueError:
                                 pass
 
-                        gate_info = {'name': name, 'wingspan': wingspan}
+                        term_explicit = parser[section].get('name', '').strip()
+                        gate_info = {'name': name, 'wingspan': wingspan, 'terminal': term_explicit}
                         
                         if airlines:
                             for a in airlines:
@@ -265,6 +266,7 @@ out center tags;"""
                     selected_gate = random.choice(osm_gates)
                     res["osm"] = True
                     res["gate"] = selected_gate
+                    res["terminal"] = get_terminal(selected_gate)
                 else:
                     err_msg = f"No gates found (GSX or Internet). [{osm_error}]" if osm_error else "No gates found (GSX or Internet)."
                     res["error"] = err_msg
@@ -324,6 +326,7 @@ out center tags;"""
             top_gates = unique_gates[:5]
             selected_gate = random.choice(top_gates)
             res["gate"] = selected_gate['name']
+            res["terminal"] = selected_gate.get('terminal') or get_terminal(selected_gate['name'])
             return res
 
         al_name = self.airline_names.get(airline, '')
@@ -447,8 +450,6 @@ out center tags;"""
                 parsed = urlparse(self.path)
                 if self.path == '/api/current':
                     self.send_response(200)
-                    self.send_header('Content-type', 'application/json')
-                    self.send_header('Access-Control-Allow-Origin', '*')
                     self.end_headers()
                     if APIHandler.backend_instance.current_flight_data:
                         self.wfile.write(json.dumps(APIHandler.backend_instance.current_flight_data).encode())

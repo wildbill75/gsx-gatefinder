@@ -2,7 +2,7 @@ import os
 import shutil
 import json
 
-base_dir = r"D:\GateFinder_New\MSFS_Package\bertrand-gsx-gatefinder"
+base_dir = r"D:\GateFinder_New\MSFS_Package\wildbill75-gsx-gatefinder"
 if os.path.exists(base_dir):
     shutil.rmtree(base_dir)
 
@@ -14,7 +14,7 @@ manifest = {
   "content_type": "UI",
   "title": "GSX Gate Finder",
   "manufacturer": "",
-  "creator": "Bertrand",
+  "creator": "wildbill75",
   "package_version": "2.2.0",
   "minimum_game_version": "1.0.0",
   "release_notes": {
@@ -39,10 +39,10 @@ html_dir = os.path.join(base_dir, "html_UI", "ingamePanels", "CustomPanel")
 os.makedirs(html_dir)
 
 # Read the HTML, CSS, JS from the old V2 package
-old_base = r"D:\GateFinder\MSFS_Package\bertrand-gsx-gatefinder"
-old_html = r"D:\GateFinder\MSFS_Package\bertrand-gsx-gatefinder\html_ui\InGamePanels\GSXGateFinder\GSXGateFinder.html"
-old_css = r"D:\GateFinder\MSFS_Package\bertrand-gsx-gatefinder\html_ui\InGamePanels\GSXGateFinder\GSXGateFinder.css"
-old_js = r"D:\GateFinder\MSFS_Package\bertrand-gsx-gatefinder\html_ui\InGamePanels\GSXGateFinder\GSXGateFinder.js"
+old_base = r"D:\GateFinder\MSFS_Package\wildbill75-gsx-gatefinder"
+old_html = r"D:\GateFinder\MSFS_Package\wildbill75-gsx-gatefinder\html_ui\InGamePanels\GSXGateFinder\GSXGateFinder.html"
+old_css = r"D:\GateFinder\MSFS_Package\wildbill75-gsx-gatefinder\html_ui\InGamePanels\GSXGateFinder\GSXGateFinder.css"
+old_js = r"D:\GateFinder\MSFS_Package\wildbill75-gsx-gatefinder\html_ui\InGamePanels\GSXGateFinder\GSXGateFinder.js"
 
 # Copy them, but rename them to CustomPanel.html, CustomPanel.css, CustomPanel.js
 with open(old_html, "r", encoding="utf-8") as f:
@@ -93,4 +93,4 @@ layout = {"content": layout_entries}
 with open(os.path.join(base_dir, "layout.json"), "w") as f:
     json.dump(layout, f, indent=2)
 
-print("Hack MSFS Panel Built successfully in D:\\GateFinder_New\\MSFS_Package\\bertrand-gsx-gatefinder")
+print("Hack MSFS Panel Built successfully in D:\\GateFinder_New\\MSFS_Package\\wildbill75-gsx-gatefinder")

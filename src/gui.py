@@ -179,7 +179,7 @@ class GUIApp(ctk.CTk):
         self.sb_frame.pack(fill="x", padx=20, pady=10)
         
         self.btn_import = ctk.CTkButton(self.sb_frame, text="Import SimBrief Flight Plan", 
-                                        font=ctk.CTkFont(size=16, weight="bold"), height=50,
+                                        font=ctk.CTkFont(size=20, weight="bold"), height=60,
                                         command=self.fetch_simbrief)
         self.btn_import.pack(fill="x", padx=20, pady=20)
         
@@ -227,12 +227,12 @@ class GUIApp(ctk.CTk):
         ac_badge = ctk.CTkFrame(header_frame, corner_radius=10, fg_color="#1E3A8A")
         ac_badge.pack(side="left", padx=(0, 10), fill="x", expand=True)
         ctk.CTkLabel(ac_badge, text=f"{result['aircraft']}", 
-                     font=ctk.CTkFont(size=18, weight="bold"), text_color="white").pack(padx=20, pady=10)
+                     font=ctk.CTkFont(size=24, weight="bold"), text_color="white").pack(padx=20, pady=15)
                      
         al_badge = ctk.CTkFrame(header_frame, corner_radius=10, fg_color="#1E3A8A")
         al_badge.pack(side="left", fill="x", expand=True)
         ctk.CTkLabel(al_badge, text=f"{result['airline']}", 
-                     font=ctk.CTkFont(size=18, weight="bold"), text_color="white").pack(padx=20, pady=10)
+                     font=ctk.CTkFont(size=24, weight="bold"), text_color="white").pack(padx=20, pady=15)
 
         def render_section(title, airport_data):
             if not airport_data: return
@@ -244,23 +244,26 @@ class GUIApp(ctk.CTk):
             if airport_data['name']:
                 title_text += f" ({airport_data['name']})"
                 
-            ctk.CTkLabel(section_frame, text=title_text, font=ctk.CTkFont(size=15, weight="bold")).pack(anchor="w", padx=15, pady=(10, 5))
+            ctk.CTkLabel(section_frame, text=title_text, font=ctk.CTkFont(size=20, weight="bold")).pack(anchor="w", padx=15, pady=(15, 10))
             
             if airport_data.get('error'):
                 color = "#F59E0B" if airport_data['osm'] else "#EF4444"
                 msg = "🌐 GSX Profile not found. Fallback results (OSM):" if airport_data['osm'] else airport_data['error']
-                ctk.CTkLabel(section_frame, text=msg, text_color=color).pack(anchor="w", padx=15, pady=(0, 10))
+                ctk.CTkLabel(section_frame, text=msg, text_color=color, font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w", padx=15, pady=(0, 10))
             
             if airport_data.get('gate'):
                 t_frame = ctk.CTkFrame(section_frame, fg_color="transparent")
-                t_frame.pack(fill="x", padx=15, pady=5)
+                t_frame.pack(fill="x", padx=15, pady=(5, 15))
+                
+                if airport_data.get('terminal'):
+                    ctk.CTkLabel(t_frame, text=airport_data['terminal'], font=ctk.CTkFont(size=20, weight="bold")).pack(side="left", padx=(0, 15))
                 
                 gateText = airport_data['gate']
                 if airport_data.get('osm'):
                     gateText = "Stand " + gateText
                     
                 color = "#374151" if airport_data.get('osm') else "#059669"
-                ctk.CTkLabel(t_frame, text=f"{gateText}", fg_color=color, corner_radius=5, padx=15, pady=8, font=ctk.CTkFont(size=14, weight="bold")).pack(side="left", padx=5)
+                ctk.CTkLabel(t_frame, text=f"{gateText}", fg_color=color, corner_radius=5, padx=20, pady=10, font=ctk.CTkFont(size=20, weight="bold")).pack(side="left")
 
         render_section("DEPARTURE", result.get('departure'))
         render_section("ARRIVAL", result.get('arrival'))

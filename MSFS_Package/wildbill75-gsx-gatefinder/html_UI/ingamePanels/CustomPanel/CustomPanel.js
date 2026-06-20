@@ -9,8 +9,10 @@ class GSXGateFinderPanel extends TemplateElement {
         let self = this;
         setTimeout(() => {
             try {
-                let uiTitle = self.querySelector('.ingameUiTitle');
-                if (uiTitle) uiTitle.innerText = "GSX GATE FINDER V1.0";
+                self.setAttribute("title", "GSX Gatefinder V1.0");
+                let titleEl = self.querySelector('.ingameUiTitle') || self.querySelector('.window-title') || document.querySelector('.window-title');
+                if (titleEl) titleEl.innerText = "GSX Gatefinder V1.0";
+                window.document.title = "GSX Gatefinder V1.0";
             } catch(e) {}
             self.init();
         }, 500);
@@ -98,6 +100,13 @@ class GSXGateFinderPanel extends TemplateElement {
         if(aptData.gate) {
             let row = document.createElement("div");
             row.className = "term-row";
+            
+            if(aptData.terminal) {
+                let tName = document.createElement("div");
+                tName.className = "term-name";
+                tName.innerText = aptData.terminal;
+                row.appendChild(tName);
+            }
             
             let gBadge = document.createElement("div");
             gBadge.className = "gate-badge" + (aptData.osm ? " osm" : "");

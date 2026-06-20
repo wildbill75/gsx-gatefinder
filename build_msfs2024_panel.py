@@ -2,7 +2,7 @@ import os
 import shutil
 import subprocess
 
-base_dir = r"D:\GateFinder_New\MSFS_Package\bertrand-gsx-gatefinder-compiled"
+base_dir = r"D:\GateFinder_New\MSFS_Package\wildbill75-gsx-gatefinder-compiled"
 if os.path.exists(base_dir):
     shutil.rmtree(base_dir)
 
@@ -19,25 +19,25 @@ pkg_sources_dir = os.path.join(base_dir, "PackageSources")
 os.makedirs(pkg_sources_dir)
 
 # 1. Main Project XML
-project_xml = """<Project Version="2" Name="bertrand-gsx-gatefinder" FolderName="Packages">
+project_xml = """<Project Version="2" Name="wildbill75-gsx-gatefinder" FolderName="Packages">
 	<OutputDirectory>.</OutputDirectory>
 	<TemporaryOutputDirectory>_Temp</TemporaryOutputDirectory>
 	<Packages>
-		<Package>PackageDefinitions\\bertrand-gsx-gatefinder.xml</Package>
+		<Package>PackageDefinitions\\wildbill75-gsx-gatefinder.xml</Package>
 	</Packages>
 </Project>"""
-with open(os.path.join(base_dir, "bertrand-gsx-gatefinder.xml"), "w") as f:
+with open(os.path.join(base_dir, "wildbill75-gsx-gatefinder.xml"), "w") as f:
     f.write(project_xml)
 
 # 2. Package Definition
 pkg_def_dir = os.path.join(base_dir, "PackageDefinitions")
 os.makedirs(pkg_def_dir)
-pkg_def_xml = """<AssetPackage Name="bertrand-gsx-gatefinder" Version="2.0.0">
+pkg_def_xml = """<AssetPackage Name="wildbill75-gsx-gatefinder" Version="2.0.0">
 	<ItemSettings>
 		<ContentType>UI</ContentType>
 		<Title>GSX Gate Finder</Title>
-		<Manufacturer>Bertrand</Manufacturer>
-		<Creator>Bertrand</Creator>
+		<Manufacturer>wildbill75</Manufacturer>
+		<Creator>wildbill75</Creator>
 	</ItemSettings>
 	<Flags>
 		<VisibleInStore>false</VisibleInStore>
@@ -62,7 +62,7 @@ pkg_def_xml = """<AssetPackage Name="bertrand-gsx-gatefinder" Version="2.0.0">
 		</AssetGroup>
 	</AssetGroups>
 </AssetPackage>"""
-with open(os.path.join(pkg_def_dir, "bertrand-gsx-gatefinder.xml"), "w") as f:
+with open(os.path.join(pkg_def_dir, "wildbill75-gsx-gatefinder.xml"), "w") as f:
     f.write(pkg_def_xml)
 
 # 3. Package Sources
@@ -80,13 +80,13 @@ with open(os.path.join(igp_dir, "GSXGateFinder.xml"), "w") as f:
 
 # Copy the HTML/JS/CSS from our uncompiled folder
 import shutil
-old_base = r"D:\GateFinder_New\MSFS_Package\bertrand-gsx-gatefinder"
+old_base = r"D:\GateFinder_New\MSFS_Package\wildbill75-gsx-gatefinder"
 shutil.copytree(os.path.join(old_base, "html_ui"), os.path.join(pkg_sources_dir, "html_ui"))
 
 print("Project generated. Running fspackagetool...")
 # Compile
 fspackagetool = r"C:\MSFS 2024 SDK\Tools\bin\fspackagetool.exe"
-cmd = f'"{fspackagetool}" "{os.path.join(base_dir, "bertrand-gsx-gatefinder.xml")}"'
+cmd = f'"{fspackagetool}" "{os.path.join(base_dir, "wildbill75-gsx-gatefinder.xml")}"'
 print(cmd)
 result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
 print(result.stdout)
