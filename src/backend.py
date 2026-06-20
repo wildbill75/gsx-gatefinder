@@ -164,25 +164,38 @@ class GateFinderBackend:
         return {}
 
     def fetch_osm_gates(self, icao):
-        try:
-            overpass_url = "https://overpass-api.de/api/interpreter"
-            query = f"""[out:json][timeout:25];
+        overpass_url = "https://overpass-api.de/api/interpreter"
+        query = f"""[out:json][timeout:25];
 area["icao"="{icao}"]->.a;
 nwr(area.a)["aeroway"="parking_position"];
 out center tags;"""
-            req = urllib.request.Request(overpass_url, data=query.encode('utf-8'), headers={'User-Agent': 'GateFinder/1.0 Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=15) as response:
-                osm_data = json.loads(response.read().decode())
-            gates = []
-            if 'remark' in osm_data:
-                return [], osm_data['remark']
-            for element in osm_data.get('elements', []):
-                tags = element.get('tags', {})
-                ref = tags.get('ref')
-                if ref: gates.append(ref)
-            return sorted(list(set(gates))), None
-        except Exception as e:
-            return [], str(e)
+        
+        for attempt in range(2):
+            try:
+                req = urllib.request.Request(overpass_url, data=query.encode('utf-8'), headers={'User-Agent': 'GateFinder/1.0 Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=30) as response:
+                    osm_data = json.loads(response.read().decode())
+                gates = []
+                if 'remark' in osm_data:
+                    return [], osm_data['remark']
+                for element in osm_data.get('elements', []):
+                    tags = element.get('tags', {})
+                    ref = tags.get('ref')
+                    if ref: gates.append(ref)
+                return sorted(list(set(gates))), None
+            except urllib.error.HTTPError as e:
+                if e.code in [504, 429] and attempt == 0:
+                    import time
+                    time.sleep(2) # Wait a bit before retrying
+                    continue
+                return [], f"HTTP Error {e.code}: {e.reason}"
+            except Exception as e:
+                if attempt == 0:
+                    import time
+                    time.sleep(2)
+                    continue
+                return [], str(e)
+        return [], "Timeout or Server Error"
 
     def get_flight_data(self, username):
         if username.isdigit():
