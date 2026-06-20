@@ -363,7 +363,7 @@ class GateFinderBackend:
                     try:
                         with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                             content = f.read().lower()
-                            if 'airlinecodes' in content or 'airline_codes' in content:
+                            if re.search(r'airline_?codes\s*=\s*[a-z0-9]', content):
                                 has_airlines = True
                     except Exception:
                         pass
