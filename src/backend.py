@@ -363,7 +363,7 @@ class GateFinderBackend:
                     try:
                         with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                             content = f.read().lower()
-                            if re.search(r'airline_?codes\s*=\s*[a-z0-9]', content):
+                            if re.search(r'airline_?codes[ \t]*=[ \t]*[a-z0-9]', content):
                                 has_airlines = True
                     except Exception:
                         pass
@@ -374,14 +374,15 @@ class GateFinderBackend:
         return {"supported": sorted(list(supported)), "unknown": sorted(list(unknown))}
 
     def generate_contribution_file(self, unknown_filenames):
-        gsx_path = self.config.settings.get("gsx_profile_path", "")
+        """Generates a JSON file containing the extracted data from unknown airports to contribute"""
         data_to_contribute = {}
+        gsx_path = self.config.settings.get("gsx_profile_path", "")
         
         for filename in unknown_filenames:
-            # Use the filename (without .ini) instead of just the first 4 letters
-            # This avoids collisions if a user has multiple files like "GSX-EHAM.ini" and "GSX-LFPG.ini"
+            # Use the filename (without .ini) to avoid collisions like GSX-EHAM.ini and GSX-LFPG.ini
             file_key = filename[:-4] if filename.lower().endswith('.ini') else filename
             filepath = os.path.join(gsx_path, filename)
+            
             try:
                 parser = configparser.ConfigParser()
                 try:
