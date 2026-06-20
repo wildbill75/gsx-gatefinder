@@ -1,0 +1,9 @@
+{
+  "LocalisationPackage": {
+    "Language": "en-US",
+    "Strings": {
+      "CUSTOMPANEL": "GSX GateFinder V1.0",
+      "PANEL_CUSTOM_PANEL": "GSX GateFinder V1.0"
+    }
+  }
+}
