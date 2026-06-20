@@ -32,6 +32,8 @@ class GateFinderBackend:
         self.config = config
         self.data = {}
         self.airport_names = {}
+        self.load_data()
+        self.current_flight_data = None
         self.airline_names = self._load_airlines()
         self.cloud_ruleset = self._fetch_cloud_ruleset()
         self.server_thread = None
@@ -336,13 +338,18 @@ class GateFinderBackend:
         al_name = self.airline_names.get(airline, '')
         al_display = f"{al_name} ({airline})" if al_name else airline
 
-        return {
+        dep_data = process_airport(origin)
+        arr_data = process_airport(destination)
+        alt_data = process_airport(alternate)
+
+        self.current_flight_data = {
             "aircraft": aircraft,
             "airline": al_display,
-            "departure": process_airport(origin),
-            "arrival": process_airport(destination),
-            "alternate": process_airport(alternate)
+            "departure": dep_data,
+            "arrival": arr_data,
+            "alternate": alt_data if alternate else None
         }
+        return self.current_flight_data
 
     def scan_gsx_profiles(self):
         gsx_path = self.config.settings.get("gsx_profile_path", "")
@@ -449,7 +456,18 @@ class GateFinderBackend:
 
             def do_GET(self):
                 parsed = urlparse(self.path)
-                if parsed.path == '/api/simbrief':
+                if self.path == '/api/current':
+                    self.send_response(200)
+                    self.send_header('Content-type', 'application/json')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    if self.server.backend.current_flight_data:
+                        self.wfile.write(json.dumps(self.server.backend.current_flight_data).encode())
+                    else:
+                        self.wfile.write(json.dumps({}).encode())
+                    return
+                    
+                if self.path == '/api/simbrief':
                     query = parse_qs(parsed.query)
                     username = query.get('username', [''])[0]
                     if not username:

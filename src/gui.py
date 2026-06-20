@@ -151,6 +151,15 @@ class GUIApp(ctk.CTk):
         self.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
         
         self.create_widgets()
+        
+        self.last_flight_data = None
+        self.check_sync_loop()
+
+    def check_sync_loop(self):
+        if self.backend.current_flight_data and self.backend.current_flight_data != self.last_flight_data:
+            self.last_flight_data = self.backend.current_flight_data
+            self.render_results(self.last_flight_data)
+        self.after(2000, self.check_sync_loop)
 
     def hide_to_tray(self):
         self.withdraw()
