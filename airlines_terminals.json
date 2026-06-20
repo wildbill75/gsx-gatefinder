@@ -1,15 +1,567 @@
 {
   "LFPO": {
     "mapping": {
-      "Orly 1": ["Terminal A", "Terminal B"],
-      "Orly 2": ["Terminal C"],
-      "Orly 3": ["Terminal T", "Terminal U", "Terminal M", "Terminal G", "Terminal E"],
-      "Orly 4": ["Terminal R", "Terminal F"]
+      "Orly 1": [
+        "Terminal A",
+        "Terminal B"
+      ],
+      "Orly 2": [
+        "Terminal C"
+      ],
+      "Orly 3": [
+        "Terminal T",
+        "Terminal U",
+        "Terminal M",
+        "Terminal G",
+        "Terminal E"
+      ],
+      "Orly 4": [
+        "Terminal R",
+        "Terminal F"
+      ]
     },
     "rules": {
-      "TVF": ["Orly 3"],
-      "AFR": ["Orly 1", "Orly 2", "Orly 3"],
-      "CCM": ["Orly 3", "Orly 4"]
+      "TVF": [
+        "Orly 3"
+      ],
+      "AFR": [
+        "Orly 1",
+        "Orly 2",
+        "Orly 3"
+      ],
+      "CCM": [
+        "Orly 3",
+        "Orly 4"
+      ]
+    }
+  },
+  "LFPG": {
+    "mapping": {
+      "Terminal 1": [
+        "Terminal Q",
+        "Terminal S",
+        "Terminal T",
+        "Terminal U",
+        "Terminal V",
+        "Terminal W",
+        "Terminal X",
+        "Terminal Y",
+        "Terminal Z"
+      ],
+      "Terminal 2": [
+        "Terminal A",
+        "Terminal B",
+        "Terminal C",
+        "Terminal D",
+        "Terminal E",
+        "Terminal F",
+        "Terminal G",
+        "Terminal K",
+        "Terminal L",
+        "Terminal M"
+      ],
+      "Terminal 3": [
+        "Terminal H",
+        "Terminal I",
+        "Terminal J"
+      ]
+    },
+    "rules": {
+      "DLH": [
+        "Terminal 1"
+      ],
+      "SWR": [
+        "Terminal 1"
+      ],
+      "EZY": [
+        "Terminal 2"
+      ],
+      "BAW": [
+        "Terminal 2"
+      ],
+      "UAE": [
+        "Terminal 2"
+      ],
+      "AFR": [
+        "Terminal 2"
+      ],
+      "KLM": [
+        "Terminal 2"
+      ],
+      "VLG": [
+        "Terminal 3"
+      ],
+      "IBE": [
+        "Terminal 3"
+      ],
+      "TVF": [
+        "Terminal 3"
+      ],
+      "TRA": [
+        "Terminal 3"
+      ]
+    }
+  },
+  "LFMN": {
+    "mapping": {
+      "Terminal 1": [
+        "Terminal A",
+        "Terminal B",
+        "Terminal C"
+      ],
+      "Terminal 2": [
+        "Terminal D",
+        "Terminal K",
+        "Main Apron"
+      ]
+    },
+    "rules": {
+      "DLH": [
+        "Terminal 1"
+      ],
+      "BAW": [
+        "Terminal 1"
+      ],
+      "RYR": [
+        "Terminal 1"
+      ],
+      "VLG": [
+        "Terminal 1"
+      ],
+      "IBE": [
+        "Terminal 1"
+      ],
+      "SWR": [
+        "Terminal 1"
+      ],
+      "AFR": [
+        "Terminal 2"
+      ],
+      "EZY": [
+        "Terminal 2"
+      ],
+      "KLM": [
+        "Terminal 2"
+      ],
+      "TVF": [
+        "Terminal 2"
+      ],
+      "TRA": [
+        "Terminal 2"
+      ],
+      "UAE": [
+        "Terminal 2"
+      ]
+    }
+  },
+  "LFML": {
+    "rules": {
+      "AFR": [
+        "Terminal 1"
+      ],
+      "DLH": [
+        "Terminal 1"
+      ],
+      "BAW": [
+        "Terminal 1"
+      ],
+      "VLG": [
+        "Terminal 1"
+      ],
+      "KLM": [
+        "Terminal 1"
+      ],
+      "TVF": [
+        "Terminal 1"
+      ],
+      "TRA": [
+        "Terminal 1"
+      ],
+      "UAE": [
+        "Terminal 1"
+      ],
+      "EZY": [
+        "Terminal 1",
+        "Terminal 2"
+      ],
+      "RYR": [
+        "Terminal 2"
+      ]
+    }
+  },
+  "LEMD": {
+    "mapping": {
+      "Terminal 1": [
+        "Zone 100s"
+      ],
+      "Terminal 2": [
+        "Zone 200s",
+        "Zone 300s"
+      ],
+      "Terminal 4": [
+        "Terminal T",
+        "Zone 400s",
+        "Zone 500s",
+        "Zone 600s",
+        "Zone 900s"
+      ]
+    },
+    "rules": {
+      "EZY": [
+        "Terminal 1"
+      ],
+      "RYR": [
+        "Terminal 1"
+      ],
+      "AFR": [
+        "Terminal 2"
+      ],
+      "KLM": [
+        "Terminal 2"
+      ],
+      "DLH": [
+        "Terminal 2"
+      ],
+      "SWR": [
+        "Terminal 2"
+      ],
+      "TVF": [
+        "Terminal 2"
+      ],
+      "TRA": [
+        "Terminal 2"
+      ],
+      "IBE": [
+        "Terminal 4"
+      ],
+      "BAW": [
+        "Terminal 4"
+      ],
+      "UAE": [
+        "Terminal 4"
+      ],
+      "VLG": [
+        "Terminal 4"
+      ]
+    }
+  },
+  "LEBL": {
+    "mapping": {
+      "Terminal 1": [
+        "Terminal A",
+        "Zone 200s",
+        "Zone 300s"
+      ],
+      "Terminal 2": [
+        "Zone 100s"
+      ]
+    },
+    "rules": {
+      "AFR": [
+        "Terminal 1"
+      ],
+      "ITY": [
+        "Terminal 1"
+      ],
+      "BAW": [
+        "Terminal 1"
+      ],
+      "UAE": [
+        "Terminal 1"
+      ],
+      "IBE": [
+        "Terminal 1"
+      ],
+      "KLM": [
+        "Terminal 1"
+      ],
+      "DLH": [
+        "Terminal 1"
+      ],
+      "SWR": [
+        "Terminal 1"
+      ],
+      "VLG": [
+        "Terminal 1"
+      ],
+      "RYR": [
+        "Terminal 2"
+      ],
+      "TRA": [
+        "Terminal 2"
+      ],
+      "EZY": [
+        "Terminal 2"
+      ]
+    }
+  },
+  "LIRF": {
+    "mapping": {
+      "Terminal 1": [
+        "Zone 100s",
+        "Zone 200s",
+        "Zone 300s",
+        "Zone 400s"
+      ],
+      "Terminal 3": [
+        "Zone 500s",
+        "Zone 600s",
+        "Zone 700s",
+        "Zone 800s"
+      ]
+    },
+    "rules": {
+      "AFR": [
+        "Terminal 1"
+      ],
+      "ITY": [
+        "Terminal 1"
+      ],
+      "RYR": [
+        "Terminal 1"
+      ],
+      "TRA": [
+        "Terminal 1"
+      ],
+      "IBE": [
+        "Terminal 1"
+      ],
+      "KLM": [
+        "Terminal 1"
+      ],
+      "DLH": [
+        "Terminal 1"
+      ],
+      "SWR": [
+        "Terminal 1"
+      ],
+      "EZY": [
+        "Terminal 1"
+      ],
+      "VLG": [
+        "Terminal 1"
+      ],
+      "BAW": [
+        "Terminal 3"
+      ],
+      "UAE": [
+        "Terminal 3"
+      ]
+    }
+  },
+  "EDDF": {
+    "mapping": {
+      "Terminal 1": [
+        "Terminal A",
+        "Terminal B",
+        "Terminal C",
+        "Terminal Z"
+      ],
+      "Terminal 2": [
+        "Terminal D",
+        "Terminal E"
+      ],
+      "Terminal 3": [
+        "Terminal F",
+        "Terminal V"
+      ]
+    },
+    "rules": {
+      "DLH": [
+        "Terminal 1"
+      ],
+      "SWR": [
+        "Terminal 1"
+      ],
+      "AFR": [
+        "Terminal 2",
+        "Terminal 3"
+      ],
+      "BAW": [
+        "Terminal 2",
+        "Terminal 3"
+      ],
+      "EZY": [
+        "Terminal 2",
+        "Terminal 3"
+      ],
+      "RYR": [
+        "Terminal 2",
+        "Terminal 3"
+      ],
+      "VLG": [
+        "Terminal 2",
+        "Terminal 3"
+      ],
+      "IBE": [
+        "Terminal 2",
+        "Terminal 3"
+      ],
+      "KLM": [
+        "Terminal 2",
+        "Terminal 3"
+      ],
+      "TRA": [
+        "Terminal 2",
+        "Terminal 3"
+      ],
+      "UAE": [
+        "Terminal 2",
+        "Terminal 3"
+      ]
+    }
+  },
+  "LSZH": {
+    "mapping": {
+      "Check-in 1": [
+        "Terminal A"
+      ],
+      "Check-in 2": [
+        "Terminal B",
+        "Terminal D"
+      ],
+      "Check-in 3": [
+        "Terminal E"
+      ]
+    },
+    "rules": {
+      "DLH": [
+        "Check-in 1"
+      ],
+      "SWR": [
+        "Check-in 1"
+      ],
+      "AFR": [
+        "Check-in 2"
+      ],
+      "BAW": [
+        "Check-in 2"
+      ],
+      "VLG": [
+        "Check-in 2"
+      ],
+      "IBE": [
+        "Check-in 2"
+      ],
+      "KLM": [
+        "Check-in 2"
+      ],
+      "UAE": [
+        "Check-in 2"
+      ],
+      "EZY": [
+        "Check-in 3"
+      ]
+    }
+  },
+  "EGKK": {
+    "mapping": {
+      "North Terminal": [
+        "Terminal H",
+        "Zone 100s",
+        "Zone 500s"
+      ],
+      "South Terminal": [
+        "Zone 200s",
+        "Zone 300s",
+        "Zone 400s"
+      ]
+    },
+    "rules": {
+      "AFR": [
+        "North Terminal"
+      ],
+      "AUA": [
+        "North Terminal"
+      ],
+      "EZY": [
+        "North Terminal",
+        "South Terminal"
+      ],
+      "UAE": [
+        "North Terminal"
+      ],
+      "KLM": [
+        "North Terminal"
+      ],
+      "DLH": [
+        "North Terminal"
+      ],
+      "SWR": [
+        "North Terminal"
+      ],
+      "BAW": [
+        "South Terminal"
+      ],
+      "IBE": [
+        "South Terminal"
+      ],
+      "RYR": [
+        "South Terminal"
+      ],
+      "VLG": [
+        "South Terminal"
+      ]
+    }
+  },
+  "LOWW": {
+    "mapping": {
+      "Terminal 1": [
+        "Terminal A",
+        "Terminal B",
+        "Terminal C"
+      ],
+      "Terminal 1A": [
+        "Terminal D",
+        "Terminal E",
+        "Terminal F"
+      ],
+      "Terminal 3": [
+        "Terminal H",
+        "Terminal K",
+        "Terminal G"
+      ]
+    },
+    "rules": {
+      "AFR": [
+        "Terminal 1"
+      ],
+      "BAW": [
+        "Terminal 1"
+      ],
+      "IBE": [
+        "Terminal 1"
+      ],
+      "KLM": [
+        "Terminal 1"
+      ],
+      "EZY": [
+        "Terminal 1A"
+      ],
+      "RYR": [
+        "Terminal 1A"
+      ],
+      "TRA": [
+        "Terminal 1A"
+      ],
+      "TVF": [
+        "Terminal 1A"
+      ],
+      "VLG": [
+        "Terminal 1A"
+      ],
+      "AUA": [
+        "Terminal 3"
+      ],
+      "UAE": [
+        "Terminal 3"
+      ],
+      "DLH": [
+        "Terminal 3"
+      ],
+      "SWR": [
+        "Terminal 3"
+      ]
     }
   }
 }
