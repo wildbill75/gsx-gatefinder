@@ -171,7 +171,7 @@ class GateFinderBackend:
             area["icao"="{icao}"]->.a;
             nwr(area.a)["aeroway"="parking_position"];
             out center tags;
-            """
+            """.strip()
             req = urllib.request.Request(overpass_url, data=query.encode('utf-8'), headers={'User-Agent': 'Mozilla/5.0'})
             with urllib.request.urlopen(req, timeout=10) as response:
                 osm_data = json.loads(response.read().decode())
