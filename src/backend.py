@@ -461,8 +461,8 @@ class GateFinderBackend:
                     self.send_header('Content-type', 'application/json')
                     self.send_header('Access-Control-Allow-Origin', '*')
                     self.end_headers()
-                    if self.server.backend.current_flight_data:
-                        self.wfile.write(json.dumps(self.server.backend.current_flight_data).encode())
+                    if APIHandler.backend_instance.current_flight_data:
+                        self.wfile.write(json.dumps(APIHandler.backend_instance.current_flight_data).encode())
                     else:
                         self.wfile.write(json.dumps({}).encode())
                     return
