@@ -344,6 +344,73 @@ class GateFinderBackend:
             "alternate": process_airport(alternate)
         }
 
+    def scan_gsx_profiles(self):
+        gsx_path = self.config.settings.get("gsx_profile_path", "")
+        if not gsx_path or not os.path.exists(gsx_path):
+            return {"supported": [], "unknown": []}
+            
+        supported = set()
+        unknown = set()
+        for filename in os.listdir(gsx_path):
+            if filename.lower().endswith('.ini'):
+                icao = filename[:4].upper()
+                if icao in self.cloud_ruleset:
+                    supported.add(icao)
+                else:
+                    unknown.add(filename)
+                    
+        return {"supported": sorted(list(supported)), "unknown": sorted(list(unknown))}
+
+    def generate_contribution_file(self, unknown_filenames):
+        gsx_path = self.config.settings.get("gsx_profile_path", "")
+        data_to_contribute = {}
+        
+        for filename in unknown_filenames:
+            icao = filename[:4].upper()
+            filepath = os.path.join(gsx_path, filename)
+            try:
+                parser = configparser.ConfigParser()
+                parser.read(filepath, encoding='utf-8')
+            except Exception:
+                continue
+                
+            airport_data = {}
+            for section in parser.sections():
+                sec_lower = section.lower()
+                if sec_lower.startswith(('parking', 'gate', 'stand', 'ramp', 'dock')):
+                    prefix = ""
+                    for p in ('parking_', 'parking ', 'gate_', 'gate ', 'stand_', 'stand ', 'ramp_', 'ramp ', 'dock_', 'dock '):
+                        if sec_lower.startswith(p):
+                            prefix = p
+                            break
+                    
+                    if prefix:
+                        name = section[len(prefix):].replace('_', ' ').upper()
+                    else:
+                        name = section.replace('_', ' ').upper()
+                        
+                    airlines = []
+                    if 'airlinecodes' in parser[section]:
+                        airlines = [a.strip().upper() for a in parser[section]['airlinecodes'].split(',') if a.strip()]
+                    elif 'airline_codes' in parser[section]:
+                        airlines = [a.strip().upper() for a in parser[section]['airline_codes'].split(',') if a.strip()]
+                        
+                    if airlines:
+                        airport_data[name] = airlines
+            
+            if airport_data:
+                data_to_contribute[icao] = airport_data
+                
+        if not data_to_contribute:
+            return None
+            
+        desktop = os.path.join(os.path.join(os.environ['USERPROFILE']), 'Desktop') 
+        out_path = os.path.join(desktop, "GateFinder_Contribution.json")
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(data_to_contribute, f, indent=2)
+            
+        return out_path
+
     def start_server(self):
         class APIHandler(http.server.SimpleHTTPRequestHandler):
             backend_instance = self

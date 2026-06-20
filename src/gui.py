@@ -10,12 +10,13 @@ ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
 class SettingsWindow(ctk.CTkToplevel):
-    def __init__(self, parent, config: Config, autostart: AutoStartManager, on_save_callback):
+    def __init__(self, parent, config: Config, autostart: AutoStartManager, backend, on_save_callback):
         super().__init__(parent)
         self.title("GateFinder - Settings")
-        self.geometry("500x350")
+        self.geometry("500x500")
         self.config = config
         self.autostart = autostart
+        self.backend = backend
         self.on_save_callback = on_save_callback
         
         self.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -60,9 +61,55 @@ class SettingsWindow(ctk.CTkToplevel):
         # Auto-start checkbox
         self.autostart_var = ctk.BooleanVar(value=self.config.settings.get("auto_start", False))
         self.autostart_checkbox = ctk.CTkCheckBox(self, text="Auto-Start with MSFS 2024", variable=self.autostart_var)
-        self.autostart_checkbox.pack(pady=20)
+        self.autostart_checkbox.pack(pady=10)
         
-        ctk.CTkButton(self, text="Save", command=self.save_settings).pack(pady=10)
+        # Database Scan Section
+        scan_frame = ctk.CTkFrame(self, fg_color=("gray85", "gray17"))
+        scan_frame.pack(fill="x", padx=20, pady=10)
+        
+        self.scan_lbl = ctk.CTkLabel(scan_frame, text="GateFinder Cloud DB Status:")
+        self.scan_lbl.pack(pady=5)
+        
+        btn_frame = ctk.CTkFrame(scan_frame, fg_color="transparent")
+        btn_frame.pack(pady=5)
+        
+        ctk.CTkButton(btn_frame, text="Scan Installed Airports", command=self.run_scan, width=150).pack(side="left", padx=5)
+        self.btn_contribute = ctk.CTkButton(btn_frame, text="Contribute Missing", command=self.run_contribute, width=150, fg_color="#10B981", hover_color="#059669")
+        self.btn_contribute.pack(side="left", padx=5)
+        self.btn_contribute.configure(state="disabled")
+        
+        self.unknown_files = []
+
+        ctk.CTkButton(self, text="Save Settings", command=self.save_settings).pack(pady=10)
+
+    def run_scan(self):
+        self.config.settings["gsx_profile_path"] = self.gsx_entry.get().strip()
+        self.config.save()
+        
+        self.scan_lbl.configure(text="Scanning...")
+        self.update()
+        
+        res = self.backend.scan_gsx_profiles()
+        supported = len(res["supported"])
+        unknown = len(res["unknown"])
+        self.unknown_files = res["unknown"]
+        
+        self.scan_lbl.configure(text=f"Found {supported} supported airports. {unknown} unknown.")
+        if unknown > 0:
+            self.btn_contribute.configure(state="normal")
+        else:
+            self.btn_contribute.configure(state="disabled")
+
+    def run_contribute(self):
+        if not self.unknown_files: return
+        import webbrowser
+        
+        out_path = self.backend.generate_contribution_file(self.unknown_files)
+        if out_path:
+            messagebox.showinfo("Contribute", f"File generated on Desktop:\n{out_path}\n\nA browser will open to GitHub. Please drag and drop the JSON file into the issue body to submit your missing airports!")
+            webbrowser.open("https://github.com/wildbill75/gsx-gatefinder/issues/new?title=GSX+Data+Contribution&body=Please+drag+and+drop+the+GateFinder_Contribution.json+file+here.")
+        else:
+            messagebox.showinfo("Contribute", "No valid airline data found to contribute.")
 
     def save_settings(self):
         self.config.settings["simbrief_username"] = self.simbrief_entry.get().strip()
@@ -133,7 +180,7 @@ class GUIApp(ctk.CTk):
 
     def show_settings(self):
         if self.settings_window is None or not self.settings_window.winfo_exists():
-            self.settings_window = SettingsWindow(self, self.config, self.autostart, self.on_settings_saved)
+            self.settings_window = SettingsWindow(self, self.config, self.autostart, self.backend, self.on_settings_saved)
         else:
             self.settings_window.deiconify()
             self.settings_window.lift()
