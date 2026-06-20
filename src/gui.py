@@ -67,7 +67,7 @@ class SettingsWindow(ctk.CTkToplevel):
         scan_frame = ctk.CTkFrame(self, fg_color=("gray85", "gray17"))
         scan_frame.pack(fill="x", padx=20, pady=10)
         
-        self.scan_lbl = ctk.CTkLabel(scan_frame, text="GateFinder Cloud DB Status:")
+        self.scan_lbl = ctk.CTkLabel(scan_frame, text="Synchronize with Community Database:")
         self.scan_lbl.pack(pady=5)
         
         btn_frame = ctk.CTkFrame(scan_frame, fg_color="transparent")
@@ -94,11 +94,13 @@ class SettingsWindow(ctk.CTkToplevel):
         unknown = len(res["unknown"])
         self.unknown_files = res["unknown"]
         
-        self.scan_lbl.configure(text=f"Found {supported} supported airports. {unknown} unknown.")
+        self.scan_lbl.configure(text=f"✅ {supported} airports synchronized with GateFinder.")
+        
         if unknown > 0:
-            self.btn_contribute.configure(state="normal")
+            self.scan_lbl.configure(text=f"✅ {supported} airports synchronized.\n🌟 You have {unknown} airports that can be added to the community DB!")
+            self.btn_contribute.configure(text=f"Share {unknown} Airports", state="normal")
         else:
-            self.btn_contribute.configure(state="disabled")
+            self.btn_contribute.configure(text="Community DB is Up to Date", state="disabled")
 
     def run_contribute(self):
         if not self.unknown_files: return
