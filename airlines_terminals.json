@@ -1551,5 +1551,274 @@
         "Terminal C"
       ]
     }
+  },
+  "EDDB": {
+    "mapping": {
+      "Terminal 1": [
+        "Terminal A",
+        "Terminal B",
+        "Terminal C",
+        "Terminal D"
+      ],
+      "Terminal 2": [
+        "Terminal E",
+        "Terminal P"
+      ]
+    },
+    "rules": {
+      "DLH": [
+        "Terminal 1"
+      ],
+      "EZY": [
+        "Terminal 1"
+      ],
+      "AFR": [
+        "Terminal 1"
+      ],
+      "SWR": [
+        "Terminal 1"
+      ],
+      "BAW": [
+        "Terminal 1"
+      ],
+      "RYR": [
+        "Terminal 2"
+      ]
+    }
+  },
+  "LSGG": {
+    "mapping": {
+      "Terminal 1": [
+        "Terminal A",
+        "Terminal D",
+        "Terminal T",
+        "Zone 100s"
+      ]
+    },
+    "rules": {
+      "DLH": [
+        "Terminal 1"
+      ],
+      "EZY": [
+        "Terminal 1"
+      ],
+      "RYR": [
+        "Terminal 1"
+      ],
+      "AFR": [
+        "Terminal 1"
+      ],
+      "SWR": [
+        "Terminal 1"
+      ],
+      "BAW": [
+        "Terminal 1"
+      ]
+    }
+  },
+  "LPPT": {
+    "mapping": {
+      "Terminal 1": [
+        "Zone 100s",
+        "Zone 200s",
+        "Zone 300s",
+        "Zone 400s"
+      ],
+      "Terminal 2": [
+        "Zone 500s",
+        "Zone 600s",
+        "Zone 700s",
+        "Zone 800s"
+      ]
+    },
+    "rules": {
+      "TAP": [
+        "Terminal 1"
+      ],
+      "EZY": [
+        "Terminal 1"
+      ],
+      "DLH": [
+        "Terminal 1"
+      ],
+      "RYR": [
+        "Terminal 2"
+      ],
+      "VLG": [
+        "Terminal 2"
+      ]
+    }
+  },
+  "LPPR": {
+    "mapping": {
+      "Main Terminal": [
+        "Main Apron"
+      ]
+    },
+    "rules": {
+      "TAP": [
+        "Main Terminal"
+      ],
+      "RYR": [
+        "Main Terminal"
+      ],
+      "EZY": [
+        "Main Terminal"
+      ],
+      "VLG": [
+        "Main Terminal"
+      ],
+      "DLH": [
+        "Main Terminal"
+      ]
+    }
+  },
+  "LTAI": {
+    "mapping": {
+      "Terminal 1": [
+        "Terminal A",
+        "Zone 100s"
+      ],
+      "Terminal 2": [
+        "Terminal B",
+        "Zone 200s"
+      ],
+      "Domestic Terminal": [
+        "Zone 300s"
+      ]
+    },
+    "rules": {
+      "THY": [
+        "Terminal 1",
+        "Terminal 2",
+        "Domestic Terminal"
+      ],
+      "SXS": [
+        "Terminal 1",
+        "Terminal 2",
+        "Domestic Terminal"
+      ],
+      "PGT": [
+        "Terminal 1",
+        "Terminal 2",
+        "Domestic Terminal"
+      ]
+    }
+  },
+  "WIII": {
+    "mapping": {
+      "Terminal 1": [
+        "Terminal A",
+        "Terminal B",
+        "Terminal C"
+      ],
+      "Terminal 2": [
+        "Terminal D",
+        "Terminal E",
+        "Terminal F"
+      ],
+      "Terminal 3": [
+        "Terminal G"
+      ]
+    },
+    "rules": {
+      "LNI": [
+        "Terminal 1",
+        "Terminal 2"
+      ],
+      "BTK": [
+        "Terminal 2"
+      ],
+      "GIA": [
+        "Terminal 3"
+      ]
+    }
+  },
+  "MDPC": {
+    "mapping": {
+      "Terminal A": [
+        "Zone 300s",
+        "Zone 3400s"
+      ],
+      "Terminal B": [
+        "Terminal B",
+        "Zone 700s"
+      ]
+    },
+    "rules": {
+      "JBU": [
+        "Terminal A"
+      ],
+      "AAL": [
+        "Terminal B"
+      ],
+      "DAL": [
+        "Terminal B"
+      ]
+    }
+  },
+  "OKKK": {
+    "mapping": {
+      "Terminal 4": [
+        "Terminal L",
+        "Terminal M"
+      ],
+      "Terminal 5": [
+        "Terminal T",
+        "Terminal K"
+      ]
+    },
+    "rules": {
+      "KAC": [
+        "Terminal 4"
+      ],
+      "JZR": [
+        "Terminal 5"
+      ]
+    }
+  },
+  "RPVM": {
+    "mapping": {
+      "Terminal 1": [
+        "Terminal C",
+        "Terminal R"
+      ],
+      "Terminal 2": [
+        "Terminal B"
+      ]
+    },
+    "rules": {
+      "CEB": [
+        "Terminal 1",
+        "Terminal 2"
+      ],
+      "PAL": [
+        "Terminal 1",
+        "Terminal 2"
+      ],
+      "APG": [
+        "Terminal 1",
+        "Terminal 2"
+      ]
+    }
+  },
+  "SBFZ": {
+    "mapping": {
+      "Main Terminal": [
+        "Main Apron",
+        "Zone 200s"
+      ]
+    },
+    "rules": {
+      "TAM": [
+        "Main Terminal"
+      ],
+      "GLO": [
+        "Main Terminal"
+      ],
+      "AZU": [
+        "Main Terminal"
+      ]
+    }
   }
 }
