@@ -357,7 +357,19 @@ class GateFinderBackend:
                 if icao in self.cloud_ruleset:
                     supported.add(icao)
                 else:
-                    unknown.add(filename)
+                    # Quick check if it's a valid GSX profile with airlines
+                    filepath = os.path.join(gsx_path, filename)
+                    has_airlines = False
+                    try:
+                        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                            content = f.read().lower()
+                            if 'airlinecodes' in content or 'airline_codes' in content:
+                                has_airlines = True
+                    except Exception:
+                        pass
+                        
+                    if has_airlines:
+                        unknown.add(filename)
                     
         return {"supported": sorted(list(supported)), "unknown": sorted(list(unknown))}
 
@@ -366,11 +378,16 @@ class GateFinderBackend:
         data_to_contribute = {}
         
         for filename in unknown_filenames:
-            icao = filename[:4].upper()
+            # Use the filename (without .ini) instead of just the first 4 letters
+            # This avoids collisions if a user has multiple files like "GSX-EHAM.ini" and "GSX-LFPG.ini"
+            file_key = filename[:-4] if filename.lower().endswith('.ini') else filename
             filepath = os.path.join(gsx_path, filename)
             try:
                 parser = configparser.ConfigParser()
-                parser.read(filepath, encoding='utf-8')
+                try:
+                    parser.read(filepath, encoding='utf-8')
+                except UnicodeDecodeError:
+                    parser.read(filepath, encoding='cp1252')
             except Exception:
                 continue
                 
@@ -399,7 +416,7 @@ class GateFinderBackend:
                         airport_data[name] = airlines
             
             if airport_data:
-                data_to_contribute[icao] = airport_data
+                data_to_contribute[file_key] = airport_data
                 
         if not data_to_contribute:
             return None
