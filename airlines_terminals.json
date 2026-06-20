@@ -563,5 +563,395 @@
         "Terminal 3"
       ]
     }
+  },
+  "EBBR": {
+    "mapping": {
+      "Pier A": [
+        "Terminal A",
+        "Zone 200s"
+      ],
+      "Pier B": [
+        "Terminal B",
+        "Zone 300s",
+        "Zone 100s"
+      ]
+    },
+    "rules": {
+      "BEL": [
+        "Pier A",
+        "Pier B"
+      ],
+      "DLH": [
+        "Pier A"
+      ],
+      "KLM": [
+        "Pier A"
+      ],
+      "VLG": [
+        "Pier A"
+      ],
+      "BAW": [
+        "Pier B"
+      ],
+      "UAE": [
+        "Pier B"
+      ],
+      "EZY": [
+        "Pier A",
+        "Pier B"
+      ],
+      "RYR": [
+        "Pier A",
+        "Pier B"
+      ]
+    }
+  },
+  "EKCH": {
+    "mapping": {
+      "Terminal 2": [
+        "Terminal A",
+        "Terminal B",
+        "Zone 100s"
+      ],
+      "Terminal 3": [
+        "Terminal C",
+        "Terminal D",
+        "Zone 200s"
+      ],
+      "CPH Go": [
+        "Terminal E",
+        "Terminal F",
+        "Zone 300s"
+      ]
+    },
+    "rules": {
+      "SAS": [
+        "Terminal 3"
+      ],
+      "DLH": [
+        "Terminal 3"
+      ],
+      "BAW": [
+        "Terminal 2"
+      ],
+      "KLM": [
+        "Terminal 2"
+      ],
+      "UAE": [
+        "Terminal 2"
+      ],
+      "VLG": [
+        "Terminal 2"
+      ],
+      "EZY": [
+        "CPH Go"
+      ],
+      "RYR": [
+        "CPH Go"
+      ]
+    }
+  },
+  "ENGM": {
+    "mapping": {
+      "Domestic": [
+        "Terminal A",
+        "Terminal B",
+        "Terminal C",
+        "Zone 100s"
+      ],
+      "International Schengen": [
+        "Terminal D",
+        "Terminal E",
+        "Zone 200s"
+      ],
+      "International Non-Schengen": [
+        "Terminal F",
+        "Zone 300s"
+      ]
+    },
+    "rules": {
+      "SAS": [
+        "Domestic",
+        "International Schengen",
+        "International Non-Schengen"
+      ],
+      "NAX": [
+        "Domestic",
+        "International Schengen",
+        "International Non-Schengen"
+      ],
+      "WZZ": [
+        "Domestic",
+        "International Schengen",
+        "International Non-Schengen"
+      ],
+      "RYR": [
+        "International Schengen",
+        "International Non-Schengen"
+      ],
+      "LOT": [
+        "International Schengen"
+      ],
+      "DLH": [
+        "International Schengen"
+      ],
+      "KLM": [
+        "International Schengen"
+      ],
+      "EZY": [
+        "International Schengen"
+      ],
+      "BAW": [
+        "International Non-Schengen"
+      ],
+      "UAE": [
+        "International Non-Schengen"
+      ]
+    }
+  },
+  "EPWA": {
+    "mapping": {
+      "Terminal A": [
+        "Terminal L",
+        "Terminal R",
+        "Zone 100s",
+        "Zone 700s"
+      ]
+    },
+    "rules": {
+      "LOT": [
+        "Terminal A"
+      ],
+      "DLH": [
+        "Terminal A"
+      ],
+      "KLM": [
+        "Terminal A"
+      ],
+      "SAS": [
+        "Terminal A"
+      ],
+      "NAX": [
+        "Terminal A"
+      ],
+      "WZZ": [
+        "Terminal A"
+      ],
+      "RYR": [
+        "Terminal A"
+      ],
+      "BAW": [
+        "Terminal A"
+      ],
+      "UAE": [
+        "Terminal A"
+      ]
+    }
+  },
+  "EGGW": {
+    "mapping": {
+      "Main Terminal": [
+        "Terminal L",
+        "Terminal R",
+        "Zone 600s",
+        "Zone 700s",
+        "Zone 800s"
+      ]
+    },
+    "rules": {
+      "EZY": [
+        "Main Terminal"
+      ],
+      "RYR": [
+        "Main Terminal"
+      ],
+      "WZZ": [
+        "Main Terminal"
+      ]
+    }
+  },
+  "LTFM": {
+    "mapping": {
+      "International": [
+        "Terminal A",
+        "Terminal B",
+        "Terminal C",
+        "Terminal D",
+        "Terminal E",
+        "Terminal F"
+      ],
+      "Domestic": [
+        "Terminal G"
+      ]
+    },
+    "rules": {
+      "THY": [
+        "International",
+        "Domestic"
+      ],
+      "PGT": [
+        "International",
+        "Domestic"
+      ],
+      "DLH": [
+        "International"
+      ],
+      "BAW": [
+        "International"
+      ],
+      "UAE": [
+        "International"
+      ]
+    }
+  },
+  "KBOS": {
+    "mapping": {
+      "Terminal A": [
+        "Terminal A"
+      ],
+      "Terminal B": [
+        "Terminal B"
+      ],
+      "Terminal C": [
+        "Terminal C"
+      ],
+      "Terminal E": [
+        "Terminal E"
+      ]
+    },
+    "rules": {
+      "DAL": [
+        "Terminal A"
+      ],
+      "AAL": [
+        "Terminal B"
+      ],
+      "UAL": [
+        "Terminal B"
+      ],
+      "SWA": [
+        "Terminal B"
+      ],
+      "JBU": [
+        "Terminal C"
+      ],
+      "BAW": [
+        "Terminal E"
+      ],
+      "AFR": [
+        "Terminal E"
+      ],
+      "DLH": [
+        "Terminal E"
+      ],
+      "UAE": [
+        "Terminal E"
+      ]
+    }
+  },
+  "KMIA": {
+    "mapping": {
+      "North Terminal": [
+        "Terminal D"
+      ],
+      "Central Terminal": [
+        "Terminal E",
+        "Terminal F",
+        "Terminal G"
+      ],
+      "South Terminal": [
+        "Terminal H",
+        "Terminal J"
+      ]
+    },
+    "rules": {
+      "AAL": [
+        "North Terminal",
+        "Central Terminal"
+      ],
+      "JBU": [
+        "Central Terminal"
+      ],
+      "BAW": [
+        "Central Terminal"
+      ],
+      "SWA": [
+        "Central Terminal"
+      ],
+      "UAL": [
+        "Central Terminal",
+        "South Terminal"
+      ],
+      "DAL": [
+        "South Terminal"
+      ],
+      "AFR": [
+        "South Terminal"
+      ],
+      "DLH": [
+        "South Terminal"
+      ],
+      "UAE": [
+        "South Terminal"
+      ]
+    }
+  },
+  "SBBR": {
+    "mapping": {
+      "Terminal 1": [
+        "Terminal A",
+        "Zone 100s"
+      ]
+    },
+    "rules": {
+      "TAM": [
+        "Terminal 1"
+      ],
+      "GLO": [
+        "Terminal 1"
+      ],
+      "AZU": [
+        "Terminal 1"
+      ]
+    }
+  },
+  "VVTS": {
+    "mapping": {
+      "Terminal 1": [
+        "Terminal A",
+        "Terminal M",
+        "Zone 100s"
+      ],
+      "Terminal 2": [
+        "Terminal B",
+        "Terminal C",
+        "Zone 200s"
+      ],
+      "Terminal 3": [
+        "Terminal D",
+        "Terminal E"
+      ]
+    },
+    "rules": {
+      "VJC": [
+        "Terminal 1",
+        "Terminal 2"
+      ],
+      "HVN": [
+        "Terminal 1",
+        "Terminal 2",
+        "Terminal 3"
+      ],
+      "BAV": [
+        "Terminal 2",
+        "Terminal 3"
+      ],
+      "UAE": [
+        "Terminal 2"
+      ],
+      "AFR": [
+        "Terminal 2"
+      ]
+    }
   }
 }
