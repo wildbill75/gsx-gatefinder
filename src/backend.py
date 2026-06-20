@@ -169,8 +169,8 @@ class GateFinderBackend:
             query = f"""
             [out:json][timeout:10];
             area["icao"="{icao}"]->.a;
-            node(area.a)["aeroway"="parking_position"];
-            out tags;
+            nwr(area.a)["aeroway"="parking_position"];
+            out center tags;
             """
             req = urllib.request.Request(overpass_url, data=query.encode('utf-8'), headers={'User-Agent': 'Mozilla/5.0'})
             with urllib.request.urlopen(req, timeout=10) as response:
