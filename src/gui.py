@@ -251,22 +251,19 @@ class GUIApp(ctk.CTk):
                 msg = "🌐 GSX Profile not found. Fallback results (OSM):" if airport_data['osm'] else airport_data['error']
                 ctk.CTkLabel(section_frame, text=msg, text_color=color).pack(anchor="w", padx=15, pady=(0, 10))
             
-            if airport_data['gates']:
-                for term, gates in sorted(airport_data['gates'].items()):
-                    t_frame = ctk.CTkFrame(section_frame, fg_color="transparent")
-                    t_frame.pack(fill="x", padx=15, pady=5)
+            if airport_data.get('gate'):
+                t_frame = ctk.CTkFrame(section_frame, fg_color="transparent")
+                t_frame.pack(fill="x", padx=15, pady=5)
+                
+                gateText = airport_data['gate']
+                if airport_data.get('osm'):
+                    gateText = "Stand " + gateText
                     
-                    if airport_data['osm']:
-                        for g in gates:
-                            ctk.CTkLabel(t_frame, text=f"✅ Stand {g}", fg_color="#374151", corner_radius=5, padx=10, pady=5).pack(side="left", padx=5)
-                    else:
-                        ctk.CTkLabel(t_frame, text=f"📍 {term} :", font=ctk.CTkFont(weight="bold")).pack(side="left")
-                        for g in gates:
-                            ctk.CTkLabel(t_frame, text=f"✅ Stand {g}", fg_color="#059669", corner_radius=5, padx=10, pady=5).pack(side="left", padx=10)
+                color = "#374151" if airport_data.get('osm') else "#059669"
+                ctk.CTkLabel(t_frame, text=f"✅ {gateText}", fg_color=color, corner_radius=5, padx=15, pady=8, font=ctk.CTkFont(size=14, weight="bold")).pack(side="left", padx=5)
 
-        render_section("🛫 DEPARTURE", result['departure'])
-        render_section("🛬 ARRIVAL", result['arrival'])
-        render_section("🔄 ALTERNATE", result['alternate'])
+        render_section("🛫 DEPARTURE", result.get('departure'))
+        render_section("🛬 ARRIVAL", result.get('arrival'))
         
         self.update_idletasks()
         req_height = min(self.winfo_reqheight() + 50, 950)

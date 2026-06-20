@@ -200,9 +200,6 @@ out center tags;"""
         destination = data.get('destination', {}).get('icao_code', '')
         if destination: self.airport_names[destination] = data.get('destination', {}).get('name', '').title()
         
-        alternate = data.get('alternate', {}).get('icao_code', '')
-        if alternate: self.airport_names[alternate] = data.get('alternate', {}).get('name', '').title()
-        
         general = data.get('general', {})
         airline = general.get('icao_airline', '')
         if not airline:
@@ -251,8 +248,10 @@ out center tags;"""
             if icao not in self.data:
                 osm_gates, osm_error = self.fetch_osm_gates(icao)
                 if osm_gates:
+                    import random
+                    selected_gate = random.choice(osm_gates)
                     res["osm"] = True
-                    res["gates"] = {"OSM": osm_gates[:10]}
+                    res["gate"] = selected_gate
                 else:
                     err_msg = f"No gates found (GSX or Internet). [{osm_error}]" if osm_error else "No gates found (GSX or Internet)."
                     res["error"] = err_msg
@@ -299,39 +298,9 @@ out center tags;"""
                 return res
                 
             compatible_gates = sorted(list(set(compatible_gates)))
-            terminals = {}
-            for g in compatible_gates:
-                t = get_terminal(g)
-                if t not in terminals:
-                    terminals[t] = []
-                terminals[t].append(g)
-
-            suggested_dict = {}
-            if len(compatible_gates) > 5:
-                suggested = []
-                available_terms = list(terminals.keys())
-                random.shuffle(available_terms)
-                
-                for t in available_terms:
-                    if len(suggested) >= 3: break
-                    suggested.append((t, random.choice(terminals[t])))
-                    
-                if len(suggested) < 3:
-                    used_gates = [g for t, g in suggested]
-                    remaining = [g for g in compatible_gates if g not in used_gates]
-                    random.shuffle(remaining)
-                    for g in remaining:
-                        if len(suggested) >= 3: break
-                        suggested.append((get_terminal(g), g))
-                        
-                for t, g in suggested:
-                    if t not in suggested_dict:
-                        suggested_dict[t] = []
-                    suggested_dict[t].append(g)
-            else:
-                suggested_dict = terminals
-                
-            res["gates"] = {k: sorted(v) for k, v in suggested_dict.items()}
+            import random
+            selected_gate = random.choice(compatible_gates)
+            res["gate"] = selected_gate
             return res
 
         al_name = self.airline_names.get(airline, '')
@@ -339,14 +308,12 @@ out center tags;"""
 
         dep_data = process_airport(origin)
         arr_data = process_airport(destination)
-        alt_data = process_airport(alternate)
 
         self.current_flight_data = {
             "aircraft": aircraft,
             "airline": al_display,
             "departure": dep_data,
-            "arrival": arr_data,
-            "alternate": alt_data if alternate else None
+            "arrival": arr_data
         }
         return self.current_flight_data
 
