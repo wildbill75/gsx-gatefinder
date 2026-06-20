@@ -291,16 +291,26 @@ out center tags;"""
                         else:
                             if t not in cloud_rules:
                                 continue
-                    compatible_gates.append(g['name'])
+                    compatible_gates.append(g)
                     
             if not compatible_gates:
                 res["error"] = "No gates found compatible with aircraft size."
                 return res
                 
-            compatible_gates = sorted(list(set(compatible_gates)))
+            # Sort by wingspan difference to prefer gates closer to aircraft size
+            compatible_gates.sort(key=lambda x: x['wingspan'] - wingspan)
+            
+            seen = set()
+            unique_gates = []
+            for g in compatible_gates:
+                if g['name'] not in seen:
+                    seen.add(g['name'])
+                    unique_gates.append(g)
+            
             import random
-            selected_gate = random.choice(compatible_gates)
-            res["gate"] = selected_gate
+            top_gates = unique_gates[:5]
+            selected_gate = random.choice(top_gates)
+            res["gate"] = selected_gate['name']
             return res
 
         al_name = self.airline_names.get(airline, '')
