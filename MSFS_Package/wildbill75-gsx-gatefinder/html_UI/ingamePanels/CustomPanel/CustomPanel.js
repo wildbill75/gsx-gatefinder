@@ -22,6 +22,7 @@ class GSXGateFinderPanel extends TemplateElement {
             this.btnImport.addEventListener("click", () => this.fetchData());
         }
         this.fetchCurrentData();
+        setInterval(() => this.fetchCurrentData(), 2000);
     }
 
     fetchCurrentData() {
@@ -29,11 +30,15 @@ class GSXGateFinderPanel extends TemplateElement {
             .then(response => response.json())
             .then(data => {
                 if(data && Object.keys(data).length > 0) {
-                    this.renderData(data);
+                    let dataStr = JSON.stringify(data);
+                    if (this.lastDataStr !== dataStr) {
+                        this.lastDataStr = dataStr;
+                        this.renderData(data);
+                    }
                 }
             })
             .catch(err => {
-                console.error("GSX GateFinder API/Current Error:", err);
+                // Ignore silent polling errors
             });
     }
 
