@@ -21,6 +21,20 @@ class GSXGateFinderPanel extends TemplateElement {
         if(this.btnImport) {
             this.btnImport.addEventListener("click", () => this.fetchData());
         }
+        this.fetchCurrentData();
+    }
+
+    fetchCurrentData() {
+        fetch('http://127.0.0.1:8420/api/current')
+            .then(response => response.json())
+            .then(data => {
+                if(data && Object.keys(data).length > 0) {
+                    this.renderData(data);
+                }
+            })
+            .catch(err => {
+                console.error("GSX GateFinder API/Current Error:", err);
+            });
     }
 
     fetchData() {
