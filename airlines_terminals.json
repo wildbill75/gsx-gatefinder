@@ -1300,5 +1300,256 @@
         "Main Terminal"
       ]
     }
+  },
+  "DAAG": {
+    "mapping": {
+      "Terminal 1": [
+        "Terminal W",
+        "Zone 100s"
+      ],
+      "Terminal 4": [
+        "Terminal E",
+        "Zone 400s"
+      ]
+    },
+    "rules": {
+      "DAH": [
+        "Terminal 1"
+      ],
+      "AFR": [
+        "Terminal 1"
+      ],
+      "VLG": [
+        "Terminal 4"
+      ]
+    }
+  },
+  "EBCI": {
+    "mapping": {
+      "Terminal 1": [
+        "Terminal 1"
+      ],
+      "Terminal 2": [
+        "Terminal 2"
+      ]
+    },
+    "rules": {
+      "RYR": [
+        "Terminal 1",
+        "Terminal 2"
+      ],
+      "WZZ": [
+        "Terminal 1"
+      ],
+      "PGT": [
+        "Terminal 1"
+      ]
+    }
+  },
+  "EDDH": {
+    "mapping": {
+      "Terminal 1": [
+        "Terminal A",
+        "Terminal B"
+      ],
+      "Terminal 2": [
+        "Terminal C",
+        "Terminal D"
+      ]
+    },
+    "rules": {
+      "BAW": [
+        "Terminal 1"
+      ],
+      "UAE": [
+        "Terminal 1"
+      ],
+      "EZY": [
+        "Terminal 1"
+      ],
+      "DLH": [
+        "Terminal 2"
+      ],
+      "EWG": [
+        "Terminal 2"
+      ],
+      "RYR": [
+        "Terminal 2"
+      ]
+    }
+  },
+  "EDDL": {
+    "mapping": {
+      "Terminal A": [
+        "Terminal A"
+      ],
+      "Terminal B": [
+        "Terminal B"
+      ],
+      "Terminal C": [
+        "Terminal C"
+      ]
+    },
+    "rules": {
+      "DLH": [
+        "Terminal A"
+      ],
+      "EWG": [
+        "Terminal A"
+      ],
+      "BAW": [
+        "Terminal B"
+      ],
+      "RYR": [
+        "Terminal B"
+      ],
+      "EZY": [
+        "Terminal B"
+      ],
+      "UAE": [
+        "Terminal C"
+      ]
+    }
+  },
+  "EDDS": {
+    "mapping": {
+      "Terminal 3": [
+        "Terminal 3",
+        "Terminal 4"
+      ]
+    },
+    "rules": {
+      "DLH": [
+        "Terminal 3"
+      ],
+      "EWG": [
+        "Terminal 3"
+      ],
+      "FIN": [
+        "Terminal 3"
+      ]
+    }
+  },
+  "EFHK": {
+    "mapping": {
+      "Terminal 1": [
+        "Terminal A",
+        "Terminal B",
+        "Terminal C"
+      ]
+    },
+    "rules": {
+      "DLH": [
+        "Terminal 1"
+      ],
+      "EWG": [
+        "Terminal 1"
+      ],
+      "FIN": [
+        "Terminal 1"
+      ],
+      "RYR": [
+        "Terminal 1"
+      ],
+      "NAX": [
+        "Terminal 1"
+      ]
+    }
+  },
+  "EGPH": {
+    "mapping": {
+      "Main Terminal": [
+        "Terminal A",
+        "Terminal B",
+        "Terminal C"
+      ]
+    },
+    "rules": {
+      "EZY": [
+        "Main Terminal"
+      ],
+      "RYR": [
+        "Main Terminal"
+      ],
+      "BAW": [
+        "Main Terminal"
+      ],
+      "LOT": [
+        "Main Terminal"
+      ],
+      "WZZ": [
+        "Main Terminal"
+      ]
+    }
+  },
+  "EPKK": {
+    "mapping": {
+      "Main Terminal": [
+        "Terminal A",
+        "Terminal B",
+        "Zone 100s"
+      ]
+    },
+    "rules": {
+      "EZY": [
+        "Main Terminal"
+      ],
+      "RYR": [
+        "Main Terminal"
+      ],
+      "BAW": [
+        "Main Terminal"
+      ],
+      "LOT": [
+        "Main Terminal"
+      ],
+      "WZZ": [
+        "Main Terminal"
+      ]
+    }
+  },
+  "EYVI": {
+    "mapping": {
+      "Main Terminal": [
+        "Terminal A",
+        "Terminal B",
+        "Zone 100s"
+      ]
+    },
+    "rules": {
+      "RYR": [
+        "Main Terminal"
+      ],
+      "WZZ": [
+        "Main Terminal"
+      ],
+      "BTI": [
+        "Main Terminal"
+      ]
+    }
+  },
+  "KLGA": {
+    "mapping": {
+      "Terminal B": [
+        "Terminal B"
+      ],
+      "Terminal C": [
+        "Terminal C"
+      ]
+    },
+    "rules": {
+      "AAL": [
+        "Terminal B"
+      ],
+      "SWA": [
+        "Terminal B"
+      ],
+      "JBU": [
+        "Terminal B"
+      ],
+      "DAL": [
+        "Terminal C"
+      ]
+    }
   }
 }
