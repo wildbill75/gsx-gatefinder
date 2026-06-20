@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="/SCSS/common.css" />
+    <link rel="stylesheet" href="CustomPanel.css" />
+
+    <script type="text/javascript" src="/JS/coherent.js"></script>
+    <script type="text/javascript" src="/JS/common.js"></script>
+    <script type="text/javascript" src="/JS/dataStorage.js"></script>
+    <script type="text/javascript" src="/JS/buttons.js"></script>
+    <script type="text/javascript" src="/JS/Services/ToolBarPanels.js"></script>
+    <script type="text/javascript" src="/Pages/VCockpit/Instruments/Shared/BaseInstrument.js"></script>
+
+    <link rel="import" href="/templates/NewPushButton/NewPushButton.html" />
+    <link rel="import" href="/templates/ToggleButton/toggleButton.html" />
+    <link rel="import" href="/templates/tabMenu/tabMenu.html" />
+    <link rel="import" href="/templates/ingameUi/ingameUi.html" />
+    <link rel="import" href="/templates/ingameUiHeader/ingameUiHeader.html" />
+    <link rel="import" href="/templates/NewListButton/NewListButton.html" />
+
+    <script type="text/javascript" src="CustomPanel.js"></script>
+</head>
+<body class="border-box color-white">
+    <gsx-gatefinder-panel>
+        <ingame-ui id="CustomPanel" panel-id="PANEL_CUSTOM_PANEL" title="GSX GATE FINDER V1.0" class="ingameUiFrame panelInvisible" content-fit="true" min-width="400" min-height="500">
+            <div id="MainDisplay">
+            <div id="Header">
+                <h1>GSX GATE FINDER V1.0</h1>
+                <button id="BtnImport">IMPORT SIMBRIEF</button>
+            </div>
+            
+            <div id="AircraftInfo" class="hidden">
+                <div class="badge"><span id="ac_val"></span></div>
+                <div class="badge"><span id="al_val"></span></div>
+            </div>
+            
+            <div id="ResultsArea">
+                <div id="DepBox" class="airport-box hidden">
+                    <div class="airport-title">DEPARTURE - <span id="dep_icao"></span></div>
+                    <div id="dep_error" class="error-text hidden"></div>
+                    <div id="dep_gates" class="gates-container"></div>
+                </div>
+                
+                <div id="ArrBox" class="airport-box hidden">
+                    <div class="airport-title">ARRIVAL - <span id="arr_icao"></span></div>
+                    <div id="arr_error" class="error-text hidden"></div>
+                    <div id="arr_gates" class="gates-container"></div>
+                </div>
+            </div>
+        </ingame-ui>
+    </gsx-gatefinder-panel>
+</body>
+</html>
