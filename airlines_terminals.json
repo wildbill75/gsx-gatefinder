@@ -2054,5 +2054,229 @@
         "Main Terminal"
       ]
     }
+  },
+  "DTMB": {
+    "mapping": {
+      "Main Terminal": [
+        "Main Apron",
+        "Terminal A",
+        "Terminal G",
+        "Terminal P"
+      ]
+    },
+    "rules": {
+      "LBT": [
+        "Main Terminal"
+      ],
+      "TAR": [
+        "Main Terminal"
+      ],
+      "TVF": [
+        "Main Terminal"
+      ],
+      "TRA": [
+        "Main Terminal"
+      ]
+    }
+  },
+  "DTNH": {
+    "mapping": {
+      "Main Terminal": [
+        "Main Apron",
+        "Terminal A",
+        "Terminal B",
+        "Terminal C",
+        "Terminal W"
+      ]
+    },
+    "rules": {
+      "EZY": [
+        "Main Terminal"
+      ],
+      "TOM": [
+        "Main Terminal"
+      ],
+      "TUB": [
+        "Main Terminal"
+      ],
+      "TFL": [
+        "Main Terminal"
+      ],
+      "TUI": [
+        "Main Terminal"
+      ],
+      "LBT": [
+        "Main Terminal"
+      ],
+      "TAR": [
+        "Main Terminal"
+      ],
+      "TVF": [
+        "Main Terminal"
+      ],
+      "TRA": [
+        "Main Terminal"
+      ]
+    }
+  },
+  "EGGD": {
+    "mapping": {
+      "Main Terminal": [
+        "Main Apron"
+      ]
+    },
+    "rules": {
+      "EZY": [
+        "Main Terminal"
+      ],
+      "RYR": [
+        "Main Terminal"
+      ],
+      "LOG": [
+        "Main Terminal"
+      ],
+      "BAW": [
+        "Main Terminal"
+      ],
+      "KLM": [
+        "Main Terminal"
+      ]
+    }
+  },
+  "EGPD": {
+    "mapping": {
+      "Main Terminal": [
+        "Main Apron"
+      ]
+    },
+    "rules": {
+      "EZY": [
+        "Main Terminal"
+      ],
+      "RYR": [
+        "Main Terminal"
+      ],
+      "LOG": [
+        "Main Terminal"
+      ],
+      "BAW": [
+        "Main Terminal"
+      ],
+      "KLM": [
+        "Main Terminal"
+      ]
+    }
+  },
+  "EGPE": {
+    "mapping": {
+      "Main Terminal": [
+        "Main Apron"
+      ]
+    },
+    "rules": {
+      "EZY": [
+        "Main Terminal"
+      ],
+      "LOG": [
+        "Main Terminal"
+      ],
+      "KLM": [
+        "Main Terminal"
+      ]
+    }
+  },
+  "ENBR": {
+    "mapping": {
+      "Main Terminal": [
+        "Main Apron",
+        "Terminal RAMP"
+      ]
+    },
+    "rules": {
+      "SAS": [
+        "Main Terminal"
+      ],
+      "NAX": [
+        "Main Terminal"
+      ],
+      "WIF": [
+        "Main Terminal"
+      ],
+      "KLM": [
+        "Main Terminal"
+      ],
+      "LOG": [
+        "Main Terminal"
+      ]
+    }
+  },
+  "ENTC": {
+    "mapping": {
+      "Main Terminal": [
+        "Main Apron"
+      ]
+    },
+    "rules": {
+      "SAS": [
+        "Main Terminal"
+      ],
+      "NAX": [
+        "Main Terminal"
+      ],
+      "WIF": [
+        "Main Terminal"
+      ]
+    }
+  },
+  "EPRA": {
+    "mapping": {
+      "Main Terminal": [
+        "Main Apron"
+      ]
+    },
+    "rules": {
+      "LOT": [
+        "Main Terminal"
+      ]
+    }
+  },
+  "GCLA": {
+    "mapping": {
+      "Main Terminal": [
+        "Main Apron"
+      ]
+    },
+    "rules": {
+      "IBB": [
+        "Main Terminal"
+      ],
+      "IBE": [
+        "Main Terminal"
+      ],
+      "EZY": [
+        "Main Terminal"
+      ]
+    }
+  },
+  "GMME": {
+    "mapping": {
+      "Main Terminal": [
+        "Terminal C"
+      ]
+    },
+    "rules": {
+      "RAM": [
+        "Main Terminal"
+      ],
+      "RYR": [
+        "Main Terminal"
+      ],
+      "AFR": [
+        "Main Terminal"
+      ],
+      "EZY": [
+        "Main Terminal"
+      ]
+    }
   }
 }
