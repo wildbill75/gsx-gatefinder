@@ -33,6 +33,7 @@ class GateFinderBackend:
         self.data = {}
         self.airport_names = {}
         self.airline_names = self._load_airlines()
+        self.cloud_ruleset = self._fetch_cloud_ruleset()
         self.server_thread = None
 
     def load_data(self):
@@ -141,6 +142,25 @@ class GateFinderBackend:
             "TRA": "Transavia Airlines"
         }
 
+    def _fetch_cloud_ruleset(self):
+        url = "https://raw.githubusercontent.com/wildbill75/gsx-gatefinder/main/airlines_terminals.json"
+        cache_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "cloud_rules_cache.json")
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=3.0) as response:
+                data = json.loads(response.read().decode('utf-8'))
+                with open(cache_file, 'w', encoding='utf-8') as f:
+                    json.dump(data, f)
+                return data
+        except Exception:
+            try:
+                if os.path.exists(cache_file):
+                    with open(cache_file, 'r', encoding='utf-8') as f:
+                        return json.load(f)
+            except Exception:
+                pass
+        return {}
+
     def fetch_osm_gates(self, icao):
         try:
             overpass_url = "https://overpass-api.de/api/interpreter"
@@ -246,9 +266,14 @@ class GateFinderBackend:
                 if g['name'] not in existing_names:
                     all_gates.append(g)
             
+            cloud_rules = self.cloud_ruleset.get(icao, {}).get(airline, [])
+            
             compatible_gates = []
             for g in all_gates:
                 if g['wingspan'] >= wingspan:
+                    t = get_terminal(g['name'])
+                    if cloud_rules and t not in cloud_rules:
+                        continue
                     compatible_gates.append(g['name'])
                     
             if not compatible_gates:
