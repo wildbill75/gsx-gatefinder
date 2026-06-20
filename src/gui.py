@@ -67,11 +67,11 @@ class SettingsWindow(ctk.CTkToplevel):
         scan_frame = ctk.CTkFrame(self, fg_color=("gray85", "gray17"))
         scan_frame.pack(fill="x", padx=20, pady=10)
         
-        self.scan_lbl = ctk.CTkLabel(scan_frame, text="Synchronize with Community Database:")
-        self.scan_lbl.pack(pady=5)
+        self.scan_lbl = ctk.CTkLabel(scan_frame, text="Synchronize with Community Database:", font=("Arial", 14, "bold"))
+        self.scan_lbl.pack(pady=10)
         
         btn_frame = ctk.CTkFrame(scan_frame, fg_color="transparent")
-        btn_frame.pack(pady=5)
+        btn_frame.pack(pady=15)
         
         ctk.CTkButton(btn_frame, text="Scan Installed Airports", command=self.run_scan, width=150).pack(side="left", padx=5)
         self.btn_contribute = ctk.CTkButton(btn_frame, text="Contribute Missing", command=self.run_contribute, width=150, fg_color="#10B981", hover_color="#059669")
@@ -97,7 +97,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self.scan_lbl.configure(text=f"✅ {supported} airports synchronized with GateFinder.")
         
         if unknown > 0:
-            self.scan_lbl.configure(text=f"✅ {supported} airports synchronized.\n🌟 You have {unknown} airports that can be added to the community DB!")
+            self.scan_lbl.configure(text=f"✅ {supported} airports synchronized.\n\n🌟 You have {unknown} airports that can be added to the community DB!")
             self.btn_contribute.configure(text=f"Share {unknown} Airports", state="normal")
         else:
             self.btn_contribute.configure(text="Community DB is Up to Date", state="disabled")
