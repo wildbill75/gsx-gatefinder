@@ -166,12 +166,10 @@ class GateFinderBackend:
     def fetch_osm_gates(self, icao):
         try:
             overpass_url = "https://overpass-api.de/api/interpreter"
-            query = f"""
-            [out:json][timeout:10];
-            area["icao"="{icao}"]->.a;
-            nwr(area.a)["aeroway"="parking_position"];
-            out center tags;
-            """.strip()
+            query = f"""[out:json][timeout:10];
+area["icao"="{icao}"]->.a;
+nwr(area.a)["aeroway"="parking_position"];
+out center tags;"""
             req = urllib.request.Request(overpass_url, data=query.encode('utf-8'), headers={'User-Agent': 'Mozilla/5.0'})
             with urllib.request.urlopen(req, timeout=10) as response:
                 osm_data = json.loads(response.read().decode())
