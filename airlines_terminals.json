@@ -1820,5 +1820,239 @@
         "Main Terminal"
       ]
     }
+  },
+  "LBSF": {
+    "mapping": {
+      "Terminal 1": [
+        "Main Apron"
+      ],
+      "Terminal 2": []
+    },
+    "rules": {
+      "WZZ": [
+        "Terminal 1"
+      ],
+      "EZY": [
+        "Terminal 1"
+      ],
+      "RYR": [
+        "Terminal 2"
+      ],
+      "LZB": [
+        "Terminal 2"
+      ]
+    }
+  },
+  "LECO": {
+    "mapping": {
+      "Terminal 1": [
+        "Main Apron"
+      ]
+    },
+    "rules": {
+      "IBE": [
+        "Terminal 1"
+      ],
+      "VLG": [
+        "Terminal 1"
+      ],
+      "EZY": [
+        "Terminal 1"
+      ]
+    }
+  },
+  "LEIB": {
+    "mapping": {
+      "Main Terminal": [
+        "Main Apron"
+      ]
+    },
+    "rules": {
+      "RYR": [
+        "Main Terminal"
+      ],
+      "EZY": [
+        "Main Terminal"
+      ],
+      "VLG": [
+        "Main Terminal"
+      ],
+      "BAW": [
+        "Main Terminal"
+      ],
+      "IBE": [
+        "Main Terminal"
+      ],
+      "VOE": [
+        "Main Terminal"
+      ]
+    }
+  },
+  "LEMH": {
+    "mapping": {
+      "Main Terminal": [
+        "Main Apron",
+        "Terminal A"
+      ]
+    },
+    "rules": {
+      "RYR": [
+        "Main Terminal"
+      ],
+      "EZY": [
+        "Main Terminal"
+      ],
+      "VLG": [
+        "Main Terminal"
+      ],
+      "BAW": [
+        "Main Terminal"
+      ],
+      "IBE": [
+        "Main Terminal"
+      ],
+      "VOE": [
+        "Main Terminal"
+      ]
+    }
+  },
+  "LFKC": {
+    "mapping": {
+      "Main Terminal": [
+        "Main Apron"
+      ]
+    },
+    "rules": {
+      "CCM": [
+        "Main Terminal"
+      ],
+      "AFR": [
+        "Main Terminal"
+      ],
+      "EZY": [
+        "Main Terminal"
+      ],
+      "VOE": [
+        "Main Terminal"
+      ]
+    }
+  },
+  "LFKF": {
+    "mapping": {
+      "Main Terminal": [
+        "Terminal A"
+      ]
+    },
+    "rules": {
+      "CCM": [
+        "Main Terminal"
+      ],
+      "AFR": [
+        "Main Terminal"
+      ],
+      "EZY": [
+        "Main Terminal"
+      ],
+      "VOE": [
+        "Main Terminal"
+      ]
+    }
+  },
+  "LFLL": {
+    "mapping": {
+      "Terminal 1": [
+        "Main Apron"
+      ]
+    },
+    "rules": {
+      "AFR": [
+        "Terminal 1"
+      ],
+      "EZY": [
+        "Terminal 1"
+      ],
+      "VOE": [
+        "Terminal 1"
+      ],
+      "RYR": [
+        "Terminal 1"
+      ],
+      "WZZ": [
+        "Terminal 1"
+      ]
+    }
+  },
+  "LFOB": {
+    "mapping": {
+      "Terminal 1": [
+        "Main Apron",
+        "Terminal L"
+      ],
+      "Terminal 2": []
+    },
+    "rules": {
+      "RYR": [
+        "Terminal 1",
+        "Terminal 2"
+      ],
+      "WZZ": [
+        "Terminal 1",
+        "Terminal 2"
+      ],
+      "VOE": [
+        "Terminal 1",
+        "Terminal 2"
+      ]
+    }
+  },
+  "LGIR": {
+    "mapping": {
+      "Main Terminal": [
+        "Main Apron",
+        "Terminal L",
+        "Terminal T"
+      ]
+    },
+    "rules": {
+      "AEE": [
+        "Main Terminal"
+      ],
+      "EZY": [
+        "Main Terminal"
+      ],
+      "RYR": [
+        "Main Terminal"
+      ],
+      "VOE": [
+        "Main Terminal"
+      ],
+      "BAW": [
+        "Main Terminal"
+      ]
+    }
+  },
+  "LGMK": {
+    "mapping": {
+      "Main Terminal": [
+        "Main Apron"
+      ]
+    },
+    "rules": {
+      "AEE": [
+        "Main Terminal"
+      ],
+      "EZY": [
+        "Main Terminal"
+      ],
+      "RYR": [
+        "Main Terminal"
+      ],
+      "VOE": [
+        "Main Terminal"
+      ],
+      "BAW": [
+        "Main Terminal"
+      ]
+    }
   }
 }
