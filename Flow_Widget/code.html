@@ -1,0 +1,37 @@
+<div id="app" class="dark-theme">
+    <header id="drag-header" style="cursor: move;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <div class="status-indicator" id="server-status"></div>
+            <h1>GSX GATE FINDER</h1>
+        </div>
+        <button id="btn-close" style="background: none; border: none; color: white; cursor: pointer; font-size: 1.2rem;">✖</button>
+    </header>
+
+    <main>
+        <div class="controls-card">
+            <button id="btn-import" class="btn-primary">
+                Import SimBrief
+            </button>
+        </div>
+
+        <div id="results-container" class="hidden">
+            <div class="badges-row">
+                <div class="badge">Aircraft: <span id="res-aircraft"></span></div>
+                <div class="badge">Airline: <span id="res-airline"></span></div>
+            </div>
+            <div id="airports-list"></div>
+        </div>
+
+        <div id="error-message" class="hidden error-card"></div>
+    </main>
+</div>
+
+<template id="tpl-airport">
+    <div class="airport-card">
+        <h2 class="airport-title">
+            <span class="ap-type"></span> - <span class="ap-icao"></span>
+        </h2>
+        <div class="airport-error hidden"></div>
+        <div class="gates-container"></div>
+    </div>
+</template>

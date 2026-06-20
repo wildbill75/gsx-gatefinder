@@ -1,0 +1,39 @@
+{
+  "content": [
+    {
+      "path": "manifest.json",
+      "size": 336,
+      "date": 134263569400000000
+    },
+    {
+      "path": "html_UI/Icons/toolbar/CustomPanel-OFF.svg",
+      "size": 268,
+      "date": 133939790585141908
+    },
+    {
+      "path": "html_UI/Icons/toolbar/CustomPanel.svg",
+      "size": 252,
+      "date": 133939790550478144
+    },
+    {
+      "path": "html_UI/ingamePanels/CustomPanel/CustomPanel.css",
+      "size": 1925,
+      "date": 134263569400000000
+    },
+    {
+      "path": "html_UI/ingamePanels/CustomPanel/CustomPanel.html",
+      "size": 2125,
+      "date": 134263569400000000
+    },
+    {
+      "path": "html_UI/ingamePanels/CustomPanel/CustomPanel.js",
+      "size": 3857,
+      "date": 134263569400000000
+    },
+    {
+      "path": "InGamePanels/InGamePanel_CustomPanel.spb",
+      "size": 698,
+      "date": 134263569400000000
+    }
+  ]
+}
