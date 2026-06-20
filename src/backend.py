@@ -166,23 +166,23 @@ class GateFinderBackend:
     def fetch_osm_gates(self, icao):
         try:
             overpass_url = "https://overpass-api.de/api/interpreter"
-            query = f"""[out:json][timeout:10];
+            query = f"""[out:json][timeout:25];
 area["icao"="{icao}"]->.a;
 nwr(area.a)["aeroway"="parking_position"];
 out center tags;"""
-            req = urllib.request.Request(overpass_url, data=query.encode('utf-8'), headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=10) as response:
+            req = urllib.request.Request(overpass_url, data=query.encode('utf-8'), headers={'User-Agent': 'GateFinder/1.0 Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=15) as response:
                 osm_data = json.loads(response.read().decode())
-                
             gates = []
+            if 'remark' in osm_data:
+                return [], osm_data['remark']
             for element in osm_data.get('elements', []):
                 tags = element.get('tags', {})
                 ref = tags.get('ref')
-                if ref:
-                    gates.append(ref)
-            return sorted(list(set(gates)))
-        except Exception:
-            return []
+                if ref: gates.append(ref)
+            return sorted(list(set(gates))), None
+        except Exception as e:
+            return [], str(e)
 
     def get_flight_data(self, username):
         if username.isdigit():
@@ -249,12 +249,13 @@ out center tags;"""
             }
             
             if icao not in self.data:
-                osm_gates = self.fetch_osm_gates(icao)
+                osm_gates, osm_error = self.fetch_osm_gates(icao)
                 if osm_gates:
                     res["osm"] = True
                     res["gates"] = {"OSM": osm_gates[:10]}
                 else:
-                    res["error"] = "No gates found (GSX or Internet)."
+                    err_msg = f"No gates found (GSX or Internet). [{osm_error}]" if osm_error else "No gates found (GSX or Internet)."
+                    res["error"] = err_msg
                 return res
 
             gates = self.data.get(icao, {}).get(airline, [])
