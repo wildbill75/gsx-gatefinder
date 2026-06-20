@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8" />
     <link rel="stylesheet" href="/SCSS/common.css" />
-    <link rel="stylesheet" href="CustomPanel.css" />
+    <link rel="stylesheet" href="CustomPanel.css?v=3" />
 
     <script type="text/javascript" src="/JS/coherent.js"></script>
     <script type="text/javascript" src="/JS/common.js"></script>
@@ -18,16 +18,13 @@
     <link rel="import" href="/templates/ingameUi/ingameUi.html" />
     <link rel="import" href="/templates/ingameUiHeader/ingameUiHeader.html" />
     <link rel="import" href="/templates/NewListButton/NewListButton.html" />
-
-    <script type="text/javascript" src="CustomPanel.js"></script>
+    <script type="text/javascript" src="CustomPanel.js?v=4"></script>
 </head>
 <body class="border-box color-white">
     <gsx-gatefinder-panel>
         <ingame-ui id="CustomPanel" panel-id="PANEL_CUSTOM_PANEL" title="GSX GATE FINDER V1.0" class="ingameUiFrame panelInvisible" content-fit="true" min-width="400" min-height="500">
             <div id="MainDisplay">
-            <div id="Header">
-                <button id="BtnImport">IMPORT SIMBRIEF</button>
-            </div>
+            <div id="Header" class="hidden"></div>
             
             <div id="AircraftInfo" class="hidden">
                 <div class="badge"><span id="ac_val"></span></div>

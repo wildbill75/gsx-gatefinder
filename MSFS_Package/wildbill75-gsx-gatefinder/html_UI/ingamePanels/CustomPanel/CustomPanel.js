@@ -19,10 +19,6 @@ class GSXGateFinderPanel extends TemplateElement {
     }
 
     init() {
-        this.btnImport = this.querySelector("#BtnImport");
-        if(this.btnImport) {
-            this.btnImport.addEventListener("click", () => this.fetchData());
-        }
         this.fetchCurrentData();
         setInterval(() => this.fetchCurrentData(), 2000);
     }
@@ -41,26 +37,6 @@ class GSXGateFinderPanel extends TemplateElement {
             })
             .catch(err => {
                 // Ignore silent polling errors
-            });
-    }
-
-    fetchData() {
-        if(this.btnImport) this.btnImport.innerText = "IMPORTING...";
-        
-        fetch('http://127.0.0.1:8420/api/simbrief')
-            .then(response => response.json())
-            .then(data => {
-                if(data.error) {
-                    console.error("GSX GateFinder Error:", data.error);
-                    if(this.btnImport) this.btnImport.innerText = "ERROR: " + data.error;
-                    return;
-                }
-                this.renderData(data);
-                if(this.btnImport) this.btnImport.innerText = "IMPORT SIMBRIEF";
-            })
-            .catch(err => {
-                console.error("GSX GateFinder Network Error:", err);
-                if(this.btnImport) this.btnImport.innerText = "SERVER DISCONNECTED";
             });
     }
 
