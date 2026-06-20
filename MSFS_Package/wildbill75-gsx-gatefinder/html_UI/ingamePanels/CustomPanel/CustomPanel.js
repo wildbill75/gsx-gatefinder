@@ -7,13 +7,25 @@ class GSXGateFinderPanel extends TemplateElement {
         super.connectedCallback();
         
         let self = this;
+        function replaceText(node) {
+            if (node.nodeType === Node.TEXT_NODE) {
+                if (node.nodeValue && node.nodeValue.trim() === "CUSTOMPANEL") {
+                    node.nodeValue = "GSX GATE FINDER V1.0";
+                }
+            } else if (node.nodeType === Node.ELEMENT_NODE) {
+                if (node.shadowRoot) {
+                    for (let child of node.shadowRoot.childNodes) replaceText(child);
+                }
+                for (let child of node.childNodes) replaceText(child);
+            }
+        }
+        
+        setTimeout(() => replaceText(document.documentElement), 500);
+        setTimeout(() => replaceText(document.documentElement), 1500);
+        setTimeout(() => replaceText(document.documentElement), 3000);
+        setTimeout(() => replaceText(document.documentElement), 5000);
+
         setTimeout(() => {
-            try {
-                self.setAttribute("title", "GSX Gatefinder V1.0");
-                let titleEl = self.querySelector('.ingameUiTitle') || self.querySelector('.window-title') || document.querySelector('.window-title');
-                if (titleEl) titleEl.innerText = "GSX Gatefinder V1.0";
-                window.document.title = "GSX Gatefinder V1.0";
-            } catch(e) {}
             self.init();
         }, 500);
     }
