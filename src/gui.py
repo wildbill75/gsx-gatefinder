@@ -22,6 +22,7 @@ class SettingsView(ctk.CTkFrame):
         
         form_frame = ctk.CTkFrame(self, fg_color="transparent")
         form_frame.pack(fill="x", padx=20)
+        form_frame.grid_columnconfigure(1, weight=1)
         
         ctk.CTkLabel(form_frame, text="Simbrief Username / Pilot ID:").grid(row=0, column=0, sticky="w", pady=10)
         self.simbrief_entry = ctk.CTkEntry(form_frame, width=120)
@@ -33,7 +34,7 @@ class SettingsView(ctk.CTkFrame):
         gsx_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
         gsx_frame.grid(row=1, column=1, padx=10, pady=10, sticky="ew")
         
-        self.gsx_entry = ctk.CTkEntry(gsx_frame, width=300)
+        self.gsx_entry = ctk.CTkEntry(gsx_frame)
         self.gsx_entry.pack(side="left", fill="x", expand=True)
         self.gsx_entry.insert(0, self.config.settings.get("gsx_profile_path", ""))
         
@@ -77,7 +78,7 @@ class SettingsView(ctk.CTkFrame):
         btn_frame.pack(pady=15)
         
         ctk.CTkButton(btn_frame, text="Scan Installed Airports", command=self.run_scan, width=150).pack(side="left", padx=5)
-        self.btn_contribute = ctk.CTkButton(btn_frame, text="Contribute Missing", command=self.run_contribute, width=150, fg_color="#10B981", hover_color="#059669")
+        self.btn_contribute = ctk.CTkButton(btn_frame, text="Contribute Missing", command=self.run_contribute, width=150, fg_color="#10B981", hover_color="#059669", text_color_disabled="#1f2937")
         self.btn_contribute.pack(side="left", padx=5)
         self.btn_contribute.configure(state="disabled")
         

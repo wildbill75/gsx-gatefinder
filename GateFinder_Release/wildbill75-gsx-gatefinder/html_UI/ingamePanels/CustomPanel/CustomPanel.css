@@ -1,0 +1,115 @@
+gsx-gatefinder-panel {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(30, 30, 35, 0.9);
+    border-radius: 10px;
+    padding: 15px;
+    font-family: 'Open Sans', sans-serif;
+    color: white;
+    box-sizing: border-box;
+    overflow-y: auto;
+}
+
+#Header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 2px solid #333;
+    padding-bottom: 15px;
+    margin-bottom: 15px;
+}
+
+h1 {
+    font-size: 24px;
+    font-weight: bold;
+    margin: 0;
+}
+
+#BtnImport {
+    background-color: #0284c7;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    padding: 12px 20px;
+    font-weight: bold;
+    font-size: 20px;
+    cursor: pointer;
+    margin: 0 auto;
+    display: block;
+}
+
+#BtnImport:hover {
+    background-color: #0369a1;
+}
+
+.hidden {
+    display: none !important;
+}
+
+#AircraftInfo {
+    display: flex;
+justify-content: space-between;
+    margin-bottom: 20px;
+}
+
+.badge {
+    background-color: #1e3a8a;
+    padding: 15px;
+    border-radius: 8px;
+    font-weight: bold;
+    font-size: 20px;
+    width: 48%;
+    text-align: center;
+}
+
+.airport-box {
+    background-color: rgba(60, 60, 65, 0.7);
+    border-radius: 10px;
+    padding: 15px;
+    margin-bottom: 15px;
+}
+
+.airport-title {
+    font-weight: bold;
+    font-size: 24px;
+    margin-bottom: 10px;
+}
+
+.error-text {
+    color: #ef4444;
+    font-size: 16px;
+    font-weight: bold;
+}
+
+.warning-text {
+    color: #f59e0b;
+    font-size: 16px;
+    font-weight: bold;
+}
+
+.term-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+
+.term-name {
+    font-weight: bold;
+    font-size: 20px;
+    margin-right: 15px;
+}
+
+.gate-badge {
+    background-color: #059669;
+    padding: 8px 15px;
+    border-radius: 5px;
+    margin-right: 10px;
+    font-size: 20px;
+}
+
+.gate-badge.osm {
+    background-color: #374151;
+}
