@@ -10,7 +10,11 @@ from backend import GateFinderBackend
 from gui import GUIApp
 
 def create_icon_image():
-    # Create a simple blue airplane-like icon
+    # Load the custom logo image instead of drawing it dynamically
+    icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
+    if os.path.exists(icon_path):
+        return Image.open(icon_path)
+    # Fallback to dynamic drawing if file not found
     image = Image.new('RGB', (64, 64), color=(30, 58, 138))
     draw = ImageDraw.Draw(image)
     draw.rectangle([16, 24, 48, 40], fill="white")

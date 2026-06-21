@@ -13,7 +13,10 @@ class SettingsWindow(ctk.CTkToplevel):
     def __init__(self, parent, config: Config, autostart: AutoStartManager, backend, on_save_callback):
         super().__init__(parent)
         self.title("GateFinder - Settings")
-        self.geometry("500x500")
+        self.geometry("400x500")
+        icon_path = os.path.join(os.path.dirname(__file__), "icon.ico")
+        if os.path.exists(icon_path):
+            self.iconbitmap(icon_path)
         self.config = config
         self.autostart = autostart
         self.backend = backend
@@ -135,7 +138,10 @@ class GUIApp(ctk.CTk):
     def __init__(self, config, autostart, backend):
         super().__init__()
         self.title("MSFS 2024 - GSX Gate Finder V1.0")
-        self.geometry("600x750")
+        self.geometry("900x700")
+        icon_path = os.path.join(os.path.dirname(__file__), "icon.ico")
+        if os.path.exists(icon_path):
+            self.iconbitmap(icon_path)
         self.minsize(550, 700)
         
         # Hide window if started silently
