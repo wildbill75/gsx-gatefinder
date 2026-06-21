@@ -1,15 +1,6 @@
 <?xml version="1.0" encoding="Windows-1252"?>
-<InGamePanels>
-	<InGamePanel>
-		<id>PANEL_CUSTOM_PANEL</id>
-		<icon>CustomPanel</icon>
-		<html_file>html_UI/ingamePanels/CustomPanel/CustomPanel.html</html_file>
-		<toolbar_icon>html_UI/Icons/toolbar/CustomPanel.svg</toolbar_icon>
-		<title>GSX GateFinder V1.0</title>
-		<tooltip>GSX GateFinder V1.0</tooltip>
-		<size>400, 500</size>
-		<min_size>400, 500</min_size>
-		<show_when_toolbar_hidden>False</show_when_toolbar_hidden>
-		<start_hidden>True</start_hidden>
-	</InGamePanel>
-</InGamePanels>
+<SimBase.Document Type="InGamePanels" version="1,0">
+  <Filename>InGamePanel_CustomPanel.xml</Filename>
+  <InGamePanels.InGamePanelDefinition id="PANEL_CUSTOM_PANEL" Name="GSX GateFinder V1.0" url="html_UI/ingamePanels/CustomPanel/CustomPanel.html" resizeDirections="Both" minWidth="33" minHeight="35" defaultWidth="36" defaultHeight="36" defaultTop="33" defaultRight="2" icon="CustomPanel" buttonVisible="true">
+  </InGamePanels.InGamePanelDefinition>
+</SimBase.Document>
