@@ -54,7 +54,7 @@ def setup_tray(app, backend):
         pystray.MenuItem("Quit", quit_app)
     )
 
-    icon = pystray.Icon("GSX GateFinder", create_icon_image(), "GSX GateFinder", menu)
+    icon = pystray.Icon("GateFinder", create_icon_image(), "GateFinder", menu)
     icon.run()
 
 def check_loopback_exemption():
@@ -68,7 +68,7 @@ def check_loopback_exemption():
 if __name__ == "__main__":
     check_loopback_exemption()
     # Prevent multiple instances
-    mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "Global\\GSXGateFinderMutex")
+    mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "Global\\GateFinderMutex")
     if ctypes.windll.kernel32.GetLastError() == 183: # ERROR_ALREADY_EXISTS
         sys.exit(0)
 

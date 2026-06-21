@@ -147,7 +147,7 @@ class GUIApp(ctk.CTk):
 
     def __init__(self, config, autostart, backend):
         super().__init__()
-        self.title("MSFS 2024 - GSX Gate Finder V1.0")
+        self.title("MSFS 2024 - GateFinder V1.0")
         self.geometry("900x700")
         icon_path = self.get_resource_path("icon.ico")
         if os.path.exists(icon_path):
@@ -188,7 +188,7 @@ class GUIApp(ctk.CTk):
         header_frame = ctk.CTkFrame(self, fg_color="transparent")
         header_frame.pack(fill="x", padx=20, pady=(20, 10))
         
-        ctk.CTkLabel(header_frame, text="GSX GATE FINDER V1.0", font=ctk.CTkFont(size=30, weight="bold")).pack(side="left")
+        ctk.CTkLabel(header_frame, text="GATEFINDER V1.0", font=ctk.CTkFont(size=30, weight="bold")).pack(side="left")
         ctk.CTkButton(header_frame, text="⚙ Settings", width=120, command=self.show_settings).pack(side="right")
         
         self.sb_frame = ctk.CTkFrame(self, corner_radius=15, fg_color=("gray85", "gray17"))
