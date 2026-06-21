@@ -15,21 +15,26 @@ def get_resource_path(relative_path):
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
 
 def create_icon_image():
-    # Load the custom logo image instead of drawing it dynamically
-    import os
-    icon_path = get_resource_path("icon.png")
-    if os.path.exists(icon_path):
-        img = Image.open(icon_path).convert("RGBA")
-        img.thumbnail((64, 64))
-        return img
-    # Fallback to dynamic drawing if file not found
-    image = Image.new('RGB', (64, 64), color=(30, 58, 138))
-    draw = ImageDraw.Draw(image)
-    draw.rectangle([16, 24, 48, 40], fill="white")
-    draw.polygon([(48, 24), (60, 32), (48, 40)], fill="white")
-    draw.polygon([(24, 8), (32, 24), (16, 24)], fill="white")
-    draw.polygon([(24, 56), (32, 40), (16, 40)], fill="white")
-    return image
+    # Dynamically draw the icon to guarantee pystray compatibility on Windows
+    img = Image.new('RGB', (64, 64), (30, 58, 138))
+    draw = ImageDraw.Draw(img)
+    def s(val): return int(val * 0.64)
+    
+    draw.line([(s(20), s(15)), (s(20), s(90)), (s(80), s(90)), (s(80), s(15))], fill=(255,255,255), width=max(1, s(2)))
+    draw.line([(s(35), s(15)), (s(65), s(15))], fill=(255,255,255), width=max(1, s(4)))
+    for y in range(s(5), s(95), s(10)):
+        draw.line([(s(50), y), (s(50), min(y+s(6), s(95)))], fill=(200,200,200), width=max(1, s(3)))
+        
+    plane_points = [
+        (s(50), s(20)), (s(53), s(22)), (s(54), s(28)), (s(54), s(35)),
+        (s(85), s(55)), (s(85), s(60)), (s(54), s(60)),
+        (s(54), s(75)), (s(65), s(80)), (s(65), s(83)), (s(50), s(81)),
+        (s(35), s(83)), (s(35), s(80)), (s(46), s(75)),
+        (s(46), s(60)), (s(15), s(60)), (s(15), s(55)), (s(46), s(35)),
+        (s(46), s(28)), (s(47), s(22))
+    ]
+    draw.polygon(plane_points, fill=(255,255,255))
+    return img
 
 def setup_tray(app, backend):
     def show_main(icon, item):
