@@ -1,4 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-  <rect x="0" y="0" width="100" height="100" style="fill: #2563EB !important; stroke: none !important;"/>
-  <text x="50" y="70" font-family="Arial, sans-serif" font-weight="bold" font-size="55" style="fill: #FFFFFF !important; stroke: none !important;" text-anchor="middle">GF</text>
+  <rect x="0" y="0" width="100" height="100" style="fill: #2563EB !important;"/>
+  <path d="M 45 35 L 25 35 L 25 65 L 45 65 L 45 50 L 35 50" fill="none" stroke="#FFFFFF" stroke-width="8" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M 55 65 L 55 35 L 75 35 M 55 50 L 70 50" fill="none" stroke="#FFFFFF" stroke-width="8" stroke-linejoin="round" stroke-linecap="round"/>
 </svg>
