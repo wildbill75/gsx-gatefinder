@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="Windows-1252"?>
-<SimBase.Document Type="InGamePanels" version="1,0">
-  <Filename>GSXGateFinder.spb</Filename>
-  <InGamePanels.InGamePanelDefinition id="GSXGateFinderPanel" Name="GSX Gate Finder" url="html_ui/InGamePanels/GSXGateFinder/GSXGateFinder.html" resizeDirections="Both" minWidth="600" minHeight="400" defaultWidth="800" defaultHeight="600" defaultTop="100" defaultRight="100" icon="html_ui/Icons/toolbar/GSXGateFinder.svg" buttonVisible="true">
-  </InGamePanels.InGamePanelDefinition>
-</SimBase.Document>

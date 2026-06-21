@@ -1,7 +1,0 @@
-<Project Version="2" Name="wildbill75-gsx-gatefinder" FolderName="Packages">
-	<OutputDirectory>.</OutputDirectory>
-	<TemporaryOutputDirectory>_Temp</TemporaryOutputDirectory>
-	<Packages>
-		<Package>PackageDefinitions\wildbill75-gsx-gatefinder.xml</Package>
-	</Packages>
-</Project>
