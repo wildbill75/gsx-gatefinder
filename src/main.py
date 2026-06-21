@@ -9,11 +9,19 @@ from autostart import AutoStartManager
 from backend import GateFinderBackend
 from gui import GUIApp
 
+def get_resource_path(relative_path):
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
+
 def create_icon_image():
     # Load the custom logo image instead of drawing it dynamically
-    icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
+    import os
+    icon_path = get_resource_path("icon.png")
     if os.path.exists(icon_path):
-        return Image.open(icon_path)
+        img = Image.open(icon_path).convert("RGBA")
+        img.thumbnail((64, 64))
+        return img
     # Fallback to dynamic drawing if file not found
     image = Image.new('RGB', (64, 64), color=(30, 58, 138))
     draw = ImageDraw.Draw(image)

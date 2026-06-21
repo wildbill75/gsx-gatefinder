@@ -10,11 +10,16 @@ ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
 class SettingsWindow(ctk.CTkToplevel):
+    def get_resource_path(self, relative_path):
+        if hasattr(sys, '_MEIPASS'):
+            return os.path.join(sys._MEIPASS, relative_path)
+        return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
+
     def __init__(self, parent, config: Config, autostart: AutoStartManager, backend, on_save_callback):
         super().__init__(parent)
         self.title("GateFinder - Settings")
         self.geometry("400x500")
-        icon_path = os.path.join(os.path.dirname(__file__), "icon.ico")
+        icon_path = self.get_resource_path("icon.ico")
         if os.path.exists(icon_path):
             self.iconbitmap(icon_path)
         self.config = config
@@ -135,11 +140,16 @@ class SettingsWindow(ctk.CTkToplevel):
         self.withdraw()
 
 class GUIApp(ctk.CTk):
+    def get_resource_path(self, relative_path):
+        if hasattr(sys, '_MEIPASS'):
+            return os.path.join(sys._MEIPASS, relative_path)
+        return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
+
     def __init__(self, config, autostart, backend):
         super().__init__()
         self.title("MSFS 2024 - GSX Gate Finder V1.0")
         self.geometry("900x700")
-        icon_path = os.path.join(os.path.dirname(__file__), "icon.ico")
+        icon_path = self.get_resource_path("icon.ico")
         if os.path.exists(icon_path):
             self.iconbitmap(icon_path)
         self.minsize(550, 700)
