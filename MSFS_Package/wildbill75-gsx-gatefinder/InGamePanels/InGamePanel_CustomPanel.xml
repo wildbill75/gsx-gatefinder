@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="Windows-1252"?>
-<SimBase.Document Type="InGamePanels" version="1,0">
-    <Descr>Simbase Document</Descr>
-    <Filename>InGamePanel_CustomPanel.xml</Filename>
-    <InGamePanels.InGamePanelDefinition id="PANEL_CUSTOM_PANEL" Title="GSX GateFinder V1.0" url="html_UI/ingamePanels/CustomPanel/CustomPanel.html" resizeDirections="Both" minWidth="33" minHeight="35" defaultWidth="36" defaultHeight="36" defaultTop="33" defaultRight="2" icon="CustomPanel" buttonVisible="true">
-    </InGamePanels.InGamePanelDefinition>
-</SimBase.Document>
