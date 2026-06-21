@@ -1,14 +1,14 @@
 {
   "dependencies": [],
   "content_type": "UI",
-  "title": "GSX Gate Finder",
+  "title": "GateFinder",
   "manufacturer": "",
   "creator": "wildbill75",
   "package_version": "2.2.0",
   "minimum_game_version": "1.0.0",
   "release_notes": {
     "neutral": {
-      "LastUpdate": "GSX Gate Finder MSFS Panel Release",
+      "LastUpdate": "GateFinder MSFS Panel Release",
       "OlderHistory": ""
     }
   }

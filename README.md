@@ -28,7 +28,7 @@ Installation:
    application (`GateFinder.exe`) absolutely anywhere on your PC (Desktop, 
    Documents, etc.).
 2. The "Community" Addon: Inside this folder, you will find a folder named 
-   `wildbill75-gsx-gatefinder`. Copy this folder into your MSFS `Community` 
+   `wildbill75-gatefinder`. Copy this folder into your MSFS `Community` 
    folder. This adds the GateFinder panel directly into the simulator's in-game 
    toolbar.
    *Note: Due to a current MSFS interface quirk, the GateFinder icon in the 
@@ -86,7 +86,7 @@ Installation :
    `GateFinder_V1.0` contenant le logiciel (`GateFinder.exe`) n'importe où sur 
    votre PC (Bureau, Documents, etc.).
 2. L'Addon "Community" : À l'intérieur de ce dossier, vous trouverez un 
-   sous-dossier nommé `wildbill75-gsx-gatefinder`. Copiez ce dossier dans votre 
+   sous-dossier nommé `wildbill75-gatefinder`. Copiez ce dossier dans votre 
    dossier `Community` de MSFS. Cela ajoute le panneau GateFinder directement 
    dans la barre d'outils du simulateur.
    *Note : En raison d'une particularité de l'interface actuelle de MSFS, 
