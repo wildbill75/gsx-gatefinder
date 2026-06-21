@@ -2,18 +2,18 @@
     "content": [
         {
             "path": "en-US.locPak",
-            "size": 177,
-            "date": 134264552376224416
+            "size": 315,
+            "date": 134265105932190480
         },
         {
             "path": "html_UI/Icons/toolbar/CustomPanel-OFF.svg",
-            "size": 505,
-            "date": 134265097797429984
+            "size": 223,
+            "date": 134265115436626512
         },
         {
             "path": "html_UI/Icons/toolbar/CustomPanel.svg",
-            "size": 452,
-            "date": 134265097795395776
+            "size": 209,
+            "date": 134265115436561952
         },
         {
             "path": "html_UI/ingamePanels/CustomPanel/CustomPanel.css",
@@ -31,9 +31,9 @@
             "date": 134264545759728896
         },
         {
-            "path": "InGamePanels/InGamePanel_CustomPanel.spb",
-            "size": 698,
-            "date": 134264614881685904
+            "path": "InGamePanels/InGamePanel_CustomPanel.xml",
+            "size": 540,
+            "date": 134265115423941520
         }
     ]
 }
