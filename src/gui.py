@@ -24,8 +24,8 @@ class SettingsView(ctk.CTkFrame):
         form_frame.pack(fill="x", padx=20)
         
         ctk.CTkLabel(form_frame, text="Simbrief Username / Pilot ID:").grid(row=0, column=0, sticky="w", pady=10)
-        self.simbrief_entry = ctk.CTkEntry(form_frame, width=200)
-        self.simbrief_entry.grid(row=0, column=1, padx=10, pady=10)
+        self.simbrief_entry = ctk.CTkEntry(form_frame, width=120)
+        self.simbrief_entry.grid(row=0, column=1, sticky="w", padx=10, pady=10)
         self.simbrief_entry.insert(0, self.config.settings.get("simbrief_username", ""))
         
         ctk.CTkLabel(form_frame, text="GSX Profile Path:").grid(row=1, column=0, sticky="w", pady=10)
@@ -33,7 +33,7 @@ class SettingsView(ctk.CTkFrame):
         gsx_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
         gsx_frame.grid(row=1, column=1, padx=10, pady=10, sticky="ew")
         
-        self.gsx_entry = ctk.CTkEntry(gsx_frame, width=150)
+        self.gsx_entry = ctk.CTkEntry(gsx_frame, width=300)
         self.gsx_entry.pack(side="left", fill="x", expand=True)
         self.gsx_entry.insert(0, self.config.settings.get("gsx_profile_path", ""))
         
@@ -54,10 +54,17 @@ class SettingsView(ctk.CTkFrame):
         ctk.CTkButton(gsx_frame, text="...", width=30, command=browse_gsx).pack(side="left", padx=5)
         ctk.CTkButton(gsx_frame, text="Auto-Scan", width=70, command=auto_scan).pack(side="left")
         
-        # Auto-start checkbox
+        # Checkboxes container
+        chk_frame = ctk.CTkFrame(self, fg_color="transparent")
+        chk_frame.pack(pady=10)
+        
         self.autostart_var = ctk.BooleanVar(value=self.config.settings.get("auto_start", False))
-        self.autostart_checkbox = ctk.CTkCheckBox(self, text="Auto-Start with MSFS 2024", variable=self.autostart_var)
-        self.autostart_checkbox.pack(pady=10)
+        self.autostart_checkbox = ctk.CTkCheckBox(chk_frame, text="Auto-Start with MSFS 2024", variable=self.autostart_var)
+        self.autostart_checkbox.pack(side="left", padx=10)
+        
+        self.autofetch_var = ctk.BooleanVar(value=self.config.settings.get("auto_fetch", False))
+        self.autofetch_checkbox = ctk.CTkCheckBox(chk_frame, text="Auto-Fetch latest SimBrief", variable=self.autofetch_var)
+        self.autofetch_checkbox.pack(side="left", padx=10)
         
         # Database Scan Section
         scan_frame = ctk.CTkFrame(self, fg_color=("gray85", "gray17"))
@@ -117,6 +124,7 @@ class SettingsView(ctk.CTkFrame):
         self.config.settings["gsx_profile_path"] = self.gsx_entry.get().strip()
         auto = self.autostart_var.get()
         self.config.settings["auto_start"] = auto
+        self.config.settings["auto_fetch"] = self.autofetch_var.get()
         self.config.save()
         
         if auto:
@@ -136,7 +144,7 @@ class GUIApp(ctk.CTk):
     def __init__(self, config, autostart, backend):
         super().__init__()
         self.title("MSFS 2024 - GateFinder V1.0")
-        self.geometry("900x700")
+        self.geometry("600x750")
         icon_path = self.get_resource_path("icon.ico")
         if os.path.exists(icon_path):
             self.iconbitmap(icon_path)
@@ -163,6 +171,8 @@ class GUIApp(ctk.CTk):
             self.show_settings()
         else:
             self.show_main_view()
+            if self.config.settings.get("auto_fetch"):
+                self.after(500, self.fetch_simbrief)
 
     def check_sync_loop(self):
         if self.backend.current_flight_data and self.backend.current_flight_data != self.last_flight_data:
