@@ -9,28 +9,16 @@ import sys
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
-class SettingsWindow(ctk.CTkToplevel):
-    def get_resource_path(self, relative_path):
-        if hasattr(sys, '_MEIPASS'):
-            return os.path.join(sys._MEIPASS, relative_path)
-        return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
-
-    def __init__(self, parent, config: Config, autostart: AutoStartManager, backend, on_save_callback):
-        super().__init__(parent)
-        self.title("GateFinder - Settings")
-        self.geometry("400x500")
-        icon_path = self.get_resource_path("icon.ico")
-        if os.path.exists(icon_path):
-            self.iconbitmap(icon_path)
+class SettingsView(ctk.CTkFrame):
+    def __init__(self, parent, config: Config, autostart: AutoStartManager, backend, on_save_callback, on_close_callback):
+        super().__init__(parent, fg_color="transparent")
         self.config = config
         self.autostart = autostart
         self.backend = backend
         self.on_save_callback = on_save_callback
+        self.on_close_callback = on_close_callback
         
-        self.protocol("WM_DELETE_WINDOW", self.on_close)
-        self.attributes("-topmost", True)
-        
-        ctk.CTkLabel(self, text="GSX GateFinder Settings", font=ctk.CTkFont(size=20, weight="bold")).pack(pady=20)
+        ctk.CTkLabel(self, text="GateFinder Settings", font=ctk.CTkFont(size=24, weight="bold")).pack(pady=(0, 20))
         
         form_frame = ctk.CTkFrame(self, fg_color="transparent")
         form_frame.pack(fill="x", padx=20)
@@ -73,7 +61,7 @@ class SettingsWindow(ctk.CTkToplevel):
         
         # Database Scan Section
         scan_frame = ctk.CTkFrame(self, fg_color=("gray85", "gray17"))
-        scan_frame.pack(fill="x", padx=20, pady=10)
+        scan_frame.pack(fill="x", padx=20, pady=20)
         
         self.scan_lbl = ctk.CTkLabel(scan_frame, text="Synchronize with Community Database:", font=("Arial", 14, "bold"))
         self.scan_lbl.pack(pady=10)
@@ -88,7 +76,10 @@ class SettingsWindow(ctk.CTkToplevel):
         
         self.unknown_files = []
 
-        ctk.CTkButton(self, text="Save Settings", command=self.save_settings).pack(pady=10)
+        action_frame = ctk.CTkFrame(self, fg_color="transparent")
+        action_frame.pack(pady=20)
+        ctk.CTkButton(action_frame, text="Save & Close", command=self.save_settings).pack(side="left", padx=10)
+        ctk.CTkButton(action_frame, text="Cancel", fg_color="gray", hover_color="darkgray", command=self.on_close_callback).pack(side="left", padx=10)
 
     def run_scan(self):
         self.config.settings["gsx_profile_path"] = self.gsx_entry.get().strip()
@@ -134,10 +125,7 @@ class SettingsWindow(ctk.CTkToplevel):
             self.autostart.disable()
             
         self.on_save_callback()
-        self.withdraw()
-
-    def on_close(self):
-        self.withdraw()
+        self.on_close_callback()
 
 class GUIApp(ctk.CTk):
     def get_resource_path(self, relative_path):
@@ -161,7 +149,6 @@ class GUIApp(ctk.CTk):
         self.config = config
         self.autostart = autostart
         self.backend = backend
-        self.settings_window = None
         
         # When clicking 'X', just minimize to tray instead of quitting
         self.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
@@ -170,6 +157,12 @@ class GUIApp(ctk.CTk):
         
         self.last_flight_data = None
         self.check_sync_loop()
+        
+        # Check if setup is needed
+        if not self.config.settings.get("simbrief_username"):
+            self.show_settings()
+        else:
+            self.show_main_view()
 
     def check_sync_loop(self):
         if self.backend.current_flight_data and self.backend.current_flight_data != self.last_flight_data:
@@ -185,13 +178,21 @@ class GUIApp(ctk.CTk):
         self.lift()
 
     def create_widgets(self):
-        header_frame = ctk.CTkFrame(self, fg_color="transparent")
-        header_frame.pack(fill="x", padx=20, pady=(20, 10))
+        self.header_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.header_frame.pack(fill="x", padx=20, pady=(20, 10))
         
-        ctk.CTkLabel(header_frame, text="GATEFINDER V1.0", font=ctk.CTkFont(size=30, weight="bold")).pack(side="left")
-        ctk.CTkButton(header_frame, text="⚙ Settings", width=120, command=self.show_settings).pack(side="right")
+        ctk.CTkLabel(self.header_frame, text="GATEFINDER V1.0", font=ctk.CTkFont(size=30, weight="bold")).pack(side="left")
+        self.btn_settings = ctk.CTkButton(self.header_frame, text="⚙ Settings", width=120, command=self.show_settings)
+        self.btn_settings.pack(side="right")
         
-        self.sb_frame = ctk.CTkFrame(self, corner_radius=15, fg_color=("gray85", "gray17"))
+        # Container for main content
+        self.content_container = ctk.CTkFrame(self, fg_color="transparent")
+        self.content_container.pack(fill="both", expand=True)
+
+        # 1. Main View Frame
+        self.main_view_frame = ctk.CTkFrame(self.content_container, fg_color="transparent")
+        
+        self.sb_frame = ctk.CTkFrame(self.main_view_frame, corner_radius=15, fg_color=("gray85", "gray17"))
         self.sb_frame.pack(fill="x", padx=20, pady=10)
         
         self.btn_import = ctk.CTkButton(self.sb_frame, text="Import SimBrief Flight Plan", 
@@ -199,18 +200,24 @@ class GUIApp(ctk.CTk):
                                         command=self.fetch_simbrief)
         self.btn_import.pack(fill="x", padx=20, pady=20)
         
-        self.results_frame = ctk.CTkScrollableFrame(self, corner_radius=10, fg_color=("white", "gray12"))
+        self.results_frame = ctk.CTkScrollableFrame(self.main_view_frame, corner_radius=10, fg_color=("white", "gray12"))
         self.results_frame.pack(fill="both", expand=True, padx=20, pady=10)
         
         self.placeholder_lbl = ctk.CTkLabel(self.results_frame, text="Waiting for SimBrief import...", text_color="gray")
         self.placeholder_lbl.pack(pady=50)
 
+        # 2. Settings View Frame
+        self.settings_view = SettingsView(self.content_container, self.config, self.autostart, self.backend, self.on_settings_saved, self.show_main_view)
+
     def show_settings(self):
-        if self.settings_window is None or not self.settings_window.winfo_exists():
-            self.settings_window = SettingsWindow(self, self.config, self.autostart, self.backend, self.on_settings_saved)
-        else:
-            self.settings_window.deiconify()
-            self.settings_window.lift()
+        self.main_view_frame.pack_forget()
+        self.btn_settings.configure(state="disabled")
+        self.settings_view.pack(fill="both", expand=True, padx=20, pady=20)
+
+    def show_main_view(self):
+        self.settings_view.pack_forget()
+        self.btn_settings.configure(state="normal")
+        self.main_view_frame.pack(fill="both", expand=True)
 
     def on_settings_saved(self):
         self.backend.load_data()
