@@ -1,9 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-  <!-- Parking Lines -->
-  <path d="M 50 5 L 50 95" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-dasharray="6 4" opacity="0.5"/>
-  <path d="M 35 15 L 65 15" fill="none" stroke="#FFFFFF" stroke-width="4" opacity="0.8"/>
-  <path d="M 20 15 L 20 90 L 80 90 L 80 15" fill="none" stroke="#FFFFFF" stroke-width="2" opacity="0.3"/>
-  
-  <!-- Airplane -->
-  <path d="M 50 20 Q 54 20 54 35 L 85 55 L 85 60 L 54 60 L 54 75 L 65 80 L 65 83 L 50 81 L 35 83 L 35 80 L 46 75 L 46 60 L 15 60 L 15 55 L 46 35 Q 46 20 50 20 Z" fill="#FFFFFF"/>
+  <path d="M 50 5 L 50 95" fill="none" stroke="currentColor" stroke-width="3" stroke-dasharray="6 4" opacity="0.5"/>
+  <path d="M 35 15 L 65 15" fill="none" stroke="currentColor" stroke-width="4" opacity="0.8"/>
+  <path d="M 20 15 L 20 90 L 80 90 L 80 15" fill="none" stroke="currentColor" stroke-width="2" opacity="0.3"/>
+  <path d="M 50 20 Q 54 20 54 35 L 85 55 L 85 60 L 54 60 L 54 75 L 65 80 L 65 83 L 50 81 L 35 83 L 35 80 L 46 75 L 46 60 L 15 60 L 15 55 L 46 35 Q 46 20 50 20 Z" fill="currentColor"/>
 </svg>

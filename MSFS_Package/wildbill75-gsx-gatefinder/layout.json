@@ -7,12 +7,12 @@
         },
         {
             "path": "html_UI/Icons/toolbar/CustomPanel-OFF.svg",
-            "size": 645,
+            "size": 590,
             "date": 134265119747186304
         },
         {
             "path": "html_UI/Icons/toolbar/CustomPanel.svg",
-            "size": 604,
+            "size": 576,
             "date": 134265119744648432
         },
         {
@@ -27,7 +27,7 @@
         },
         {
             "path": "html_UI/ingamePanels/CustomPanel/CustomPanel.js",
-            "size": 4067,
+            "size": 4620,
             "date": 134264545759728896
         },
         {

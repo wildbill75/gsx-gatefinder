@@ -9,8 +9,8 @@ class GSXGateFinderPanel extends TemplateElement {
         let self = this;
         function replaceText(node) {
             if (node.nodeType === Node.TEXT_NODE) {
-                if (node.nodeValue && node.nodeValue.trim() === "CUSTOMPANEL") {
-                    node.nodeValue = "GSX GATE FINDER V1.0";
+                if (node.nodeValue && node.nodeValue.toUpperCase().trim() === "CUSTOMPANEL") {
+                    node.nodeValue = "GSX GateFinder V1.0";
                 }
             } else if (node.nodeType === Node.ELEMENT_NODE) {
                 if (node.shadowRoot) {
@@ -20,10 +20,26 @@ class GSXGateFinderPanel extends TemplateElement {
             }
         }
         
-        setTimeout(() => replaceText(document.documentElement), 500);
-        setTimeout(() => replaceText(document.documentElement), 1500);
-        setTimeout(() => replaceText(document.documentElement), 3000);
-        setTimeout(() => replaceText(document.documentElement), 5000);
+        function forceTitle() {
+            replaceText(document.documentElement);
+            let ui = document.querySelector("ingame-ui");
+            if (ui) {
+                ui.setAttribute("title", "GSX GateFinder V1.0");
+            }
+            let header = document.querySelector("ingame-ui-header");
+            if (header) {
+                header.setAttribute("title", "GSX GateFinder V1.0");
+                if(header.shadowRoot) {
+                    let titleElem = header.shadowRoot.querySelector(".title");
+                    if (titleElem) titleElem.innerText = "GSX GateFinder V1.0";
+                }
+            }
+        }
+        
+        setTimeout(forceTitle, 500);
+        setTimeout(forceTitle, 1500);
+        setTimeout(forceTitle, 3000);
+        setTimeout(forceTitle, 5000);
 
         setTimeout(() => {
             self.init();
