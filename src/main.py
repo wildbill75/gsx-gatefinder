@@ -1,3 +1,4 @@
+import os
 import threading
 import pystray
 from PIL import Image, ImageDraw
@@ -15,25 +16,16 @@ def get_resource_path(relative_path):
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
 
 def create_icon_image():
-    # Dynamically draw the icon to guarantee pystray compatibility on Windows
-    img = Image.new('RGB', (64, 64), (30, 58, 138))
-    draw = ImageDraw.Draw(img)
-    def s(val): return int(val * 0.64)
-    
-    draw.line([(s(20), s(15)), (s(20), s(90)), (s(80), s(90)), (s(80), s(15))], fill=(255,255,255), width=max(1, s(2)))
-    draw.line([(s(35), s(15)), (s(65), s(15))], fill=(255,255,255), width=max(1, s(4)))
-    for y in range(s(5), s(95), s(10)):
-        draw.line([(s(50), y), (s(50), min(y+s(6), s(95)))], fill=(200,200,200), width=max(1, s(3)))
-        
-    plane_points = [
-        (s(50), s(20)), (s(53), s(22)), (s(54), s(28)), (s(54), s(35)),
-        (s(85), s(55)), (s(85), s(60)), (s(54), s(60)),
-        (s(54), s(75)), (s(65), s(80)), (s(65), s(83)), (s(50), s(81)),
-        (s(35), s(83)), (s(35), s(80)), (s(46), s(75)),
-        (s(46), s(60)), (s(15), s(60)), (s(15), s(55)), (s(46), s(35)),
-        (s(46), s(28)), (s(47), s(22))
-    ]
-    draw.polygon(plane_points, fill=(255,255,255))
+    try:
+        png_path = get_resource_path("icon.png")
+        if os.path.exists(png_path):
+            return Image.open(png_path).convert("RGBA").resize((64, 64), Image.Resampling.LANCZOS)
+        ico_path = get_resource_path("icon.ico")
+        if os.path.exists(ico_path):
+            return Image.open(ico_path).convert("RGBA").resize((64, 64), Image.Resampling.LANCZOS)
+    except Exception:
+        pass
+    img = Image.new('RGB', (64, 64), (249, 87, 15))
     return img
 
 def setup_tray(app, backend):
@@ -66,6 +58,55 @@ def check_loopback_exemption():
         pass
 
 if __name__ == "__main__":
+    if "--uninstall" in sys.argv:
+        import tkinter as tk
+        from tkinter import messagebox
+        root = tk.Tk()
+        root.withdraw()
+        ans = messagebox.askyesno(
+            "Uninstall GateFinder?",
+            "This will completely remove the GateFinder In-Game Panel from all detected MSFS Community folders and clean auto-start entries.\n\n"
+            "Make sure Microsoft Flight Simulator is closed before continuing.\n\n"
+            "Do you want to proceed with uninstallation?"
+        )
+        if ans:
+            config = Config()
+            backend = GateFinderBackend(config)
+            res = backend.uninstall_app()
+            if not res.get("success"):
+                failed_str = "\n".join([f"- {path}: {err}" for path, err in res.get("failed_paths", [])])
+                messagebox.showerror(
+                    "Uninstall Error",
+                    f"Failed to delete the package from some folder(s):\n{failed_str}\n\n"
+                    "Please ensure MSFS is completely closed and try again."
+                )
+            else:
+                removed = res.get("removed_paths", [])
+                if removed:
+                    removed_str = "\n".join([f"• {p}" for p in removed])
+                    msg = (
+                        "GateFinder has been successfully uninstalled!\n\n"
+                        f"Removed In-Game Panel from:\n{removed_str}\n\n"
+                        "• MSFS Auto-start (exe.xml) entries cleaned.\n\n"
+                        "You can now delete the GateFinder folder."
+                    )
+                else:
+                    msg = (
+                        "GateFinder uninstall complete.\n\n"
+                        "• Checked all standard MSFS Community folders (no existing 'wildbill75-gatefinder' package was found).\n"
+                        "• MSFS Auto-start (exe.xml) entries have been cleaned.\n\n"
+                        "Note: If you use MSFS Addon Linker, make sure GateFinder is unlinked from within Addon Linker.\n\n"
+                        "You can now delete the GateFinder folder."
+                    )
+                messagebox.showinfo("Uninstall Complete", msg)
+        root.destroy()
+        sys.exit(0)
+
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("GateFinder.EFB.V2.GF")
+    except Exception:
+        pass
+
     check_loopback_exemption()
     # Prevent multiple instances
     mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "Global\\GateFinderMutex")

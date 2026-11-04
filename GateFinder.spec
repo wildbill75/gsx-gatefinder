@@ -1,11 +1,23 @@
-# -*- mode: python ; coding: utf-8 -*-
+import SimConnect
+import os
 
+simconnect_dir = os.path.dirname(SimConnect.__file__)
+simconnect_dll = os.path.join(simconnect_dir, 'SimConnect.dll')
+simconnect_json = os.path.join(simconnect_dir, 'scvars.json')
 
 a = Analysis(
     ['src\\main.py'],
     pathex=[],
     binaries=[],
-    datas=[('src\\icon.png', '.'), ('src\\icon.ico', '.')],
+    datas=[
+        ('src\\icon.png', '.'),
+        ('src\\icon.ico', '.'),
+        ('default_airports_db.bin', '.'),
+        ('airlines_terminals.json', '.'),
+        ('MSFS_Package\\wildbill75-gatefinder', 'MSFS_Package\\wildbill75-gatefinder'),
+        (simconnect_dll, 'SimConnect'),
+        (simconnect_json, 'SimConnect'),
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

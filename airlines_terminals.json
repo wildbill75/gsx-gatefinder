@@ -2,35 +2,114 @@
     "LFPO": {
         "mapping": {
             "Orly 1": [
-                "Terminal A",
-                "Terminal B"
+                "Terminal P",
+                "Terminal V",
+                "Gate P",
+                "Gate V"
             ],
             "Orly 2": [
-                "Terminal C"
+                "Terminal L",
+                "Terminal N",
+                "Terminal Q",
+                "Terminal S",
+                "Gate L",
+                "Gate N",
+                "Gate Q",
+                "Gate S"
             ],
             "Orly 3": [
+                "Terminal D",
+                "Terminal E",
+                "Terminal G",
+                "Terminal M",
                 "Terminal T",
                 "Terminal U",
-                "Terminal M",
-                "Terminal G",
-                "Terminal E"
+                "Gate D",
+                "Gate E",
+                "Gate G",
+                "Gate M",
+                "Gate T",
+                "Gate U"
             ],
             "Orly 4": [
+                "Terminal A",
+                "Terminal B",
+                "Terminal C",
+                "Terminal F",
                 "Terminal R",
-                "Terminal F"
+                "Gate A",
+                "Gate B",
+                "Gate C",
+                "Gate F",
+                "Gate R"
             ]
         },
         "rules": {
             "TVF": [
-                "Orly 3"
+                "Orly 3",
+                "Orly 4",
+                "Orly 2"
             ],
             "AFR": [
-                "Orly 1",
+                "Orly 3",
                 "Orly 2",
-                "Orly 3"
+                "Orly 1"
             ],
             "CCM": [
                 "Orly 3",
+                "Orly 2"
+            ],
+            "FWI": [
+                "Orly 4"
+            ],
+            "CRL": [
+                "Orly 4"
+            ],
+            "FBU": [
+                "Orly 4"
+            ],
+            "DJT": [
+                "Orly 4"
+            ],
+            "VOE": [
+                "Orly 1"
+            ],
+            "VLG": [
+                "Orly 1"
+            ],
+            "EZY": [
+                "Orly 1",
+                "Orly 2"
+            ],
+            "IBE": [
+                "Orly 1"
+            ],
+            "TAP": [
+                "Orly 1"
+            ],
+            "AEA": [
+                "Orly 1"
+            ],
+            "CLG": [
+                "Orly 1"
+            ],
+            "TJT": [
+                "Orly 1"
+            ],
+            "AEH": [
+                "Orly 1"
+            ],
+            "WZZ": [
+                "Orly 1",
+                "Orly 4"
+            ],
+            "DAH": [
+                "Orly 4"
+            ],
+            "RAM": [
+                "Orly 4"
+            ],
+            "TAR": [
                 "Orly 4"
             ]
         }
@@ -414,13 +493,21 @@
     "LSZH": {
         "mapping": {
             "Check-in 1": [
-                "Terminal A"
+                "Terminal A",
+                "Terminal B",
+                "Terminal D",
+                "Terminal E"
             ],
             "Check-in 2": [
+                "Terminal A",
                 "Terminal B",
-                "Terminal D"
+                "Terminal D",
+                "Terminal E"
             ],
             "Check-in 3": [
+                "Terminal A",
+                "Terminal B",
+                "Terminal D",
                 "Terminal E"
             ]
         },
@@ -457,11 +544,15 @@
     "EGKK": {
         "mapping": {
             "North Terminal": [
+                "North Terminal",
+                "North Terminal (Pier 6)",
                 "Terminal H",
                 "Zone 100s",
                 "Zone 500s"
             ],
             "South Terminal": [
+                "South Terminal",
+                "Main Apron",
                 "Zone 200s",
                 "Zone 300s",
                 "Zone 400s"
@@ -469,9 +560,11 @@
         },
         "rules": {
             "AFR": [
-                "North Terminal"
+                "North Terminal",
+                "South Terminal"
             ],
             "AUA": [
+                "South Terminal",
                 "North Terminal"
             ],
             "EZY": [
@@ -482,12 +575,15 @@
                 "North Terminal"
             ],
             "KLM": [
+                "South Terminal",
                 "North Terminal"
             ],
             "DLH": [
+                "South Terminal",
                 "North Terminal"
             ],
             "SWR": [
+                "South Terminal",
                 "North Terminal"
             ],
             "BAW": [
@@ -500,6 +596,25 @@
                 "South Terminal"
             ],
             "VLG": [
+                "South Terminal"
+            ],
+            "WZZ": [
+                "South Terminal"
+            ],
+            "NAX": [
+                "South Terminal"
+            ],
+            "TAP": [
+                "South Terminal"
+            ],
+            "EIN": [
+                "South Terminal"
+            ],
+            "THY": [
+                "South Terminal"
+            ],
+            "TOM": [
+                "North Terminal",
                 "South Terminal"
             ]
         }
@@ -1589,10 +1704,19 @@
     "LSGG": {
         "mapping": {
             "Terminal 1": [
-                "Terminal A",
-                "Terminal D",
-                "Terminal T",
+                "Main Terminal",
+                "Main Terminal (Schengen)",
+                "Satellite",
+                "Satellite (Schengen)",
+                "Satellite (Non-Schengen)",
+                "East Wing",
+                "East Wing (Non Schengen)",
+                "East Wing (Non-Schengen)",
+                "Main Apron",
                 "Zone 100s"
+            ],
+            "Terminal 2": [
+                "Terminal 2"
             ]
         },
         "rules": {
@@ -1612,6 +1736,18 @@
                 "Terminal 1"
             ],
             "BAW": [
+                "Terminal 1"
+            ],
+            "IBE": [
+                "Terminal 1"
+            ],
+            "KLM": [
+                "Terminal 1"
+            ],
+            "TAP": [
+                "Terminal 1"
+            ],
+            "UAE": [
                 "Terminal 1"
             ]
         }
@@ -2679,6 +2815,260 @@
             "airlines": [
                 "AFR",
                 "EZY"
+            ]
+        }
+    },
+    "KJFK": {
+        "mapping": {
+            "Terminal 1": [
+                "Terminal 1",
+                "Terminal E"
+            ],
+            "Terminal 4": [
+                "Terminal 4",
+                "Terminal C"
+            ],
+            "Terminal 5": [
+                "Terminal 5",
+                "Terminal A"
+            ],
+            "Terminal 7": [
+                "Terminal 7",
+                "Terminal B"
+            ],
+            "Terminal 8": [
+                "Terminal 8",
+                "Terminal F"
+            ]
+        },
+        "rules": {
+            "AFR": [
+                "Terminal 1"
+            ],
+            "AFV": [
+                "Terminal 1"
+            ],
+            "VAF": [
+                "Terminal 1"
+            ],
+            "DLH": [
+                "Terminal 1"
+            ],
+            "DLHV": [
+                "Terminal 1"
+            ],
+            "SWR": [
+                "Terminal 1"
+            ],
+            "EDW": [
+                "Terminal 1"
+            ],
+            "EDWV": [
+                "Terminal 1"
+            ],
+            "ITY": [
+                "Terminal 1"
+            ],
+            "AZA": [
+                "Terminal 1"
+            ],
+            "ITAV": [
+                "Terminal 1"
+            ],
+            "THY": [
+                "Terminal 1"
+            ],
+            "KAL": [
+                "Terminal 1"
+            ],
+            "CCA": [
+                "Terminal 1"
+            ],
+            "CES": [
+                "Terminal 1"
+            ],
+            "SVA": [
+                "Terminal 1"
+            ],
+            "TAP": [
+                "Terminal 1"
+            ],
+            "TAPV": [
+                "Terminal 1"
+            ],
+            "LOT": [
+                "Terminal 1"
+            ],
+            "DAL": [
+                "Terminal 4"
+            ],
+            "DALV": [
+                "Terminal 4"
+            ],
+            "KLM": [
+                "Terminal 4"
+            ],
+            "VIR": [
+                "Terminal 4"
+            ],
+            "UAE": [
+                "Terminal 4"
+            ],
+            "UNER": [
+                "Terminal 4"
+            ],
+            "ETD": [
+                "Terminal 4"
+            ],
+            "SIA": [
+                "Terminal 4"
+            ],
+            "CSN": [
+                "Terminal 4"
+            ],
+            "AEA": [
+                "Terminal 4"
+            ],
+            "JBU": [
+                "Terminal 5"
+            ],
+            "ACA": [
+                "Terminal 7"
+            ],
+            "ANA": [
+                "Terminal 7"
+            ],
+            "SAS": [
+                "Terminal 7"
+            ],
+            "VSAS": [
+                "Terminal 7"
+            ],
+            "AAL": [
+                "Terminal 8"
+            ],
+            "VAAL": [
+                "Terminal 8"
+            ],
+            "BAW": [
+                "Terminal 8"
+            ],
+            "BAWV": [
+                "Terminal 8"
+            ],
+            "IBE": [
+                "Terminal 8"
+            ],
+            "QFA": [
+                "Terminal 8"
+            ],
+            "QTR": [
+                "Terminal 8"
+            ],
+            "CPA": [
+                "Terminal 8"
+            ],
+            "CPAV": [
+                "Terminal 8"
+            ],
+            "JAL": [
+                "Terminal 8"
+            ],
+            "FIN": [
+                "Terminal 8"
+            ]
+        }
+    },
+    "OMDB": {
+        "mapping": {
+            "Terminal 1 (Concourse D)": [
+                "Terminal D",
+                "Terminal 1"
+            ],
+            "Terminal 2": [
+                "Terminal E",
+                "Terminal 2"
+            ],
+            "Terminal 3": [
+                "Terminal A",
+                "Terminal B",
+                "Terminal F",
+                "Terminal 3"
+            ]
+        },
+        "rules": {
+            "UAE": [
+                "Terminal 3"
+            ],
+            "UNER": [
+                "Terminal 3"
+            ],
+            "QFA": [
+                "Terminal 3"
+            ],
+            "FDB": [
+                "Terminal 2",
+                "Terminal 3"
+            ],
+            "AFR": [
+                "Terminal 1 (Concourse D)"
+            ],
+            "AFV": [
+                "Terminal 1 (Concourse D)"
+            ],
+            "VAF": [
+                "Terminal 1 (Concourse D)"
+            ],
+            "BAW": [
+                "Terminal 1 (Concourse D)"
+            ],
+            "BAWV": [
+                "Terminal 1 (Concourse D)"
+            ],
+            "DLH": [
+                "Terminal 1 (Concourse D)"
+            ],
+            "DLHV": [
+                "Terminal 1 (Concourse D)"
+            ],
+            "KLM": [
+                "Terminal 1 (Concourse D)"
+            ],
+            "SWR": [
+                "Terminal 1 (Concourse D)"
+            ],
+            "THY": [
+                "Terminal 1 (Concourse D)"
+            ],
+            "SIA": [
+                "Terminal 1 (Concourse D)"
+            ],
+            "CPA": [
+                "Terminal 1 (Concourse D)"
+            ],
+            "CPAV": [
+                "Terminal 1 (Concourse D)"
+            ],
+            "VIR": [
+                "Terminal 1 (Concourse D)"
+            ],
+            "SVA": [
+                "Terminal 1 (Concourse D)"
+            ],
+            "FIN": [
+                "Terminal 1 (Concourse D)"
+            ],
+            "LOT": [
+                "Terminal 1 (Concourse D)"
+            ],
+            "ACA": [
+                "Terminal 1 (Concourse D)"
+            ],
+            "UAL": [
+                "Terminal 1 (Concourse D)"
+            ],
+            "DAL": [
+                "Terminal 1 (Concourse D)"
             ]
         }
     }

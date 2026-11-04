@@ -1,120 +1,66 @@
-GateFinder V1.0 for MSFS 2024 / MSFS 2020
+GateFinder V1.1 for MSFS 2024 / MSFS 2020
 =======================================
 
 English
 -------
-Welcome to GateFinder! 
+Welcome to GateFinder! It automatically imports your current SimBrief flight plan and assigns you the most realistic gates for both your departure and arrival, perfectly matched to your aircraft type and airline.
 
-Why GateFinder? 
-Have you ever landed at a massive airport after a long flight and wondered: 
-"Which gate should I taxi to?" or "Where does my airline actually park here?" 
-GateFinder was born from this exact frustration. It eliminates the guesswork by 
-automatically importing your current SimBrief flight plan and assigning you the 
-most realistic gates for both your departure and arrival, perfectly matched to 
-your aircraft type and airline.
+### Core Features:
+- **GSX Profiles (Primary):** Scans your local FSDreamTeam GSX profiles to extract precise wingspan limits and airline codes.
+- **OpenStreetMap (Fallback):** Automatically falls back to OpenStreetMap (OSM) to query and assign airliner-compatible gates if no GSX profile is found.
+- **Automatic Matching:** Matches departure/arrival gates dynamically based on airliner size, airline, and parking restrictions.
 
-How it works (GSX & OSM)
-GateFinder uses a smart dual-system to find your gates:
-- GSX Profiles (Primary): If you use FSDreamTeam GSX, GateFinder scans your GSX 
-  profiles to find parking spots with ultra-precise wingspan limits and airline 
-  codes. 
-- OpenStreetMap (Fallback): Don't have GSX? No problem! GateFinder will 
-  automatically fall back to OpenStreetMap (OSM), a massive community-driven map 
-  of the world. It pulls live data directly from OSM to map out the gates and 
-  assign you one that fits your airliner.
+### 🌟 New in Version 1.1:
+- **Interactive Mini-Map:** View gate positions directly inside the desktop app and the MSFS toolbar panel (supports zoom, recentering, and 4 styles including Satellite Imagery).
+- **VATSIM & IVAO Live Check:** Real-time online network traffic check to automatically bypass gates occupied by other parked aircraft (ground speed < 10 kts).
+- **Auto-Detect MSFS Community Folder:** Automatically parses `UserCfg.opt` to locate your Community path.
+- **One-Click In-Game Panel Installer:** Install or update the Cockpit Toolbar Panel addon directly from the Settings menu.
+- **Settings UI Card Layout:** All configuration options grouped cleanly, left-aligned, and modern.
 
-Installation:
-1. The App Folder: You can place the `GateFinder_V1.0` folder containing the 
-   application (`GateFinder.exe`) absolutely anywhere on your PC (Desktop, 
-   Documents, etc.).
-2. The "Community" Addon: Inside this folder, you will find a folder named 
-   `wildbill75-gatefinder`. Copy this folder into your MSFS `Community` 
-   folder. This adds the GateFinder panel directly into the simulator's in-game 
-   toolbar.
-   *Note: Due to a current MSFS interface quirk, the GateFinder icon in the 
-   simulator toolbar currently appears as a generic "Gear" (cogwheel) icon. 
-   This is normal!*
+### Quick Start:
+1. **App Folder:** Place `GateFinder` folder anywhere on your PC.
+2. **Community Panel Addon:** Go to **Settings** in the GateFinder desktop app, verify/select your MSFS Community folder path, and click **Install Panel**.
+3. **Configuration:** Enter your **SimBrief Username/Pilot ID** and click **Save & Close**.
+4. **Usage:** Click **Import SimBrief Flight Plan** to get your gates. Open the GateFinder panel inside MSFS (looks like a cogwheel icon on the toolbar) to view them in flight!
 
-First Launch (Settings):
-- Simbrief Username / Pilot ID: Enter your SimBrief username or Pilot ID.
-- GSX Profile Path: If you use GSX, point this to your GSX Profiles folder 
-  (e.g., %APPDATA%\Virtuali\GSX\MSFS). If you don't use GSX, leave it blank.
-- Auto-Start: Launch GateFinder automatically when MSFS starts.
-- Auto-Fetch: Automatically import your flight plan as soon as the app opens.
-- Scan Installed Airports: Click this to build a local database of your GSX 
-  profiles so they load instantly. You must do this first before contributing!
-
-How to Contribute (Community Database):
-GateFinder relies on a community database. If you scan your installed airports 
-and GateFinder notices you have GSX profiles that are missing from the global 
-database, the "Contribute Missing" button will unlock. 
-Clicking this button will automatically generate a JSON file containing your 
-local gate data and open a GitHub web page. Simply drag-and-drop the generated 
-file into the GitHub page to share your data with the rest of the community!
-
-Usage:
-Once running, click "Import SimBrief Flight Plan". The app will display your 
-Departure and Arrival gates. You can also view this directly inside the 
-simulator by clicking the "Gear" icon in your MSFS Toolbar.
+### Uninstallation:
+- **Automatic:** Simply double-click `Uninstall_GateFinder.bat` or click the red **Uninstall** button inside the **Settings** menu. This automatically removes the in-game toolbar panel from all MSFS Community folders and disables auto-start.
+- **Manual:** Delete the `wildbill75-gatefinder` folder from your MSFS `Community` folder.
 
 ---
 
 Français
 --------
-Bienvenue sur GateFinder !
+Bienvenue sur GateFinder ! Il importe automatiquement votre plan de vol SimBrief et vous attribue les portes de stationnement les plus réalistes pour votre départ et votre arrivée, selon votre avion et votre compagnie.
 
-Pourquoi GateFinder ?
-Vous êtes-vous déjà posé sur un aéroport gigantesque après un long vol en vous 
-demandant : "À quelle porte dois-je aller ?" ou "Où se gare ma compagnie 
-aérienne ici ?" GateFinder est né précisément de cette frustration. Il élimine 
-toutes les devinettes en importing automatiquement votre plan de vol SimBrief et 
-en vous assignant les portes les plus réalistes pour votre départ et votre 
-arrivée, en fonction de votre type d'avion et de votre compagnie.
+### Fonctionnalités principales :
+- **Profils GSX (Principal) :** Scanne vos profils FSDreamTeam GSX pour extraire l'envergure maximale et les codes de compagnies des parkings.
+- **OpenStreetMap (Secours) :** Interroge en direct OpenStreetMap (OSM) pour assigner une porte compatible en l'absence de profil GSX.
+- **Assignation Dynamique :** Choisit intelligemment la porte la plus adaptée selon la taille de l'appareil et les règles de stationnement de la compagnie.
 
-Comment ça marche (GSX et OSM)
-GateFinder utilise un système intelligent à deux niveaux pour trouver vos portes:
-- Profils GSX (Principal) : Si vous utilisez FSDreamTeam GSX, GateFinder scanne 
-  vos profils GSX pour trouver des places de parking avec des limites 
-  d'envergure et des codes de compagnies ultra-précis.
-- OpenStreetMap (Solution de secours) : Vous n'avez pas GSX ? Aucun problème ! 
-  GateFinder utilisera automatiquement OpenStreetMap (OSM), une carte du monde 
-  collaborative massive. Il extrait les données en direct d'OSM pour 
-  cartographier les portes et vous en attribuer une adaptée à votre avion.
+### 🌟 Nouveautés de la Version 1.1 :
+- **Mini-Carte Interactive :** Visualisez la porte affectée directement dans l'application ou en jeu (zoom, recentrage, 4 styles dont Imagerie Satellite).
+- **Contrôle Réseau VATSIM & IVAO :** Vérification en direct des réseaux de vol en ligne pour contourner automatiquement les portes occupées par d'autres joueurs (vitesse < 10 kts).
+- **Détection Automatique du dossier Community :** Analyse de `UserCfg.opt` pour pré-remplir le chemin d'installation.
+- **Installateur en un clic :** Installez ou mettez à jour le panneau de cockpit directement depuis le menu Settings.
+- **Refonte des Paramètres :** Organisation modernisée, alignée à gauche sous forme de carte unifiée.
 
-Installation :
-1. Le dossier de l'application : Vous pouvez placer le dossier 
-   `GateFinder_V1.0` contenant le logiciel (`GateFinder.exe`) n'importe où sur 
-   votre PC (Bureau, Documents, etc.).
-2. L'Addon "Community" : À l'intérieur de ce dossier, vous trouverez un 
-   sous-dossier nommé `wildbill75-gatefinder`. Copiez ce dossier dans votre 
-   dossier `Community` de MSFS. Cela ajoute le panneau GateFinder directement 
-   dans la barre d'outils du simulateur.
-   *Note : En raison d'une particularité de l'interface actuelle de MSFS, 
-   l'icône de GateFinder dans la barre d'outils du simulateur apparaît pour le 
-   moment sous la forme d'une "Roue crantée" (engrenage). C'est normal !*
+### Guide Rapide :
+1. **Dossier App :** Placez le dossier `GateFinder` n'importe où sur votre PC.
+2. **Installation du Panneau :** Ouvrez les **Settings** de GateFinder, vérifiez le chemin d'installation MSFS Community, et cliquez sur **Install Panel**.
+3. **Configuration :** Saisissez votre **Nom d'utilisateur/ID Pilote SimBrief** puis cliquez sur **Save & Close**.
+4. **Utilisation :** Cliquez sur **Import SimBrief Flight Plan**. Ouvrez le panneau GateFinder en jeu (icône d'engrenage sur la barre d'outils MSFS) pour voir vos portes pendant le vol !
 
-Premier Lancement (Settings) :
-- Simbrief Username / Pilot ID : Entrez votre nom d'utilisateur ou ID Pilote.
-- GSX Profile Path : Si vous utilisez GSX, indiquez le chemin vers vos profils 
-  GSX (ex: %APPDATA%\Virtuali\GSX\MSFS). Sinon, laissez ce champ vide.
-- Auto-Start : Lance GateFinder automatiquement au démarrage de MSFS.
-- Auto-Fetch : Importe automatiquement votre plan de vol dès l'ouverture de 
-  l'application.
-- Scan Installed Airports : Cliquez ici pour construire une base de données 
-  locale de vos profils GSX pour un chargement instantané. Vous devez 
-  obligatoirement faire cela avant de pouvoir contribuer !
+### Désinstallation :
+- **Automatique :** Double-cliquez simplement sur `Uninstall_GateFinder.bat` ou cliquez sur le bouton rouge **Uninstall** dans le menu **Settings**. Cela supprime proprement le panneau de tous vos dossiers Community et désactive le démarrage automatique.
+- **Manuelle :** Supprimez le dossier `wildbill75-gatefinder` de votre dossier MSFS `Community`.
 
-Comment Contribuer (Base de données Communautaire) :
-GateFinder s'appuie sur une base de données communautaire. Si vous scannez vos 
-aéroports et que GateFinder remarque que vous possédez des profils GSX absents 
-de la base mondiale, le bouton "Contribute Missing" se débloquera.
-En cliquant sur ce bouton, GateFinder générera automatiquement un fichier JSON 
-contenant vos données locales et ouvrira une page web GitHub. Il vous suffira 
-de glisser-déposer le fichier généré sur la page GitHub pour partager vos 
-données avec le reste de la communauté !
+---
 
-Utilisation :
-Une fois lancé, cliquez sur "Import SimBrief Flight Plan". L'application 
-affichera vos portes de départ et d'arrivée. Vous pouvez également consulter 
-ces informations directement dans le simulateur en cliquant sur l'icône 
-"Roue crantée" dans la barre d'outils MSFS.
+### Frequently Asked Questions (FAQ)
+* **Q: Is GateFinder compatible with Virtual Reality (VR)?**
+  * **A:** Yes! GateFinder is fully VR-compatible. To use it in VR, simply open the **Settings** menu in the GateFinder desktop application, verify your MSFS Community folder path, and click the **Install Panel** button. This will install the GateFinder in-game panel, which you can open directly from the MSFS top toolbar inside your VR headset (represented by a cogwheel icon).
+
+### Foire Aux Questions (FAQ)
+* **Q : Est-ce que GateFinder est compatible avec la Réalité Virtuelle (VR) ?**
+  * **R :** Oui ! GateFinder est entièrement compatible avec la VR. Pour l'utiliser en VR, ouvrez simplement le menu **Settings** dans l'application de bureau GateFinder, vérifiez le chemin d'accès à votre dossier MSFS Community, et cliquez sur le bouton **Install Panel**. Cela installera le panneau en jeu de GateFinder, que vous pourrez ouvrir directement depuis la barre d'outils supérieure de MSFS dans votre casque VR (représenté par une icône d'engrenage).

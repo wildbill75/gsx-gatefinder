@@ -1,49 +1,114 @@
 {
-    "content": [
-        {
-            "path": "en-US.locPak",
-            "size": 315,
-            "date": 134265105932190480
-        },
-        {
-            "path": "html_UI/Icons/toolbar/CustomPanel-OFF.svg",
-            "size": 726,
-            "date": 134265119747186304
-        },
-        {
-            "path": "html_UI/Icons/toolbar/CustomPanel.svg",
-            "size": 726,
-            "date": 134265119744648432
-        },
-        {
-            "path": "html_UI/ingamePanels/CustomPanel/CustomPanel.css",
-            "size": 2029,
-            "date": 134264529877913776
-        },
-        {
-            "path": "html_UI/ingamePanels/CustomPanel/CustomPanel.html",
-            "size": 2533,
-            "date": 134265097674102272
-        },
-        {
-            "path": "html_UI/ingamePanels/CustomPanel/CustomPanel.js",
-            "size": 4604,
-            "date": 134264545759728896
-        },
-        {
-            "path": "InGamePanels/InGamePanel_CustomPanel.spb",
-            "size": 698,
-            "date": 134264368729046608
-        },
-        {
-            "path": "html_UI/Icons/toolbar/ICON_TOOLBAR_CUSTOMPANEL-OFF.svg",
-            "size": 726,
-            "date": 134265119747186304
-        },
-        {
-            "path": "html_UI/Icons/toolbar/ICON_TOOLBAR_CUSTOMPANEL.svg",
-            "size": 726,
-            "date": 134265119747186304
-        }
-    ]
+  "content": [
+    {
+      "path": "en-US.locPak",
+      "size": 531,
+      "date": 134374342510000000
+    },
+    {
+      "path": "fr-FR.locPak",
+      "size": 531,
+      "date": 134374342510000000
+    },
+    {
+      "path": "html_ui/icons/toolbar/GateFinder-OFF.svg",
+      "size": 583,
+      "date": 134268605950000000
+    },
+    {
+      "path": "html_ui/icons/toolbar/GateFinder.svg",
+      "size": 583,
+      "date": 134268605950000000
+    },
+    {
+      "path": "html_ui/icons/toolbar/GateFinderPanel-OFF.svg",
+      "size": 583,
+      "date": 134268605950000000
+    },
+    {
+      "path": "html_ui/icons/toolbar/GateFinderPanel.svg",
+      "size": 583,
+      "date": 134268605950000000
+    },
+    {
+      "path": "html_ui/icons/toolbar/ICON_TOOLBAR_GATEFINDER-OFF.svg",
+      "size": 583,
+      "date": 134268605950000000
+    },
+    {
+      "path": "html_ui/icons/toolbar/ICON_TOOLBAR_GATEFINDER.svg",
+      "size": 583,
+      "date": 134268605950000000
+    },
+    {
+      "path": "html_ui/icons/toolbar/ICON_TOOLBAR_GATEFINDERPANEL-OFF.svg",
+      "size": 583,
+      "date": 134268605950000000
+    },
+    {
+      "path": "html_ui/icons/toolbar/ICON_TOOLBAR_GATEFINDERPANEL.svg",
+      "size": 583,
+      "date": 134268605950000000
+    },
+    {
+      "path": "html_ui/ingamePanels/GateFinderPanel/GateFinderPanel.css",
+      "size": 11701,
+      "date": 134382680450000000
+    },
+    {
+      "path": "html_ui/ingamePanels/GateFinderPanel/GateFinderPanel.html",
+      "size": 6922,
+      "date": 134382680470000000
+    },
+    {
+      "path": "html_ui/ingamePanels/GateFinderPanel/GateFinderPanel.js",
+      "size": 146268,
+      "date": 134382604670000000
+    },
+    {
+      "path": "html_ui/Textures/Menu/toolbar/GateFinder-OFF.svg",
+      "size": 583,
+      "date": 134268605950000000
+    },
+    {
+      "path": "html_ui/Textures/Menu/toolbar/GateFinder.svg",
+      "size": 583,
+      "date": 134268605950000000
+    },
+    {
+      "path": "html_ui/Textures/Menu/toolbar/GateFinderPanel-OFF.svg",
+      "size": 583,
+      "date": 134268605950000000
+    },
+    {
+      "path": "html_ui/Textures/Menu/toolbar/GateFinderPanel.svg",
+      "size": 583,
+      "date": 134268605950000000
+    },
+    {
+      "path": "html_ui/Textures/Menu/toolbar/ICON_TOOLBAR_GATEFINDER-OFF.svg",
+      "size": 583,
+      "date": 134268605950000000
+    },
+    {
+      "path": "html_ui/Textures/Menu/toolbar/ICON_TOOLBAR_GATEFINDER.svg",
+      "size": 583,
+      "date": 134268605950000000
+    },
+    {
+      "path": "html_ui/Textures/Menu/toolbar/ICON_TOOLBAR_GATEFINDERPANEL-OFF.svg",
+      "size": 583,
+      "date": 134268605950000000
+    },
+    {
+      "path": "html_ui/Textures/Menu/toolbar/ICON_TOOLBAR_GATEFINDERPANEL.svg",
+      "size": 583,
+      "date": 134268605950000000
+    },
+    {
+      "path": "InGamePanels/InGamePanel_GateFinder.spb",
+      "size": 688,
+      "date": 134380175390000000
+    }
+  ]
 }

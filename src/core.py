@@ -170,7 +170,7 @@ class GateFinderApp(ctk.CTk):
             }
                     
     def parse_gsx_ini(self, filepath: str, filename: str) -> bool:
-        parser = configparser.ConfigParser(strict=False)
+        parser = configparser.ConfigParser(strict=False, interpolation=None)
         try:
             parser.read(filepath, encoding='utf-8')
         except:
@@ -322,9 +322,45 @@ class GateFinderApp(ctk.CTk):
         wingspan = AIRCRAFT_WINGSPANS.get(aircraft, 36.0)
 
         def get_terminal(g):
-            m = re.match(r'^([A-Z]+)', g.replace(' ', ''))
-            if m: return f"Terminal {m.group(1)}"
-            m_num = re.match(r'^(\d+)', g.replace(' ', ''))
+            if not g:
+                return "Main Apron"
+            g_clean = g.strip().upper()
+            
+            t_match = re.search(r'\b(?:TERMINAL|TERM|T)\b\s*([0-9A-Z]+)', g_clean)
+            if t_match:
+                t_val = t_match.group(1)
+                if t_val.isdigit():
+                    return f"Terminal {t_val}"
+                elif len(t_val) <= 2 and t_val not in ("L", "R", "C"):
+                    return f"Terminal {t_val}"
+
+            clean_prefix = re.sub(r'^(?:GATE|STAND|PARKING|RAMP|APRON)\s*', '', g_clean)
+            clean_prefix_no_space = clean_prefix.replace(' ', '')
+            
+            lr_match = re.match(r'^[LRC]\s*\d+', clean_prefix)
+            if lr_match:
+                num_match = re.search(r'\d+', clean_prefix)
+                if num_match:
+                    num = int(num_match.group())
+                    hundreds = (num // 100) * 100
+                    return f"Zone {hundreds}s" if hundreds > 0 else "Main Apron"
+                return "Main Apron"
+
+            m = re.match(r'^([A-Z]+)', clean_prefix_no_space)
+            if m:
+                term = m.group(1)
+                if term.startswith('T') and len(term) > 1 and term[1:].isdigit():
+                    return f"Terminal {term[1:]}"
+                if term in ("L", "R", "C"):
+                    num_match = re.search(r'\d+', clean_prefix_no_space)
+                    if num_match:
+                        num = int(num_match.group())
+                        hundreds = (num // 100) * 100
+                        return f"Zone {hundreds}s" if hundreds > 0 else "Main Apron"
+                    return "Main Apron"
+                return f"Terminal {term}"
+                
+            m_num = re.match(r'^(\d+)', clean_prefix_no_space)
             if m_num:
                 num = int(m_num.group(1))
                 hundreds = (num // 100) * 100
@@ -342,7 +378,12 @@ class GateFinderApp(ctk.CTk):
                 "error": None
             }
             
+            is_a380 = aircraft_icao in {"A388", "A380", "A388F", "A389"} or "A380" in aircraft.upper()
+            
             if icao not in self.data:
+                if is_a380:
+                    res["error"] = "No A380 gate for this airport"
+                    return res
                 osm_gates = self.fetch_osm_gates(icao)
                 if osm_gates:
                     res["osm"] = True
@@ -360,13 +401,20 @@ class GateFinderApp(ctk.CTk):
                 if g['name'] not in existing_names:
                     all_gates.append(g)
             
+            if is_a380:
+                a380_capable = [g for g in all_gates if g['wingspan'] >= 65.0 or "a380" in g['name'].lower()]
+                if not a380_capable:
+                    res["error"] = "No A380 gate for this airport"
+                    return res
+                all_gates = a380_capable
+
             compatible_gates = []
             for g in all_gates:
                 if g['wingspan'] >= wingspan:
                     compatible_gates.append(g['name'])
                     
             if not compatible_gates:
-                res["error"] = "No gates found compatible with aircraft size."
+                res["error"] = "No A380 gate for this airport" if is_a380 else "No gates found compatible with aircraft size."
                 return res
                 
             compatible_gates = sorted(list(set(compatible_gates)))

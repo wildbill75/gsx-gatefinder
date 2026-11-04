@@ -5,12 +5,20 @@ __pycache__/
 # Build and Distribution
 build/
 dist/
-*.spec
 GateFinder_Release/
+GateFinder_V*/
+*.zip
+*.psd
+Graphics/
+scratch/
+cache/
 
-# Configuration and Local Settings
+# Configuration, Caches and Local Logs
 settings.json
 cloud_rules_cache.json
+last_flight_session.json
+taxi_charts_cache.json
+*.log
 
 # Test data and temp files
 test.json
