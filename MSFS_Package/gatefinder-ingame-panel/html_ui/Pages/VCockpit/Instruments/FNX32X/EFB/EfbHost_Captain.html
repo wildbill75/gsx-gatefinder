@@ -1,0 +1,524 @@
+<script type="text/html" id="EfbHost">
+  <div id="Mainframe" class="gf-efb-off gf-efb-loading">
+    <div id="Electricity" state="off">
+      <div id="EfbHostContent">
+        <div id="StatusContent" class="status-component status-loading">
+          <div class="status-loading-content">
+            <h2>Loading&hellip;</h2>
+          </div>
+          <div class="status-disconnected-content">
+            <img src="coui://html_UI/pages/vcockpit/instruments/fnx32x/efb/assets/img/alert.png" alt="Connection error icon" />
+            <h2>Unable to connect</h2>
+            <p>
+              Please check fenix.exe is running and your antivirus software is not blocking it.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Hidden focus anchor used to detect when user clicks into a native Fenix Row-1 app icon -->
+      <button id="GF_FocusAnchor" tabindex="-1" aria-hidden="true"></button>
+
+      <!-- Transparent Home Screen wallpaper guards (active ONLY on Fenix Home Screen outside Row-1 icons) -->
+      <div class="gf-home-guard" style="left:0;top:48px;width:1900px;height:182px;" onmouseenter="window.gfOnWallpaperHover()" onmousemove="window.gfOnWallpaperHover()" onmousedown="window.gfKeepParentFocus(event)" onclick="window.gfKeepParentFocus(event)"></div>
+      <div class="gf-home-guard" style="left:0;top:230px;width:215px;height:245px;" onmouseenter="window.gfOnWallpaperHover()" onmousemove="window.gfOnWallpaperHover()" onmousedown="window.gfKeepParentFocus(event)" onclick="window.gfKeepParentFocus(event)"></div>
+      <div class="gf-home-guard" style="left:1835px;top:230px;width:193px;height:245px;" onmouseenter="window.gfOnWallpaperHover()" onmousemove="window.gfOnWallpaperHover()" onmousedown="window.gfKeepParentFocus(event)" onclick="window.gfKeepParentFocus(event)"></div>
+      <div class="gf-home-guard" style="left:0;top:475px;width:2028px;height:860px;" onmouseenter="window.gfOnWallpaperHover()" onmousemove="window.gfOnWallpaperHover()" onmousedown="window.gfKeepParentFocus(event)" onclick="window.gfKeepParentFocus(event)"></div>
+      <div class="gf-home-guard" style="left:0;top:1335px;width:1460px;height:201px;" onmouseenter="window.gfOnWallpaperHover()" onmousemove="window.gfOnWallpaperHover()" onmousedown="window.gfKeepParentFocus(event)" onclick="window.gfKeepParentFocus(event)"></div>
+      <div class="gf-home-guard" style="left:1815px;top:1335px;width:213px;height:201px;" onmouseenter="window.gfOnWallpaperHover()" onmousemove="window.gfOnWallpaperHover()" onmousedown="window.gfKeepParentFocus(event)" onclick="window.gfKeepParentFocus(event)"></div>
+      <div class="gf-home-guard" style="left:1460px;top:1440px;width:355px;height:96px;" onmouseenter="window.gfOnWallpaperHover()" onmousemove="window.gfOnWallpaperHover()" onmousedown="window.gfKeepParentFocus(event)" onclick="window.gfKeepParentFocus(event)"></div>
+
+      <!-- Transparent hover sensors over Row-1 Fenix app icons and top-right Settings gear (pass-through on hover) -->
+      <div id="GF_Row1Sensor" class="gf-subapp-sensor" style="left:215px;top:230px;width:1620px;height:245px;" onmouseenter="window.gfOnSubAppSensorHover(this)" onmousemove="window.gfOnSubAppSensorHover(this)"></div>
+      <div id="GF_GearSensor" class="gf-subapp-sensor" style="left:1890px;top:0;width:138px;height:52px;" onmouseenter="window.gfOnSubAppSensorHover(this)" onmousemove="window.gfOnSubAppSensorHover(this)"></div>
+
+      <!-- Physical 3D Tablet Home Button UV Catcher (x = 2028..2048 strip mapped to the 3D bezel Home button) -->
+      <div id="GF_HomeBtnCatcher" onmouseenter="window.gfOnPhysicalHomeHover(event)" onmousemove="window.gfOnPhysicalHomeHover(event)" onmousedown="window.gfOnPhysicalHomeButton(event)" onclick="window.gfOnPhysicalHomeButton(event)"></div>
+
+      <!-- Native iOS-style Home Screen App Icon (Row 2, Column 1 directly below Fenix icon, 3D UV-calibrated 1:1 visual square) -->
+      <div id="GF_FenixAppIcon" class="gf-hidden-icon" onclick="window.gfToggleFenixApp(true)">
+        <div class="gf-app-tile">
+          <svg width="124" height="139" viewBox="0 0 100 100" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+            <path fill="#FFFFFF" stroke="#000000" stroke-width="2.2" stroke-linejoin="round" d="M 30.00 27.15 L 29.90 27.25 L 28.90 27.25 L 28.80 27.35 L 26.90 27.55 L 24.30 28.15 L 22.40 28.75 L 20.00 29.75 L 18.30 30.65 L 16.30 31.95 L 14.20 33.65 L 12.85 35.00 L 11.15 37.10 L 10.05 38.80 L 8.95 41.00 L 8.25 42.80 L 7.65 45.00 L 7.35 46.60 L 7.35 47.30 L 7.25 47.40 L 7.25 48.50 L 7.15 48.60 L 7.25 52.80 L 8.05 56.80 L 8.85 59.10 L 9.95 61.40 L 11.15 63.30 L 12.55 65.10 L 14.70 67.25 L 16.20 68.45 L 18.00 69.65 L 20.30 70.85 L 22.00 71.55 L 24.20 72.25 L 26.40 72.75 L 28.50 72.95 L 28.60 73.05 L 29.80 73.05 L 29.90 73.15 L 34.40 73.05 L 34.50 72.95 L 35.30 72.95 L 35.40 72.85 L 36.70 72.75 L 37.30 72.55 L 38.80 72.35 L 44.10 70.85 L 46.90 69.75 L 49.70 68.35 L 51.25 67.30 L 51.25 48.90 L 38.50 48.85 L 38.45 59.30 L 37.40 59.75 L 34.70 60.55 L 33.60 60.65 L 33.50 60.75 L 31.30 60.75 L 29.10 60.25 L 26.90 59.15 L 26.10 58.55 L 24.85 57.30 L 23.75 55.70 L 22.85 53.50 L 22.45 51.50 L 22.45 48.60 L 22.55 48.50 L 22.55 47.90 L 23.35 45.30 L 23.85 44.30 L 24.75 43.00 L 26.10 41.65 L 26.90 41.05 L 28.60 40.15 L 29.50 39.85 L 30.80 39.55 L 31.70 39.55 L 31.80 39.45 L 33.10 39.45 L 33.20 39.55 L 34.70 39.65 L 37.80 40.55 L 40.60 41.95 L 42.20 43.05 L 43.40 44.15 L 43.60 44.15 L 51.25 34.90 L 51.85 34.00 L 50.10 32.55 L 47.90 31.15 L 45.10 29.75 L 41.90 28.55 L 39.30 27.85 L 36.70 27.45 L 36.60 27.35 L 35.90 27.35 L 35.80 27.25 L 34.90 27.25 L 34.80 27.15 Z M 58.00 29.15 L 57.85 29.30 L 57.95 29.40 L 57.95 72.30 L 57.85 72.40 L 72.20 72.45 L 72.30 58.45 L 91.45 58.40 L 91.40 47.55 L 72.30 47.55 L 72.25 40.10 L 92.70 40.05 L 92.75 29.30 L 92.60 29.15 Z"/>
+          </svg>
+        </div>
+        <div class="gf-app-label">GateFinder</div>
+      </div>
+
+      <div id="GF_FenixOverlay">
+        <div id="GF_FenixOfflineBox" class="gf-offline-box">
+          <div class="gf-offline-icon">GF</div>
+          <div class="gf-offline-title">GateFinder V2.0.4</div>
+          <div id="GF_FenixOfflineSub" class="gf-offline-sub">Connexion au serveur local GateFinder (127.0.0.1:8420)... Assurez-vous que l'application PC GateFinder.exe est lancée.</div>
+          <div class="gf-offline-btn" onclick="window.gfEnsureFenixIframeLoaded(true)">Réessayer maintenant</div>
+        </div>
+        <iframe id="gf_fenix_iframe" src="about:blank"></iframe>
+      </div>
+    </div>
+  </div>
+</script>
+
+<link rel="stylesheet" href="EfbHost.css" />
+<style>
+  /* Hide all GateFinder elements whenever EFB is off, booting/loading, or in sub-apps */
+  #Mainframe.gf-efb-off #GF_FenixAppIcon,
+  #Mainframe.gf-efb-loading #GF_FenixAppIcon,
+  #Mainframe.gf-efb-off #GF_FenixOverlay,
+  #Mainframe.gf-efb-loading #GF_FenixOverlay,
+  #Mainframe.gf-efb-off .gf-home-guard,
+  #Mainframe.gf-efb-loading .gf-home-guard,
+  #Mainframe.gf-efb-off .gf-subapp-sensor,
+  #Mainframe.gf-efb-loading .gf-subapp-sensor,
+  #Mainframe.gf-efb-off #GF_HomeBtnCatcher,
+  #Mainframe.gf-efb-loading #GF_HomeBtnCatcher {
+    display: none !important;
+    pointer-events: none !important;
+  }
+
+  #GF_FocusAnchor {
+    position: absolute;
+    left: -100px;
+    top: -100px;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    border: none;
+    padding: 0;
+    margin: 0;
+    pointer-events: none;
+  }
+
+  .gf-home-guard {
+    position: absolute;
+    z-index: 99980;
+    background: transparent;
+  }
+
+  .gf-subapp-sensor {
+    position: absolute;
+    z-index: 99982;
+    background: transparent;
+  }
+
+  /* Physical 3D Tablet Bezel Home Button Catcher (UV x=2028..2048, y=0..1536) */
+  #GF_HomeBtnCatcher {
+    position: absolute;
+    left: 2028px;
+    top: 0;
+    width: 20px;
+    height: 1536px;
+    z-index: 99999;
+    background: transparent;
+    cursor: pointer;
+    pointer-events: auto;
+  }
+
+  /* Native Fenix Home Screen App Icon (164x184 CSS = exact 1:1 visual square on Fenix 3D tablet) */
+  #GF_FenixAppIcon {
+    position: absolute;
+    left: 231px;
+    top: 520px;
+    width: 164px;
+    z-index: 99985;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    cursor: pointer;
+    user-select: none;
+  }
+  #GF_FenixAppIcon.gf-hidden-icon,
+  #Mainframe.gf-subapp-open #GF_FenixAppIcon,
+  #Mainframe.gf-subapp-open .gf-home-guard,
+  #Mainframe.gf-app-open .gf-home-guard,
+  #Mainframe.gf-subapp-open .gf-subapp-sensor,
+  #Mainframe.gf-app-open .gf-subapp-sensor {
+    display: none !important;
+  }
+  #GF_FenixAppIcon .gf-app-tile {
+    width: 164px;
+    height: 184px;
+    border-radius: 30px;
+    background: linear-gradient(180deg, #FF5A26 0%, #E03C00 100%);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.42), inset 0 2px 3px rgba(255, 255, 255, 0.28);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.12s ease;
+  }
+  #GF_FenixAppIcon:active .gf-app-tile {
+    transform: scale(0.95);
+  }
+  #GF_FenixAppIcon .gf-app-label {
+    margin-top: 12px;
+    color: #FFFFFF;
+    font-family: "Roboto", "Segoe UI", sans-serif;
+    font-size: 24px;
+    font-weight: 500;
+    text-align: center;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.80);
+    letter-spacing: 0.2px;
+  }
+
+  #GF_FenixOverlay {
+    position: absolute;
+    top: 48px;
+    left: 0;
+    width: 2028px;
+    height: 1488px;
+    z-index: 99990;
+    background: #11151C;
+    visibility: hidden;
+    pointer-events: none;
+    opacity: 0;
+  }
+  #GF_FenixOverlay.gf-active {
+    visibility: visible;
+    pointer-events: auto;
+    opacity: 1;
+  }
+  #GF_FenixOverlay #gf_fenix_iframe {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 2028px;
+    height: 1488px;
+    border: none;
+    margin: 0;
+    padding: 0;
+    display: none;
+    background: #11151C;
+    z-index: 2;
+  }
+  .gf-offline-box {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 2028px;
+    height: 1488px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: #11151C;
+    color: #F8FAFC;
+    font-family: "Roboto", "Segoe UI", sans-serif;
+    z-index: 1;
+  }
+  .gf-offline-icon {
+    width: 120px;
+    height: 135px;
+    border-radius: 24px;
+    background: linear-gradient(180deg, #FF5A26 0%, #E03C00 100%);
+    color: #FFFFFF;
+    font-size: 54px;
+    font-weight: 900;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 24px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  }
+  .gf-offline-title {
+    font-size: 36px;
+    font-weight: 800;
+    margin-bottom: 14px;
+  }
+  .gf-offline-sub {
+    font-size: 22px;
+    color: #94A3B8;
+    max-width: 820px;
+    text-align: center;
+    line-height: 1.45;
+    margin-bottom: 28px;
+  }
+  .gf-offline-btn {
+    background: #0284C7;
+    color: #FFFFFF;
+    font-size: 22px;
+    font-weight: 700;
+    padding: 14px 36px;
+    border-radius: 12px;
+    cursor: pointer;
+  }
+</style>
+
+<script type="text/javascript">
+  window.target = 'captain';
+  window._gfBrightnessSimVar = 'L:N_BRIGHTNESS_EFB_CAPT';
+  window._gfIframeReady = false;
+  window._gfOnFenixHome = true;
+  window._gfHomeStateGraceUntil = Date.now() + 1500;
+  window._gfEfbHealthReady = false;
+  window._gfBootReadyAt = Date.now() + 6000;
+  window._gfLastBrightness = 0;
+  window._gfWasScreenOff = true;
+  window._gfLastZone = 'wallpaper';
+  window._gfPhysicalBtnHoverUntil = 0;
+  window._gfPhysicalBtnPassTimer = null;
+  window._gfSubAppHoverUntil = 0;
+  window._gfSubAppPassTimer = null;
+
+  window.gfKeepParentFocus = function(ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    var fenixIfr = document.getElementById('iframe');
+    if (fenixIfr && typeof fenixIfr.blur === 'function') {
+      try { fenixIfr.blur(); } catch (e) {}
+    }
+    var anchor = document.getElementById('GF_FocusAnchor');
+    if (anchor && typeof anchor.focus === 'function') {
+      try { anchor.focus(); } catch (e) {}
+    }
+  };
+
+  window.gfRearmSensors = function(excludeId) {
+    var ids = ['GF_HomeBtnCatcher', 'GF_Row1Sensor', 'GF_GearSensor'];
+    for (var i = 0; i < ids.length; i++) {
+      if (ids[i] === excludeId) continue;
+      var el = document.getElementById(ids[i]);
+      if (el) el.style.pointerEvents = '';
+    }
+  };
+
+  window.gfOnWallpaperHover = function() {
+    window._gfLastZone = 'wallpaper';
+    window.gfRearmSensors(null);
+  };
+
+  window.gfOnSubAppSensorHover = function(el) {
+    if (!el) return;
+    window._gfLastZone = 'subapp';
+    window._gfSubAppHoverUntil = Date.now() + 3000;
+    window.gfRearmSensors(el.id);
+    el.style.pointerEvents = 'none';
+    if (window._gfSubAppPassTimer) {
+      clearTimeout(window._gfSubAppPassTimer);
+    }
+    window._gfSubAppPassTimer = setTimeout(function() {
+      el.style.pointerEvents = '';
+      window._gfSubAppPassTimer = null;
+    }, 1500);
+  };
+
+  window.gfUpdateIconVisibility = function() {
+    var mf = document.getElementById('Mainframe');
+    var appIcon = document.getElementById('GF_FenixAppIcon');
+    var ov = document.getElementById('GF_FenixOverlay');
+    var st = document.getElementById('StatusContent');
+    if (!mf || !appIcon) return;
+
+    var statusBusy = Boolean(
+      st && (st.classList.contains('status-loading') || st.classList.contains('status-disconnected'))
+    );
+    var isBooting = statusBusy || !window._gfEfbHealthReady || (Date.now() < (window._gfBootReadyAt || 0));
+    var isScreenOff = (window._gfLastBrightness <= 0.01);
+
+    mf.classList.toggle('gf-efb-loading', isBooting);
+    mf.classList.toggle('gf-efb-off', isScreenOff);
+
+    if (isScreenOff || isBooting) {
+      appIcon.classList.add('gf-hidden-icon');
+      if (ov && ov.classList.contains('gf-active')) {
+        ov.classList.remove('gf-active');
+        mf.classList.remove('gf-app-open');
+      }
+      return;
+    }
+
+    var isGfOpen = Boolean(ov && ov.classList.contains('gf-active'));
+    var shouldHideIcon = isGfOpen || !window._gfOnFenixHome;
+    appIcon.classList.toggle('gf-hidden-icon', shouldHideIcon);
+  };
+
+  window.gfSetFenixHomeState = function(isHome) {
+    window._gfOnFenixHome = Boolean(isHome);
+    var mf = document.getElementById('Mainframe');
+    if (mf) {
+      mf.classList.toggle('gf-subapp-open', !window._gfOnFenixHome);
+    }
+    if (window._gfOnFenixHome) {
+      window._gfHomeStateGraceUntil = Date.now() + 400;
+      window.gfKeepParentFocus(null);
+      window.gfRearmSensors(null);
+    }
+    window.gfUpdateIconVisibility();
+  };
+
+  window.gfHandleBrightnessValue = function(val) {
+    if (isNaN(val)) return;
+    if (window._gfWasScreenOff && val > 0.01) {
+      window._gfWasScreenOff = false;
+      window._gfBootReadyAt = Math.max(window._gfBootReadyAt || 0, Date.now() + 9200);
+      window._gfLastBrightness = val;
+      window.gfSetFenixHomeState(true);
+      return;
+    }
+    if (val <= 0.01) {
+      window._gfWasScreenOff = true;
+    }
+    window._gfLastBrightness = val;
+  };
+
+  window.addEventListener('message', function(ev) {
+    var d = ev && ev.data;
+    if (!d || typeof d !== 'object') return;
+    if (d.command === 'EFB_HEALTH' && d.ready) {
+      if (!window._gfEfbHealthReady) {
+        window._gfEfbHealthReady = true;
+        window._gfBootReadyAt = Math.max(window._gfBootReadyAt || 0, Date.now() + 4500);
+        window.gfSetFenixHomeState(true);
+      }
+      window.gfUpdateIconVisibility();
+      return;
+    }
+    if (d.command === 'EFB_LOADING') {
+      window._gfBootReadyAt = Math.max(window._gfBootReadyAt || 0, Date.now() + 7500);
+      window.gfSetFenixHomeState(true);
+      window.gfUpdateIconVisibility();
+      return;
+    }
+    if (d.command === 'REBOOT') {
+      window._gfEfbHealthReady = false;
+      window._gfBootReadyAt = Date.now() + 9200;
+      window.gfUpdateIconVisibility();
+      return;
+    }
+    if (d.type === 'simvar:set' && d.name === window._gfBrightnessSimVar) {
+      window.gfHandleBrightnessValue(Number(d.value));
+      window.gfUpdateIconVisibility();
+    }
+  });
+
+  window.gfEnsureFenixIframeLoaded = function(forceReload) {
+    var ifr = document.getElementById('gf_fenix_iframe');
+    var box = document.getElementById('GF_FenixOfflineBox');
+    if (!ifr) return;
+    if (window._gfIframeReady && !forceReload) return;
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', 'http://127.0.0.1:8420/api/current?have_dep=1&have_arr=1&t=' + Date.now(), true);
+    xhr.timeout = 2000;
+    xhr.onload = function() {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        window._gfIframeReady = true;
+        if (box) box.style.display = 'none';
+        ifr.style.display = 'block';
+        var targetUrl = 'http://127.0.0.1:8420/GateFinderEfbFrame.html?fenix=1&v=' + Date.now();
+        if (!ifr.src || ifr.src === 'about:blank' || forceReload) {
+          ifr.src = targetUrl;
+        }
+      }
+    };
+    xhr.onerror = function() {
+      window._gfIframeReady = false;
+      if (box) box.style.display = 'flex';
+      ifr.style.display = 'none';
+    };
+    try { xhr.send(); } catch (e) {}
+  };
+
+  window.gfToggleFenixApp = function(forceOpen) {
+    var ov = document.getElementById('GF_FenixOverlay');
+    var mf = document.getElementById('Mainframe');
+    if (!ov) return;
+    if (window._gfLastBrightness <= 0.01 || !window._gfEfbHealthReady) return;
+    var open = (forceOpen === true) ? true : ((forceOpen === false) ? false : !ov.classList.contains('gf-active'));
+    ov.classList.toggle('gf-active', open);
+    if (mf) mf.classList.toggle('gf-app-open', open);
+    if (open) {
+      window.gfEnsureFenixIframeLoaded(false);
+    } else {
+      window.gfSetFenixHomeState(true);
+    }
+    window.gfUpdateIconVisibility();
+  };
+
+  window.gfOnPhysicalHomeHover = function(ev) {
+    window._gfLastZone = 'home_btn';
+    window._gfPhysicalBtnHoverUntil = Date.now() + 3000;
+    window.gfRearmSensors('GF_HomeBtnCatcher');
+    var ov = document.getElementById('GF_FenixOverlay');
+    if (ov && ov.classList.contains('gf-active')) {
+      return;
+    }
+    var catcher = document.getElementById('GF_HomeBtnCatcher');
+    if (!catcher) return;
+    window.gfKeepParentFocus(null);
+    catcher.style.pointerEvents = 'none';
+    if (window._gfPhysicalBtnPassTimer) {
+      clearTimeout(window._gfPhysicalBtnPassTimer);
+    }
+    window._gfPhysicalBtnPassTimer = setTimeout(function() {
+      catcher.style.pointerEvents = '';
+      window._gfPhysicalBtnPassTimer = null;
+    }, 1200);
+  };
+
+  window.gfOnPhysicalHomeButton = function(ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    window._gfLastZone = 'home_btn';
+    window._gfPhysicalBtnHoverUntil = Date.now() + 3000;
+    var ov = document.getElementById('GF_FenixOverlay');
+    if (ov && ov.classList.contains('gf-active')) {
+      window.gfToggleFenixApp(false);
+      var catcher = document.getElementById('GF_HomeBtnCatcher');
+      if (catcher) {
+        catcher.style.pointerEvents = 'none';
+        setTimeout(function() {
+          catcher.style.pointerEvents = '';
+        }, 1000);
+      }
+      return;
+    }
+    window.gfSetFenixHomeState(true);
+  };
+
+  setInterval(function() {
+    try {
+      if (typeof SimVar !== 'undefined' && SimVar && typeof SimVar.GetSimVarValue === 'function') {
+        var bVal = Number(SimVar.GetSimVarValue(window._gfBrightnessSimVar, 'number'));
+        window.gfHandleBrightnessValue(bVal);
+      }
+    } catch (e) {}
+
+    window.gfUpdateIconVisibility();
+
+    if (window._gfLastBrightness <= 0.01 || !window._gfEfbHealthReady || Date.now() < (window._gfBootReadyAt || 0)) {
+      return;
+    }
+
+    var ov = document.getElementById('GF_FenixOverlay');
+    var isGfOpen = Boolean(ov && ov.classList.contains('gf-active'));
+    if (isGfOpen) {
+      if (!window._gfIframeReady) {
+        window.gfEnsureFenixIframeLoaded(false);
+      }
+      return;
+    }
+
+    var fenixIfr = document.getElementById('iframe');
+    if (!fenixIfr) return;
+
+    if (document.activeElement === fenixIfr) {
+      if (window._gfLastZone === 'home_btn' || Date.now() < (window._gfPhysicalBtnHoverUntil || 0)) {
+        window._gfPhysicalBtnHoverUntil = Date.now() + 2500;
+        window.gfKeepParentFocus(null);
+        if (!window._gfOnFenixHome) {
+          setTimeout(function() {
+            if (window._gfLastBrightness > 0.01) {
+              window.gfSetFenixHomeState(true);
+            }
+          }, 120);
+        }
+        return;
+      }
+      if (window._gfOnFenixHome && window._gfLastZone === 'subapp' && Date.now() > (window._gfHomeStateGraceUntil || 0)) {
+        window.gfSetFenixHomeState(false);
+        return;
+      }
+      if (window._gfOnFenixHome) {
+        window.gfKeepParentFocus(null);
+      }
+    }
+  }, 80);
+</script>
+
+<script type="text/html" import-script="/Pages/VCockpit/Instruments/FNX32X/EFB/EfbHost.js"></script>

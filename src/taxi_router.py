@@ -63,7 +63,7 @@ class TaxiRouter:
     computes optimal A* ground taxi routes with live SimConnect runway exit detection.
     """
 
-    def __init__(self, cache_dir=None):
+    def __init__(self, cache_dir=None, defer_load=False):
         self.memory_cache = {}
         self.graph_cache = {}
         self.locked_arrival_exit = {}  # {icao: exit_ref} when aircraft vacates runway
@@ -71,6 +71,8 @@ class TaxiRouter:
         self.dep_runway_entered = {}   # {icao: rwy_ref} latched when aircraft lines up on active departure runway
         self._failed_overpass_ts = {}  # {icao: timestamp} cooldown to avoid re-querying Overpass 3x on timeout
         self._fetch_lock = threading.Lock()
+        self._cache_load_lock = threading.Lock()
+        self._disk_cache_loaded = False
         self._icao_locks = {}
         self._mirror_idx = 0
         if cache_dir is None:
@@ -80,7 +82,17 @@ class TaxiRouter:
             else:
                 cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
         self.cache_file = os.path.join(cache_dir, "taxi_charts_cache.json")
-        self._load_disk_cache()
+        if not defer_load:
+            self.ensure_disk_cache_loaded()
+
+    def ensure_disk_cache_loaded(self):
+        if self._disk_cache_loaded:
+            return
+        with self._cache_load_lock:
+            if self._disk_cache_loaded:
+                return
+            self._load_disk_cache()
+            self._disk_cache_loaded = True
 
     def _sanitize_chart_geometry(self, chart):
         """
@@ -190,8 +202,13 @@ class TaxiRouter:
 
     def _load_disk_cache(self):
         any_repaired = False
+        seen_paths = set()
         for cf in (os.path.join(os.getcwd(), "taxi_charts_cache.json"), self.cache_file):
             if cf and os.path.exists(cf):
+                norm_cf = os.path.normcase(os.path.abspath(cf))
+                if norm_cf in seen_paths:
+                    continue
+                seen_paths.add(norm_cf)
                 try:
                     with open(cf, "r", encoding="utf-8") as f:
                         data = json.load(f)
@@ -227,7 +244,7 @@ class TaxiRouter:
                 s = s[len(p):]
         return re.sub(r'^([A-Z]*)0+(\d+[A-Z]*)$', r'\1\2', s)
 
-    def _fetch_via_osm_api06(self, center_lat, center_lon):
+    def _fetch_via_osm_api06(self, center_lat, center_lon, extra_stands=None):
         """
         Reliable fallback using the official OpenStreetMap Core API v0.6 (Fastly CDN)
         when public Overpass API mirrors are down (502/504), rate-limited (429), or time out.
@@ -250,14 +267,14 @@ class TaxiRouter:
                 return []
             url = f"https://api.openstreetmap.org/api/0.6/map.json?bbox={w_r},{s_r},{e_r},{n_r}"
             try:
-                r = requests.get(url, headers=headers, timeout=9.0)
+                r = requests.get(url, headers=headers, timeout=10.0)
                 if r.status_code == 200:
                     d = r.json()
                     if isinstance(d, dict) and d.get("elements"):
                         return d["elements"]
                     return []
-                elif r.status_code == 400 and depth < 2:
-                    # Bbox exceeded 50,000 nodes in a dense urban area -> split along longer axis
+                elif r.status_code == 400 and depth < 4:
+                    # Bbox exceeded 50,000 nodes in a dense urban area -> split along longer axis up to depth 4
                     if (e_b - w_b) >= (n_b - s_b):
                         mid_x = (w_b + e_b) / 2.0
                         return _fetch_tile(w_b, s_b, mid_x, n_b, depth + 1) + _fetch_tile(mid_x, s_b, e_b, n_b, depth + 1)
@@ -301,6 +318,11 @@ class TaxiRouter:
                         if pt:
                             aero_lats.append(pt[0])
                             aero_lons.append(pt[1])
+        if extra_stands:
+            for st in extra_stands:
+                if st.get("lat") is not None and st.get("lon") is not None:
+                    aero_lats.append(float(st["lat"]))
+                    aero_lons.append(float(st["lon"]))
 
         if aero_lats and aero_lons:
             margin_lat = 0.0045  # ~500m margin beyond runway thresholds for turnaround pads / holding points
@@ -394,8 +416,6 @@ class TaxiRouter:
         def _is_chart_complete(c_dict):
             if not c_dict or not c_dict.get("runways") or c_dict.get("geom_v") != 4:
                 return False
-            if c_dict.get("full_rwy_extent"):
-                return True
             tw_pts = [p for t in c_dict.get("taxiways", []) for p in t.get("points", [])]
             if not tw_pts:
                 return False
@@ -403,10 +423,28 @@ class TaxiRouter:
                 for end_info in rwy.get("ends", {}).values():
                     elat, elon = end_info.get("lat"), end_info.get("lon")
                     if elat is not None and elon is not None:
-                        if min(haversine_m(elat, elon, tp[0], tp[1]) for tp in tw_pts) > 180.0:
+                        if min(haversine_m(elat, elon, tp[0], tp[1]) for tp in tw_pts) > 320.0:
                             return False
+            if extra_stands and len(extra_stands) >= 5:
+                min_tw_lat = min(p[0] for p in tw_pts) - 0.004
+                max_tw_lat = max(p[0] for p in tw_pts) + 0.004
+                min_tw_lon = min(p[1] for p in tw_pts) - 0.005
+                max_tw_lon = max(p[1] for p in tw_pts) + 0.005
+                valid_st = [
+                    (float(s["lat"]), float(s["lon"]))
+                    for s in extra_stands
+                    if s.get("lat") is not None and s.get("lon") is not None
+                ]
+                if len(valid_st) >= 5:
+                    covered = sum(
+                        1 for slat, slon in valid_st
+                        if min_tw_lat <= slat <= max_tw_lat and min_tw_lon <= slon <= max_tw_lon
+                    )
+                    if covered < len(valid_st) * 0.85:
+                        return False
             return True
 
+        self.ensure_disk_cache_loaded()
         cached = self.memory_cache.get(icao)
         if cached and not _is_coords_valid(cached):
             cached = None
@@ -424,7 +462,7 @@ class TaxiRouter:
             e = round(float(center_lon) + 0.052, 5)
             bbox_str = f"({s},{w},{n},{e})"
             query = (
-                f'[out:json][timeout:6];('
+                f'[out:json][timeout:8];('
                 f'way["aeroway"]{bbox_str};'
                 f'node["aeroway"="parking_position"]{bbox_str};'
                 f'node["aeroway"="holding_position"]{bbox_str};'
@@ -434,7 +472,7 @@ class TaxiRouter:
             )
         else:
             query = (
-                f'[out:json][timeout:6];area["icao"="{icao}"]->.a;('
+                f'[out:json][timeout:8];area["icao"="{icao}"]->.a;('
                 f'way(area.a)["aeroway"="runway"];'
                 f'way(area.a)["aeroway"="taxiway"];'
                 f'way(area.a)["aeroway"="taxilane"];'
@@ -482,10 +520,10 @@ class TaxiRouter:
                 self._merge_extra_stands(empty_c, extra_stands)
                 return empty_c
 
-            for ep in ordered_endpoints[:2]:
+            for ep in ordered_endpoints:
                 try:
                     import requests
-                    r = requests.post(ep, data={'data': query}, headers=headers, timeout=4.5)
+                    r = requests.post(ep, data={'data': query}, headers=headers, timeout=8.0)
                     if r.status_code == 200:
                         d = r.json()
                         if isinstance(d, dict) and d.get('elements') and any(el.get("type") == "way" for el in d.get("elements", [])):
@@ -506,7 +544,7 @@ class TaxiRouter:
                             center_lon = float(nr.json()[0]["lon"])
                     except Exception:
                         pass
-                osm_data = self._fetch_via_osm_api06(center_lat, center_lon)
+                osm_data = self._fetch_via_osm_api06(center_lat, center_lon, extra_stands=extra_stands)
 
         if (not osm_data or not osm_data.get("elements")) and cached and cached.get("runways"):
             self._merge_extra_stands(cached, extra_stands)
@@ -1443,12 +1481,31 @@ class TaxiRouter:
             self.graph_cache[icao] = graph
         return graph
 
-    def _find_best_runway_exit_node(self, graph, target_rwy_obj, thresh_lat, thresh_lon, rwy_hdg, target_rollout_m, min_rollout_m=950.0, preferred_exit_ref=None):
+    def _find_best_runway_exit_node(
+        self,
+        graph,
+        target_rwy_obj,
+        thresh_lat,
+        thresh_lon,
+        rwy_hdg,
+        target_rollout_m,
+        min_rollout_m=950.0,
+        preferred_exit_ref=None,
+        gate_lat=None,
+        gate_lon=None
+    ):
         """
-        Finds a true physical runway turnoff node located ON the runway centerline (<= 16m)
-        that connects directly to a taxiway exit (preferring high-speed / <= 105 deg turnoffs
-        around target_rollout_m down the runway, or preferred_exit_ref if specified by ATC).
+        Finds a true physical runway turnoff node located ON the runway centerline
+        that connects directly to a taxiway exit.
+        Traces each candidate exit branch outward away from the runway centerline (>= 35m)
+        to compute the true exit turnoff angle relative to the landing heading `rwy_hdg`
+        and checks whether the exit leads toward the terminal/gate side of the runway:
+          - Tier 1: High-speed forward turnoffs (<= 72 deg) -> picks the first logical high-speed exit after min_rollout_m.
+          - Tier 2: Right-angle / 90-deg turnoffs (72..108 deg) -> if no high-speed exit exists, picks the first right-angle exit after min_rollout_m.
+          - Tier 3: Reverse / opposite-QFU turnoffs (> 108 deg) -> heavily penalized and only used as a last resort.
+        Also stores `self._last_exit_out_bearing` so `_astar_path` leaves the runway along the chosen exit branch.
         """
+        self._last_exit_out_bearing = None
         if not target_rwy_obj:
             return None
         pts = target_rwy_obj.get("points", [])
@@ -1459,64 +1516,126 @@ class TaxiRouter:
 
         nodes = graph["nodes"]
         adj = graph["adj"]
+
+        def _dist_to_rwy(lat, lon):
+            return min(
+                point_to_segment_projection(lat, lon, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1])[3]
+                for i in range(len(pts) - 1)
+            )
+
+        # Compute signed side of runway for the destination gate (using landing heading vector)
+        rad_hdg = math.radians(rwy_hdg)
+        cos_lat = math.cos(math.radians(thresh_lat))
+        rwy_vx = math.sin(rad_hdg)
+        rwy_vy = math.cos(rad_hdg)
+        gate_side_sign = 0
+        if gate_lat is not None and gate_lon is not None:
+            gx = (gate_lon - thresh_lon) * cos_lat * 111320.0
+            gy = (gate_lat - thresh_lat) * 111320.0
+            # Cross product z = rwy_vx * gy - rwy_vy * gx
+            cz_gate = rwy_vx * gy - rwy_vy * gx
+            if abs(cz_gate) > 25.0:
+                gate_side_sign = 1 if cz_gate > 0 else -1
+
         best_node = None
+        best_out_brg = None
         best_score = float('inf')
 
         for u, (nlat, nlon) in enumerate(nodes):
             # Fast bounding box check
             if abs(nlat - thresh_lat) > 0.045 or abs(nlon - thresh_lon) > 0.06:
                 continue
-            d_rwy = min(
-                point_to_segment_projection(nlat, nlon, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1])[3]
-                for i in range(len(pts) - 1)
-            )
-            if d_rwy > 16.0:
+            edges_u = adj.get(u, [])
+            if not any(e[4] == "runway" for e in edges_u):
+                continue
+            d_rwy_u = _dist_to_rwy(nlat, nlon)
+            if d_rwy_u > 14.0:
                 continue
 
-            twy_edges = [e for e in adj.get(u, []) if e[4] != "runway"]
+            twy_edges = [e for e in edges_u if e[4] != "runway"]
             if not twy_edges:
                 continue
 
-            matches_pref = False
-            if pref_norm:
-                for v, _, _, ref, _ in twy_edges:
-                    if re.sub(r'[\s_\-]+', '', (ref or "")).upper() == pref_norm:
-                        matches_pref = True
-                        break
-                    for _, _, _, ref2, et2 in adj.get(v, []):
-                        if et2 != "runway" and re.sub(r'[\s_\-]+', '', (ref2 or "")).upper() == pref_norm:
-                            matches_pref = True
-                            break
-                    if matches_pref:
-                        break
-
             d_from_thresh = haversine_m(thresh_lat, thresh_lon, nlat, nlon)
-            eff_min_rollout = min(min_rollout_m, 400.0) if matches_pref else min_rollout_m
-            if d_from_thresh < eff_min_rollout:
-                continue
 
-            # Find the best exit branch angle leaving this runway node relative to landing heading
-            min_turn_deg = 180.0
-            for v, _, _, _, _ in twy_edges:
-                brg = bearing_deg(nlat, nlon, nodes[v][0], nodes[v][1])
-                tdiff = angle_diff_deg(rwy_hdg, brg)
-                if tdiff < min_turn_deg:
-                    min_turn_deg = tdiff
+            # Evaluate each outward taxiway branch leaving node `u`
+            for v, _, _, ref, _ in twy_edges:
+                # Trace outward along non-runway edges moving away from the runway centerline
+                cur = v
+                out_ref = ref
+                visited = {u, v}
+                first_step_brg = bearing_deg(nlat, nlon, nodes[v][0], nodes[v][1])
+                for _ in range(10):
+                    clat, clon = nodes[cur]
+                    d_cur_rwy = _dist_to_rwy(clat, clon)
+                    if d_cur_rwy >= 38.0:
+                        break
+                    next_cands = []
+                    for nb, _, _, nref, net in adj.get(cur, []):
+                        if nb not in visited and net != "runway":
+                            d_nb = _dist_to_rwy(nodes[nb][0], nodes[nb][1])
+                            if d_nb > d_cur_rwy - 1.0:
+                                next_cands.append((d_nb, nb, nref))
+                    if not next_cands:
+                        break
+                    next_cands.sort(reverse=True)
+                    _, cur, nref = next_cands[0]
+                    if not out_ref and nref:
+                        out_ref = nref
+                    visited.add(cur)
 
-            # Strongly prefer forward/high-speed turnoffs (<= 65 deg) or 90-deg exits (<= 105 deg)
-            # over reverse-direction high-speed exits (> 115 deg)
-            angle_penalty = 0.0
-            if min_turn_deg > 115.0:
-                angle_penalty = 900.0
-            elif min_turn_deg > 70.0:
-                angle_penalty = 140.0
+                clat, clon = nodes[cur]
+                if _dist_to_rwy(clat, clon) < 22.0:
+                    # Branch never leaves the runway strip (e.g. fillet segment curving back onto runway)
+                    continue
 
-            dist_diff = abs(d_from_thresh - target_rollout_m)
-            score = dist_diff + angle_penalty - (1500.0 if matches_pref else 0.0)
-            if score < best_score:
-                best_score = score
-                best_node = u
+                matches_pref = False
+                if pref_norm:
+                    if re.sub(r'[\s_\-]+', '', (out_ref or "")).upper() == pref_norm:
+                        matches_pref = True
+                    elif re.sub(r'[\s_\-]+', '', (ref or "")).upper() == pref_norm:
+                        matches_pref = True
 
+                eff_min_rollout = min(min_rollout_m, 400.0) if matches_pref else min_rollout_m
+                if d_from_thresh < eff_min_rollout:
+                    continue
+
+                out_brg = bearing_deg(nlat, nlon, clat, clon)
+                turn_deg = angle_diff_deg(rwy_hdg, out_brg)
+
+                # Check if exit leads to the same side of the runway as the destination gate
+                side_penalty = 0.0
+                if gate_side_sign != 0 and not matches_pref:
+                    px = (clon - thresh_lon) * cos_lat * 111320.0
+                    py = (clat - thresh_lat) * 111320.0
+                    cz_exit = rwy_vx * py - rwy_vy * px
+                    exit_sign = 1 if cz_exit > 0 else -1
+                    if exit_sign != gate_side_sign:
+                        side_penalty = 1800.0
+
+                # Tiered turnoff angle classification:
+                #   Tier 1 (<= 72 deg): High-speed forward turnoff -> prefer the first logical one after min_rollout_m
+                #   Tier 2 (72..108 deg): Right-angle (90 deg) turnoff -> if only 90-deg exits exist, pick the first one after min_rollout_m
+                #   Tier 3 (> 108 deg): Reverse / opposite-QFU turnoff -> heavy penalty
+                if turn_deg <= 72.0:
+                    tier_penalty = turn_deg * 1.5
+                    # Prefer the first high-speed exit in the rollout zone
+                    rollout_cost = abs(d_from_thresh - target_rollout_m) * 0.55 + (d_from_thresh - eff_min_rollout) * 0.35
+                elif turn_deg <= 108.0:
+                    tier_penalty = 950.0 + (turn_deg - 72.0) * 2.0
+                    # For right-angle exits, strictly prefer the first one after eff_min_rollout
+                    rollout_cost = (d_from_thresh - eff_min_rollout) * 0.85
+                else:
+                    tier_penalty = 3600.0 + turn_deg * 4.0
+                    rollout_cost = abs(d_from_thresh - target_rollout_m)
+
+                score = rollout_cost + tier_penalty + side_penalty - (5000.0 if matches_pref else 0.0)
+                if score < best_score:
+                    best_score = score
+                    best_node = u
+                    best_out_brg = first_step_brg
+
+        self._last_exit_out_bearing = best_out_brg
         return best_node
 
     def _find_nearest_node(self, graph, lat, lon, prefer_non_runway=True, max_dist_m=600.0):
@@ -2169,12 +2288,16 @@ class TaxiRouter:
                     graph, target_rwy_obj, thresh_lat, thresh_lon, rwy_hdg,
                     target_rollout_m=d_cur + 350.0,
                     min_rollout_m=max(200.0, d_cur + 60.0),
-                    preferred_exit_ref=pref_exit
+                    preferred_exit_ref=pref_exit,
+                    gate_lat=gate_lat,
+                    gate_lon=gate_lon
                 )
+                exit_out_hdg = getattr(self, "_last_exit_out_bearing", None)
                 if exit_node is None:
                     exit_node = self._find_nearest_node(graph, roll_lat, roll_lon, prefer_non_runway=False, max_dist_m=250.0)
                 path_coords, edge_refs = self._astar_path(
                     graph, exit_node, gate_node, allow_runway_start=False, goal_in_heading=gate_hdg,
+                    start_out_heading=exit_out_hdg,
                     atc_taxi_via=atc_taxi_via
                 )
                 route_pts = path_coords + [[round(gate_lat, 6), round(gate_lon, 6)]]
@@ -2209,8 +2332,11 @@ class TaxiRouter:
                     graph, target_rwy_obj, thresh_lat, thresh_lon, rwy_hdg,
                     target_rollout_m=rollout_dist,
                     min_rollout_m=min(1150.0, rwy_len * 0.42),
-                    preferred_exit_ref=pref_exit
+                    preferred_exit_ref=pref_exit,
+                    gate_lat=gate_lat,
+                    gate_lon=gate_lon
                 )
+                exit_out_hdg = getattr(self, "_last_exit_out_bearing", None)
                 if exit_node is None:
                     frac = min(0.82, max(0.45, rollout_dist / max(1.0, rwy_len)))
                     turnoff_lat = thresh_lat + frac * (end_lat - thresh_lat)
@@ -2219,6 +2345,7 @@ class TaxiRouter:
 
                 path_coords, edge_refs = self._astar_path(
                     graph, exit_node, gate_node, allow_runway_start=False, goal_in_heading=gate_hdg,
+                    start_out_heading=exit_out_hdg,
                     atc_taxi_via=atc_taxi_via
                 )
                 route_pts = path_coords + [[round(gate_lat, 6), round(gate_lon, 6)]]

@@ -33,16 +33,24 @@ def setup_tray(app, backend):
         app.after(0, app.show_main_window)
         
     def show_settings(icon, item):
-        app.after(0, app.show_settings)
+        def _open_settings():
+            app.show_settings()
+            app.show_main_window()
+        app.after(0, _open_settings)
 
     def quit_app(icon, item):
         icon.stop()
         app.after(0, app.quit)
         sys.exit(0)
 
+    def open_sceneryx(icon, item):
+        import webbrowser
+        webbrowser.open("https://sidestickpriority.gumroad.com/l/zzlsus/SCENERYX-10")
+
     menu = pystray.Menu(
         pystray.MenuItem("Open GateFinder", show_main, default=True),
         pystray.MenuItem("Settings", show_settings),
+        pystray.MenuItem("BUY SCENERY X & GET 10% DISCOUNT", open_sceneryx),
         pystray.MenuItem("Quit", quit_app)
     )
 
@@ -93,7 +101,7 @@ if __name__ == "__main__":
                 else:
                     msg = (
                         "GateFinder uninstall complete.\n\n"
-                        "• Checked all standard MSFS Community folders (no existing 'wildbill75-gatefinder' package was found).\n"
+                        "• Checked all standard MSFS Community folders (no existing 'gatefinder-ingame-panel' or 'wildbill75-gatefinder' package was found).\n"
                         "• MSFS Auto-start (exe.xml) entries have been cleaned.\n\n"
                         "Note: If you use MSFS Addon Linker, make sure GateFinder is unlinked from within Addon Linker.\n\n"
                         "You can now delete the GateFinder folder."
@@ -103,23 +111,69 @@ if __name__ == "__main__":
         sys.exit(0)
 
     try:
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("GateFinder.EFB.V2.GF")
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("GateFinder.EFB.V2.GF2")
     except Exception:
         pass
 
-    check_loopback_exemption()
-    # Prevent multiple instances
+    # Prevent multiple instances — if already running in background/System Tray, wake up the existing window
     mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "Global\\GateFinderMutex")
     if ctypes.windll.kernel32.GetLastError() == 183: # ERROR_ALREADY_EXISTS
+        if "--silent" not in sys.argv:
+            for p_port in (8420, 8125):
+                try:
+                    import urllib.request
+                    urllib.request.urlopen(f"http://127.0.0.1:{p_port}/api/show_window", timeout=0.6).read()
+                    break
+                except Exception:
+                    pass
+            try:
+                hwnd = (
+                    ctypes.windll.user32.FindWindowW(None, "MSFS 2024 - GateFinder V2.0.4")
+                    or ctypes.windll.user32.FindWindowW(None, "MSFS 2024 - GateFinder V2.0.3")
+                    or ctypes.windll.user32.FindWindowW(None, "MSFS 2024 - GateFinder V2.0.2")
+                    or ctypes.windll.user32.FindWindowW(None, "MSFS 2024 - GateFinder V2.0.1")
+                    or ctypes.windll.user32.FindWindowW(None, "MSFS 2024 - GateFinder V2.0")
+                )
+                if hwnd:
+                    ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                    ctypes.windll.user32.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
         sys.exit(0)
 
     config = Config()
     autostart = AutoStartManager()
-    
-    # Initialize Backend
-    backend = GateFinderBackend(config)
-    backend.load_data()
+
+    # Initialize Backend immediately (heavy DB/GSX/cache init deferred until splash screen is on screen)
+    from legal_and_diagnostics import LegacyMigrationManager, CrashReporter
+    backend = GateFinderBackend(config, defer_heavy_init=True)
+    backend.migration_summary = {}
+    crash_reporter = CrashReporter(config=config, backend=backend)
+    crash_reporter.install_hooks()
+    backend.crash_reporter = crash_reporter
     backend.start_server()
+
+    def _bg_startup_housekeeping():
+        try:
+            check_loopback_exemption()
+        except Exception:
+            pass
+        try:
+            migration_mgr = LegacyMigrationManager(config, autostart)
+            backend.migration_summary = migration_mgr.run_startup_migration()
+        except Exception:
+            pass
+        try:
+            if config.settings.get("auto_start", False):
+                autostart.enable()
+        except Exception:
+            pass
+        try:
+            backend.ensure_initialized()
+        except Exception:
+            pass
+
+    threading.Thread(target=_bg_startup_housekeeping, daemon=True).start()
 
     # Initialize GUI
     app = GUIApp(config, autostart, backend)

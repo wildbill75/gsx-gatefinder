@@ -1,0 +1,149 @@
+{
+  "content": [
+    {
+      "path": "InGamePanels/InGamePanel_GateFinder.spb",
+      "size": 688,
+      "date": 134380175399843680
+    },
+    {
+      "path": "en-US.locPak",
+      "size": 636,
+      "date": 134384344066013104
+    },
+    {
+      "path": "fr-FR.locPak",
+      "size": 636,
+      "date": 134384344084913152
+    },
+    {
+      "path": "html_ui/Pages/VCockpit/Instruments/FNX32X/EFB/EfbHost_Captain.html",
+      "size": 21316,
+      "date": 134385273015857792
+    },
+    {
+      "path": "html_ui/Pages/VCockpit/Instruments/FNX32X/EFB/EfbHost_FO.html",
+      "size": 21309,
+      "date": 134385273448210464
+    },
+    {
+      "path": "html_ui/Textures/Menu/toolbar/GateFinder-OFF.svg",
+      "size": 1731,
+      "date": 134383013070309136
+    },
+    {
+      "path": "html_ui/Textures/Menu/toolbar/GateFinder.svg",
+      "size": 1731,
+      "date": 134383013070309136
+    },
+    {
+      "path": "html_ui/Textures/Menu/toolbar/GateFinderPanel-OFF.svg",
+      "size": 1731,
+      "date": 134383013070309136
+    },
+    {
+      "path": "html_ui/Textures/Menu/toolbar/GateFinderPanel.svg",
+      "size": 1731,
+      "date": 134383013070314976
+    },
+    {
+      "path": "html_ui/Textures/Menu/toolbar/ICON_TOOLBAR_GATEFINDER-OFF.svg",
+      "size": 1731,
+      "date": 134383013070320656
+    },
+    {
+      "path": "html_ui/Textures/Menu/toolbar/ICON_TOOLBAR_GATEFINDER.svg",
+      "size": 1731,
+      "date": 134383013070325664
+    },
+    {
+      "path": "html_ui/Textures/Menu/toolbar/ICON_TOOLBAR_GATEFINDERPANEL-OFF.svg",
+      "size": 1731,
+      "date": 134383013070325664
+    },
+    {
+      "path": "html_ui/Textures/Menu/toolbar/ICON_TOOLBAR_GATEFINDERPANEL.svg",
+      "size": 1731,
+      "date": 134383013070330608
+    },
+    {
+      "path": "html_ui/efb_ui/efb_apps/GateFinderEfbApp/Assets/app-icon.svg",
+      "size": 1776,
+      "date": 134384725064613136
+    },
+    {
+      "path": "html_ui/efb_ui/efb_apps/GateFinderEfbApp/GateFinderEfbApp.css",
+      "size": 895,
+      "date": 134384725077082208
+    },
+    {
+      "path": "html_ui/efb_ui/efb_apps/GateFinderEfbApp/GateFinderEfbApp.js",
+      "size": 7271,
+      "date": 134385254134807632
+    },
+    {
+      "path": "html_ui/icons/toolbar/GateFinder-OFF.svg",
+      "size": 1731,
+      "date": 134383013070298544
+    },
+    {
+      "path": "html_ui/icons/toolbar/GateFinder.svg",
+      "size": 1731,
+      "date": 134383013070298544
+    },
+    {
+      "path": "html_ui/icons/toolbar/GateFinderPanel-OFF.svg",
+      "size": 1731,
+      "date": 134383013070298544
+    },
+    {
+      "path": "html_ui/icons/toolbar/GateFinderPanel.svg",
+      "size": 1731,
+      "date": 134383013070303840
+    },
+    {
+      "path": "html_ui/icons/toolbar/ICON_TOOLBAR_GATEFINDER-OFF.svg",
+      "size": 1731,
+      "date": 134383013070303840
+    },
+    {
+      "path": "html_ui/icons/toolbar/ICON_TOOLBAR_GATEFINDER.svg",
+      "size": 1731,
+      "date": 134383013070303840
+    },
+    {
+      "path": "html_ui/icons/toolbar/ICON_TOOLBAR_GATEFINDERPANEL-OFF.svg",
+      "size": 1731,
+      "date": 134383013070303840
+    },
+    {
+      "path": "html_ui/icons/toolbar/ICON_TOOLBAR_GATEFINDERPANEL.svg",
+      "size": 1731,
+      "date": 134383013070303840
+    },
+    {
+      "path": "html_ui/ingamePanels/GateFinderPanel/GateFinderEfbFrame.html",
+      "size": 34708,
+      "date": 134385270911802752
+    },
+    {
+      "path": "html_ui/ingamePanels/GateFinderPanel/GateFinderFenixFrame.html",
+      "size": 34792,
+      "date": 134385271167454016
+    },
+    {
+      "path": "html_ui/ingamePanels/GateFinderPanel/GateFinderPanel.css",
+      "size": 12904,
+      "date": 134384447510270848
+    },
+    {
+      "path": "html_ui/ingamePanels/GateFinderPanel/GateFinderPanel.html",
+      "size": 7030,
+      "date": 134384447287052720
+    },
+    {
+      "path": "html_ui/ingamePanels/GateFinderPanel/GateFinderPanel.js",
+      "size": 179273,
+      "date": 134385270614185392
+    }
+  ]
+}

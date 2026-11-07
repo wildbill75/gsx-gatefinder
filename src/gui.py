@@ -7,6 +7,7 @@ import re
 import sys
 import time
 import tkinter
+import tkinter as tk
 import math
 
 # Configuration du thème moderne et chic
@@ -257,27 +258,33 @@ class SettingsView(ctk.CTkFrame):
 
         # Single non-scrolling EFB container using the main window's #121418 background
         main_container = ctk.CTkFrame(self, fg_color="transparent", corner_radius=0, border_width=0)
-        main_container.pack(fill="both", expand=True, padx=16, pady=(12, 14))
+        main_container.pack(fill="both", expand=True, padx=16, pady=(8, 10))
 
-        def _make_section_card(title_text, is_first=False, is_last=False):
-            card = ctk.CTkFrame(main_container, fg_color="#1B1E24", corner_radius=12, border_width=0)
-            card.pack(fill="both", expand=True, padx=0, pady=(0 if is_first else 5, 0 if is_last else 5))
+        def _make_section_card(title_text, is_first=False, is_last=False, subtitle_text="", right_widget_builder=None):
+            card = ctk.CTkFrame(main_container, fg_color="#1B1E24", corner_radius=10, border_width=0)
+            card.pack(fill="both", expand=True, padx=0, pady=(0 if is_first else 3, 0 if is_last else 3))
 
             hdr_row = ctk.CTkFrame(card, fg_color="transparent")
-            hdr_row.pack(fill="x", padx=16, pady=(12, 6))
+            hdr_row.pack(fill="x", padx=14, pady=(8, 4))
 
             title_bar = ctk.CTkFrame(hdr_row, fg_color="#252932", corner_radius=7, border_width=0)
-            title_bar.pack(side="left", fill="x", expand=True, padx=(0, 10 if is_first else 0))
+            title_bar.pack(side="left", fill="x", expand=True, padx=(0, 8 if (is_first or right_widget_builder) else 0))
             ctk.CTkLabel(
                 title_bar, text=title_text,
                 font=ctk.CTkFont(size=11, weight="bold"),
                 text_color="#FFFFFF"
-            ).pack(side="left", padx=12, pady=4)
+            ).pack(side="left", padx=(12, 8), pady=3)
+            if subtitle_text:
+                ctk.CTkLabel(
+                    title_bar, text=subtitle_text,
+                    font=ctk.CTkFont(size=11),
+                    text_color="#94A3B8"
+                ).pack(side="left", padx=(4, 10), pady=3)
 
             if is_first:
                 self.btn_back = ctk.CTkButton(
                     hdr_row, text="Back", command=self.on_close_callback,
-                    width=84, height=28, corner_radius=7,
+                    width=84, height=26, corner_radius=7,
                     fg_color="#578DA8", hover_color="#4A6C7D", border_width=0,
                     text_color="#FFFFFF",
                     font=ctk.CTkFont(size=12, weight="bold")
@@ -285,9 +292,11 @@ class SettingsView(ctk.CTkFrame):
                 self.btn_back.pack(side="right")
                 self._primary_btns.append(self.btn_back)
                 Tooltip(self.btn_back, "Return to the Lido Ground Chart view.")
+            elif right_widget_builder:
+                right_widget_builder(hdr_row)
 
             body = ctk.CTkFrame(card, fg_color="transparent")
-            body.pack(fill="both", expand=True, padx=18, pady=(2, 12))
+            body.pack(fill="both", expand=True, padx=16, pady=(1, 8))
             body.grid_columnconfigure(0, minsize=230)
             body.grid_columnconfigure(1, weight=1)
             return body
@@ -440,6 +449,18 @@ class SettingsView(ctk.CTkFrame):
         self._chk_widgets.append(chk_clear_ai)
         Tooltip(chk_clear_ai, "Automatically removes SimConnect AI aircraft parked at your assigned Departure and Arrival stands.")
 
+        self.mars_overlap_protection_var = ctk.BooleanVar(value=self.config.settings.get("mars_overlap_protection", True))
+        chk_mars_overlap = ctk.CTkCheckBox(
+            c2_checks,
+            text="Protect overlapping / double stands (MARS) from AI & traffic collisions",
+            variable=self.mars_overlap_protection_var,
+            command=self.save_settings_silent,
+            **chk_style
+        )
+        chk_mars_overlap.pack(anchor="w", pady=3)
+        self._chk_widgets.append(chk_mars_overlap)
+        Tooltip(chk_mars_overlap, "Prevents wingtip collisions on double/triple MARS stands (e.g. A4 & A41) by automatically clearing AI traffic (BeyondATC / MSFS) spawned on overlapping neighbor sub-stands and filtering overlapping occupied stands.")
+
         lbl_si_key = ctk.CTkLabel(c2, text="SayIntentions.AI SAPI Key:", font=ctk.CTkFont(size=13, weight="bold"), text_color="#E2E8F0")
         lbl_si_key.grid(row=1, column=0, sticky="w", pady=3)
         Tooltip(lbl_si_key, "Optional. Leave blank to auto-detect your API key directly from your local SayIntentions.AI installation.")
@@ -461,7 +482,63 @@ class SettingsView(ctk.CTkFrame):
         # ==================================================================
         # CARD 3: PERFORMANCE & SYSTEM
         # ==================================================================
-        c3 = _make_section_card("PERFORMANCE & SYSTEM")
+        web_efb_url = (
+            self.backend.get_web_efb_url()
+            if (self.backend and hasattr(self.backend, "get_web_efb_url"))
+            else "http://127.0.0.1:8420/"
+        )
+
+        def _build_web_efb_hdr_btns(hdr_parent):
+            def _open_web_efb():
+                import webbrowser
+                webbrowser.open(web_efb_url)
+
+            btn_open_web = ctk.CTkButton(
+                hdr_parent, text="Open Web EFB", width=112, height=26, corner_radius=6,
+                fg_color="#578DA8", hover_color="#4A6C7D",
+                border_width=0,
+                text_color="#FFFFFF", font=ctk.CTkFont(size=12, weight="bold"),
+                command=_open_web_efb
+            )
+            btn_open_web.pack(side="right", padx=(6, 0))
+            self._primary_btns.append(btn_open_web)
+            Tooltip(btn_open_web, f"Open the Live Web EFB ({web_efb_url}) in your browser. Open this exact URL on any 2nd PC, iPad, or tablet on your local network.")
+
+            btn_copy_web = ctk.CTkButton(
+                hdr_parent, text="Copy URL", width=84, height=26, corner_radius=6,
+                fg_color="#252932", hover_color="#323846",
+                border_width=1, border_color="#334155",
+                text_color="#E2E8F0", font=ctk.CTkFont(size=12, weight="bold")
+            )
+
+            def _copy_web_efb():
+                try:
+                    self.clipboard_clear()
+                    self.clipboard_append(web_efb_url)
+                    btn_copy_web.configure(text="Copied!")
+                    self.after(1600, lambda: btn_copy_web.configure(text="Copy URL") if btn_copy_web.winfo_exists() else None)
+                except Exception:
+                    pass
+
+            btn_copy_web.configure(command=_copy_web_efb)
+            btn_copy_web.pack(side="right", padx=(6, 0))
+            Tooltip(btn_copy_web, f"Copy {web_efb_url} to clipboard to open on a 2nd PC, Mac, iPad, or Android tablet.")
+
+            btn_qr_web = ctk.CTkButton(
+                hdr_parent, text="QR Code", width=78, height=26, corner_radius=6,
+                fg_color="#252932", hover_color="#323846",
+                border_width=1, border_color="#334155",
+                text_color="#38BDF8", font=ctk.CTkFont(size=12, weight="bold"),
+                command=lambda: self.open_web_efb_qr_modal(web_efb_url)
+            )
+            btn_qr_web.pack(side="right")
+            Tooltip(btn_qr_web, "Display a scannable QR Code to open the Live Web EFB directly on your iPhone, iPad, or Android phone/tablet.")
+
+        c3 = _make_section_card(
+            "PERFORMANCE & SYSTEM",
+            subtitle_text=f"Web EFB (Phone / Tablet / 2nd PC): {web_efb_url}",
+            right_widget_builder=_build_web_efb_hdr_btns
+        )
 
         c3_checks = ctk.CTkFrame(c3, fg_color="transparent")
         c3_checks.grid(row=0, column=0, columnspan=2, sticky="w")
@@ -474,9 +551,21 @@ class SettingsView(ctk.CTkFrame):
             command=self.save_settings_silent,
             **chk_style
         )
-        chk_autostart.pack(anchor="w", pady=3)
+        chk_autostart.pack(anchor="w", pady=2)
         self._chk_widgets.append(chk_autostart)
         Tooltip(chk_autostart, "Registers GateFinder in your MSFS exe.xml file so it starts automatically in the background when the simulator launches.")
+
+        self.auto_quit_msfs_var = ctk.BooleanVar(value=self.config.settings.get("auto_quit_with_msfs", False))
+        chk_autoquit = ctk.CTkCheckBox(
+            c3_checks,
+            text="Auto-Quit GateFinder when MSFS closes",
+            variable=self.auto_quit_msfs_var,
+            command=self.save_settings_silent,
+            **chk_style
+        )
+        chk_autoquit.pack(anchor="w", pady=2)
+        self._chk_widgets.append(chk_autoquit)
+        Tooltip(chk_autoquit, "Automatically closes GateFinder in the background when Microsoft Flight Simulator exits.")
 
         self.hibernate_map_in_flight_var = ctk.BooleanVar(value=self.config.settings.get("hibernate_map_in_flight", True))
         chk_hibernate = ctk.CTkCheckBox(
@@ -486,27 +575,117 @@ class SettingsView(ctk.CTkFrame):
             command=self.save_settings_silent,
             **chk_style
         )
-        chk_hibernate.pack(anchor="w", pady=3)
+        chk_hibernate.pack(anchor="w", pady=2)
         self._chk_widgets.append(chk_hibernate)
         Tooltip(chk_hibernate, "Pauses map canvas redraws between Wheels-Off and Touchdown to save GPU and CPU resources during flight.")
 
         # ==================================================================
-        # CARD 4: MSFS PATHS & IN-GAME TOOLBAR PANEL
+        # CARD 4: CRASH REPORTING & DIAGNOSTIC PRIVACY (SceneryX Style)
         # ==================================================================
-        c4 = _make_section_card("MSFS PATHS & IN-GAME TOOLBAR PANEL", is_last=True)
+        def _build_crash_hdr_btns(hdr_parent):
+            btn_hist = ctk.CTkButton(
+                hdr_parent, text="History", width=76, height=26, corner_radius=6,
+                fg_color="#161920", hover_color="#2B303B",
+                border_width=1, border_color="#2B303B",
+                text_color="#E2E8F0", font=ctk.CTkFont(size=12, weight="bold"),
+                command=self.open_crash_history_modal
+            )
+            btn_hist.pack(side="right", padx=(6, 0))
+            Tooltip(btn_hist, "View locally recorded crash logs in %APPDATA%\\GateFinder\\crashes\\.")
+
+            btn_issue = ctk.CTkButton(
+                hdr_parent, text="Report an Issue...", width=136, height=26, corner_radius=6,
+                fg_color="#252932", hover_color="#323846",
+                border_width=1, border_color="#334155",
+                text_color="#FFFFFF", font=ctk.CTkFont(size=12, weight="bold"),
+                command=self.report_an_issue
+            )
+            btn_issue.pack(side="right")
+            Tooltip(btn_issue, "Send an anonymized diagnostic or issue report to contact@sidestickpriority.com.")
+
+        c_crash = _make_section_card(
+            "CRASH REPORTING & DIAGNOSTIC PRIVACY",
+            subtitle_text="Help improve GateFinder reliability with zero personal data collection",
+            right_widget_builder=_build_crash_hdr_btns
+        )
+
+        crash_box = ctk.CTkFrame(
+            c_crash, fg_color="#15181E", corner_radius=8,
+            border_width=1, border_color="#252932"
+        )
+        crash_box.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(1, 2))
+        crash_box.grid_columnconfigure(0, weight=1)
+
+        # Row 1: Send Crash Reports Automatically
+        row_cr1 = ctk.CTkFrame(crash_box, fg_color="transparent")
+        row_cr1.pack(fill="x", padx=14, pady=(7, 5))
+        cr1_left = ctk.CTkFrame(row_cr1, fg_color="transparent")
+        cr1_left.pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(
+            cr1_left, text="Send Crash Reports Automatically",
+            font=ctk.CTkFont(size=12, weight="bold"), text_color="#F8FAFC", anchor="w"
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            cr1_left,
+            text="Captures unhandled exceptions, call stacks, and anonymized hardware/simulator specs upon fatal errors. No usernames, personal file paths, or credentials are ever collected.",
+            font=ctk.CTkFont(size=11), text_color="#64748B", anchor="w", justify="left"
+        ).pack(anchor="w")
+
+        self.send_crash_reports_var = ctk.BooleanVar(value=self.config.settings.get("send_crash_reports", True))
+        chk_crash_auto = ctk.CTkCheckBox(
+            row_cr1, text="", width=22,
+            variable=self.send_crash_reports_var,
+            command=self.save_settings_silent,
+            **chk_style
+        )
+        chk_crash_auto.pack(side="right", padx=(12, 0))
+        self._chk_widgets.append(chk_crash_auto)
+
+        # Thin separator line
+        ctk.CTkFrame(crash_box, height=1, fg_color="#222630").pack(fill="x", padx=14, pady=1)
+
+        # Row 2: Share Anonymized Flight Statistics
+        row_cr2 = ctk.CTkFrame(crash_box, fg_color="transparent")
+        row_cr2.pack(fill="x", padx=14, pady=(5, 7))
+        cr2_left = ctk.CTkFrame(row_cr2, fg_color="transparent")
+        cr2_left.pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(
+            cr2_left, text="Share Anonymized Flight Statistics",
+            font=ctk.CTkFont(size=12, weight="bold"), text_color="#F8FAFC", anchor="w"
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            cr2_left,
+            text="Submits high-level flight dispatch aggregates (aircraft type, airport ICAO, ATC source) to help optimize default stand presets and Lido LOD tuning.",
+            font=ctk.CTkFont(size=11), text_color="#64748B", anchor="w", justify="left"
+        ).pack(anchor="w")
+
+        self.share_flight_stats_var = ctk.BooleanVar(value=self.config.settings.get("share_flight_stats", True))
+        chk_flight_stats = ctk.CTkCheckBox(
+            row_cr2, text="", width=22,
+            variable=self.share_flight_stats_var,
+            command=self.save_settings_silent,
+            **chk_style
+        )
+        chk_flight_stats.pack(side="right", padx=(12, 0))
+        self._chk_widgets.append(chk_flight_stats)
+
+        # ==================================================================
+        # CARD 5: MSFS PATHS & IN-GAME TOOLBAR PANEL
+        # ==================================================================
+        c4 = _make_section_card("MSFS PATHS & IN-GAME TOOLBAR PANEL")
 
         path_entry_width = 370
 
         # Row 0: GSX Profile Path
         lbl_gsx = ctk.CTkLabel(c4, text="GSX Profile Path:", font=ctk.CTkFont(size=13, weight="bold"), text_color="#E2E8F0")
-        lbl_gsx.grid(row=0, column=0, sticky="w", pady=3)
+        lbl_gsx.grid(row=0, column=0, sticky="w", pady=2)
         Tooltip(lbl_gsx, "Path to your Virtuali GSX MSFS profiles folder (%APPDATA%\\Virtuali\\GSX\\MSFS) containing custom airport .ini and .py files.")
 
         gsx_frame = ctk.CTkFrame(c4, fg_color="transparent")
-        gsx_frame.grid(row=0, column=1, padx=(10, 0), pady=3, sticky="w")
+        gsx_frame.grid(row=0, column=1, padx=(10, 0), pady=2, sticky="w")
 
         self.gsx_entry = ctk.CTkEntry(
-            gsx_frame, width=path_entry_width, height=28, corner_radius=6,
+            gsx_frame, width=path_entry_width, height=26, corner_radius=6,
             border_width=0, fg_color="#2B303B", text_color="#FFFFFF",
             placeholder_text="Leave empty if GSX Pro is not installed"
         )
@@ -530,14 +709,14 @@ class SettingsView(ctk.CTkFrame):
             self.save_settings_silent()
 
         btn_browse_gsx = ctk.CTkButton(
-            gsx_frame, text="...", width=34, height=28, corner_radius=6,
+            gsx_frame, text="...", width=34, height=26, corner_radius=6,
             fg_color="#2B303B", hover_color="#383E4C", border_width=0, command=browse_gsx
         )
         btn_browse_gsx.pack(side="left", padx=6)
         Tooltip(btn_browse_gsx, "Browse for your GSX MSFS profiles folder.")
 
         btn_autodetect_gsx = ctk.CTkButton(
-            gsx_frame, text="Auto-Detect", width=95, height=28, corner_radius=6,
+            gsx_frame, text="Auto-Detect", width=95, height=26, corner_radius=6,
             fg_color="#578DA8", hover_color="#4A6C7D", border_width=0,
             text_color="#FFFFFF", font=ctk.CTkFont(size=12, weight="bold"), command=auto_scan_gsx
         )
@@ -547,14 +726,14 @@ class SettingsView(ctk.CTkFrame):
 
         # Row 1: Primary MSFS Community Folder
         lbl_comm20 = ctk.CTkLabel(c4, text="Primary Community Folder:", font=ctk.CTkFont(size=13, weight="bold"), text_color="#E2E8F0")
-        lbl_comm20.grid(row=1, column=0, sticky="w", pady=3)
+        lbl_comm20.grid(row=1, column=0, sticky="w", pady=2)
         Tooltip(lbl_comm20, "Path to your primary MSFS Community folder used to scan third-party sceneries and install the In-Game Panel.")
 
         comm2020_frame = ctk.CTkFrame(c4, fg_color="transparent")
-        comm2020_frame.grid(row=1, column=1, padx=(10, 0), pady=3, sticky="w")
+        comm2020_frame.grid(row=1, column=1, padx=(10, 0), pady=2, sticky="w")
 
         self.community2020_entry = ctk.CTkEntry(
-            comm2020_frame, width=path_entry_width, height=28, corner_radius=6,
+            comm2020_frame, width=path_entry_width, height=26, corner_radius=6,
             border_width=0, fg_color="#2B303B", text_color="#FFFFFF",
             placeholder_text="Path to primary MSFS Community folder"
         )
@@ -571,7 +750,7 @@ class SettingsView(ctk.CTkFrame):
                 self.refresh_dynamic_statuses()
 
         btn_browse_c20 = ctk.CTkButton(
-            comm2020_frame, text="...", width=34, height=28, corner_radius=6,
+            comm2020_frame, text="...", width=34, height=26, corner_radius=6,
             fg_color="#2B303B", hover_color="#383E4C", border_width=0, command=browse_comm2020
         )
         btn_browse_c20.pack(side="left", padx=(6, 0))
@@ -579,14 +758,14 @@ class SettingsView(ctk.CTkFrame):
 
         # Row 2: Custom / Secondary Community Folder
         lbl_comm24 = ctk.CTkLabel(c4, text="Secondary / MSFS 2024 Folder:", font=ctk.CTkFont(size=13, weight="bold"), text_color="#E2E8F0")
-        lbl_comm24.grid(row=2, column=0, sticky="w", pady=3)
+        lbl_comm24.grid(row=2, column=0, sticky="w", pady=2)
         Tooltip(lbl_comm24, "Optional path to a secondary MSFS 2024 Community folder or custom Addon Linker scenery directory.")
 
         comm2024_frame = ctk.CTkFrame(c4, fg_color="transparent")
-        comm2024_frame.grid(row=2, column=1, padx=(10, 0), pady=3, sticky="w")
+        comm2024_frame.grid(row=2, column=1, padx=(10, 0), pady=2, sticky="w")
 
         self.community2024_entry = ctk.CTkEntry(
-            comm2024_frame, width=path_entry_width, height=28, corner_radius=6,
+            comm2024_frame, width=path_entry_width, height=26, corner_radius=6,
             border_width=0, fg_color="#2B303B", text_color="#FFFFFF",
             placeholder_text="Optional path to Community2024 or Addon Linker"
         )
@@ -603,39 +782,104 @@ class SettingsView(ctk.CTkFrame):
                 self.refresh_dynamic_statuses()
 
         btn_browse_c24 = ctk.CTkButton(
-            comm2024_frame, text="...", width=34, height=28, corner_radius=6,
+            comm2024_frame, text="...", width=34, height=26, corner_radius=6,
             fg_color="#2B303B", hover_color="#383E4C", border_width=0, command=browse_comm2024
         )
         btn_browse_c24.pack(side="left", padx=(6, 0))
         Tooltip(btn_browse_c24, "Browse for a secondary MSFS 2024 Community or Addon Linker folder.")
 
-        # Row 3: In-game GateFinder Panel (left) + Uninstall GateFinder right-justified on the same line
-        lbl_panel = ctk.CTkLabel(c4, text="MSFS In-Game Toolbar Panel:", font=ctk.CTkFont(size=13, weight="bold"), text_color="#E2E8F0")
-        lbl_panel.grid(row=3, column=0, sticky="w", pady=(6, 2))
-        Tooltip(lbl_panel, "Install or uninstall the GateFinder VR/Toolbar In-Game Panel in your MSFS Community folder(s).")
+        # Row 3: MSFS EFB & In-Game Toolbar Panel + Migrate / Clean V1.x
+        lbl_panel = ctk.CTkLabel(c4, text="MSFS EFB & In-Game Panel:", font=ctk.CTkFont(size=13, weight="bold"), text_color="#E2E8F0")
+        lbl_panel.grid(row=3, column=0, sticky="w", pady=(4, 1))
+        Tooltip(lbl_panel, "Install or uninstall the GateFinder MSFS EFB App & VR/Toolbar In-Game Panel ('gatefinder-ingame-panel') in your MSFS Community folder(s).")
 
         panel_frame = ctk.CTkFrame(c4, fg_color="transparent")
-        panel_frame.grid(row=3, column=1, padx=(10, 0), pady=(6, 2), sticky="ew")
+        panel_frame.grid(row=3, column=1, padx=(10, 0), pady=(4, 1), sticky="ew")
 
         self.btn_install_panel = ctk.CTkButton(
-            panel_frame, text="Install Panel", width=145, height=28, corner_radius=6,
+            panel_frame, text="Install MSFS EFB", width=148, height=26, corner_radius=6,
             fg_color="#578DA8", hover_color="#4A6C7D", border_width=0,
             text_color="#FFFFFF",
             font=ctk.CTkFont(size=12, weight="bold"),
             command=self.install_ingame_panel
         )
         self.btn_install_panel.pack(side="left")
-        Tooltip(self.btn_install_panel, "Click to install or uninstall the GateFinder In-Game Panel in your configured MSFS Community folder(s).")
+        Tooltip(self.btn_install_panel, "Click to install or uninstall the GateFinder MSFS EFB & In-Game Panel ('gatefinder-ingame-panel') in your configured MSFS Community folder(s).")
+
+        self.lbl_msfs_efb_status = ctk.CTkLabel(
+            panel_frame, text="", font=ctk.CTkFont(size=12, weight="bold"), text_color="#10B981"
+        )
+        self.lbl_msfs_efb_status.pack(side="left", padx=(10, 0))
+
+        self.btn_migrate_v1 = ctk.CTkButton(
+            panel_frame, text="Migrate / Clean V1.x...", width=155, height=26, corner_radius=6,
+            fg_color="#252932", hover_color="#323846",
+            border_width=1, border_color="#334155",
+            text_color="#E2E8F0",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            command=self.open_v1_migration_modal
+        )
+        self.btn_migrate_v1.pack(side="right")
+        Tooltip(self.btn_migrate_v1, "Find and cleanly remove any previous GateFinder V1.x installation ('wildbill75-gatefinder'), import its settings, and install V2.0.")
+
+        # Row 4: Fenix A320 EFB Integration + Uninstall GateFinder right-justified in red
+        lbl_fenix_efb = ctk.CTkLabel(c4, text="Fenix A320 EFB Integration:", font=ctk.CTkFont(size=13, weight="bold"), text_color="#E2E8F0")
+        lbl_fenix_efb.grid(row=4, column=0, sticky="w", pady=(3, 1))
+        Tooltip(lbl_fenix_efb, "Install or uninstall the GateFinder app directly inside the Fenix A319/A320/A321 cockpit EFB tablet (Captain & First Officer).")
+
+        fenix_frame = ctk.CTkFrame(c4, fg_color="transparent")
+        fenix_frame.grid(row=4, column=1, padx=(10, 0), pady=(3, 1), sticky="ew")
+
+        self.btn_install_fenix_efb = ctk.CTkButton(
+            fenix_frame, text="Install Fenix EFB", width=148, height=26, corner_radius=6,
+            fg_color="#578DA8", hover_color="#4A6C7D", border_width=0,
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            command=self.install_fenix_efb_ui
+        )
+        self.btn_install_fenix_efb.pack(side="left")
+        Tooltip(self.btn_install_fenix_efb, "Click to install/enable or uninstall/disable GateFinder inside the Fenix A320 3D cockpit tablet EFB.")
+
+        self.lbl_fenix_efb_status = ctk.CTkLabel(
+            fenix_frame, text="", font=ctk.CTkFont(size=12, weight="bold"), text_color="#10B981"
+        )
+        self.lbl_fenix_efb_status.pack(side="left", padx=(10, 0))
 
         self.btn_uninstall_app = ctk.CTkButton(
-            panel_frame, text="Uninstall GateFinder", command=self.run_uninstall,
-            width=155, height=28, corner_radius=6,
-            fg_color="#2B303B", hover_color="#383E4C",
+            fenix_frame, text="Uninstall GateFinder", command=self.run_uninstall,
+            width=155, height=26, corner_radius=6,
+            fg_color="#B91C1C", hover_color="#991B1B",
             border_width=0, text_color="#FFFFFF",
             font=ctk.CTkFont(size=12, weight="bold")
         )
         self.btn_uninstall_app.pack(side="right")
-        Tooltip(self.btn_uninstall_app, "Removes the GateFinder In-Game Panel from all MSFS Community folders and cleans MSFS exe.xml auto-start entries.")
+        Tooltip(self.btn_uninstall_app, "Removes the GateFinder In-Game Panel & EFB integrations from all MSFS Community folders and cleans MSFS exe.xml auto-start entries.")
+
+        # ==================================================================
+        # CARD 6: LEGAL & COMPLIANCE (SceneryX Style)
+        # ==================================================================
+        def _build_legal_hdr_btns(hdr_parent):
+            for tab_id, tab_lbl, w_px in [
+                ("Third-Party Licenses", "Third-Party Licenses", 142),
+                ("Privacy Policy", "Privacy Policy", 104),
+                ("EULA", "EULA", 68),
+            ]:
+                btn_l = ctk.CTkButton(
+                    hdr_parent, text=tab_lbl, width=w_px, height=26, corner_radius=6,
+                    fg_color="#252932", hover_color="#323846",
+                    border_width=1, border_color="#334155",
+                    text_color="#F8FAFC", font=ctk.CTkFont(size=12, weight="bold"),
+                    command=lambda t=tab_id: self.open_legal_modal(initial_tab=t)
+                )
+                btn_l.pack(side="right", padx=(6, 0))
+
+        c_legal = _make_section_card(
+            "LEGAL & COMPLIANCE",
+            is_last=True,
+            subtitle_text="End User License Agreement (EULA), Privacy Policy & Third-Party Open-Source Licenses  •  © 2026 Sidestick Priority",
+            right_widget_builder=_build_legal_hdr_btns
+        )
+        c_legal.pack_forget()
 
         # Bind live auto-save on text entries
         for entry_w in (self.simbrief_entry, self.si_api_key_entry, self.gsx_entry, self.community2020_entry, self.community2024_entry):
@@ -673,27 +917,56 @@ class SettingsView(ctk.CTkFrame):
             comm20 = self.community2020_entry.get().strip() if hasattr(self, "community2020_entry") else ""
             comm24 = self.community2024_entry.get().strip() if hasattr(self, "community2024_entry") else ""
             is_installed = False
-            if comm20 and os.path.exists(os.path.join(comm20, "wildbill75-gatefinder")):
+            if comm20 and os.path.exists(os.path.join(comm20, "gatefinder-ingame-panel", "InGamePanels")):
                 is_installed = True
-            if comm24 and os.path.exists(os.path.join(comm24, "wildbill75-gatefinder")):
+            if comm24 and os.path.exists(os.path.join(comm24, "gatefinder-ingame-panel", "InGamePanels")):
                 is_installed = True
             if hasattr(self, "btn_install_panel"):
                 if is_installed:
                     self.btn_install_panel.configure(
-                        text="Uninstall Panel",
+                        text="Uninstall MSFS EFB",
                         fg_color="#2B303B",
                         hover_color="#383E4C",
                         border_width=0,
                         command=self.uninstall_ingame_panel
                     )
+                    if hasattr(self, "lbl_msfs_efb_status"):
+                        self.lbl_msfs_efb_status.configure(text="● Installed", text_color="#10B981")
                 else:
                     self.btn_install_panel.configure(
-                        text="Install Panel",
+                        text="Install MSFS EFB",
                         fg_color=c_primary,
                         hover_color=c_hover,
                         border_width=0,
                         command=self.install_ingame_panel
                     )
+                    if hasattr(self, "lbl_msfs_efb_status"):
+                        self.lbl_msfs_efb_status.configure(text="○ Not Installed", text_color="#94A3B8")
+
+            is_fenix_installed = False
+            if self.backend and hasattr(self.backend, "is_fenix_efb_installed"):
+                is_fenix_installed = self.backend.is_fenix_efb_installed(extra_community_paths=[comm20, comm24])
+            if hasattr(self, "btn_install_fenix_efb"):
+                if is_fenix_installed:
+                    self.btn_install_fenix_efb.configure(
+                        text="Uninstall Fenix EFB",
+                        fg_color="#2B303B",
+                        hover_color="#383E4C",
+                        border_width=0,
+                        command=self.uninstall_fenix_efb_ui
+                    )
+                    if hasattr(self, "lbl_fenix_efb_status"):
+                        self.lbl_fenix_efb_status.configure(text="● Installed (Captain & FO)", text_color="#10B981")
+                else:
+                    self.btn_install_fenix_efb.configure(
+                        text="Install Fenix EFB",
+                        fg_color=c_primary,
+                        hover_color=c_hover,
+                        border_width=0,
+                        command=self.install_fenix_efb_ui
+                    )
+                    if hasattr(self, "lbl_fenix_efb_status"):
+                        self.lbl_fenix_efb_status.configure(text="○ Not Installed", text_color="#94A3B8")
         except Exception:
             pass
 
@@ -740,7 +1013,7 @@ class SettingsView(ctk.CTkFrame):
         else:
             msg = (
                 "GateFinder uninstall complete.\n\n"
-                "• Checked all standard MSFS Community folders (no existing 'wildbill75-gatefinder' package was found).\n"
+                "• Checked all standard MSFS Community folders (no existing 'gatefinder-ingame-panel' or 'wildbill75-gatefinder' package was found).\n"
                 "• MSFS Auto-start (exe.xml) entries have been cleaned.\n\n"
                 "Note: If you use MSFS Addon Linker, make sure GateFinder is unlinked from within Addon Linker.\n\n"
                 "You can now close this window and delete the folder containing GateFinder.exe."
@@ -841,24 +1114,31 @@ class SettingsView(ctk.CTkFrame):
         else:
             base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
             
-        src_panel = os.path.join(base_dir, "wildbill75-gatefinder")
-        if not os.path.exists(src_panel):
-            # Try dev fallback (if we run from /src)
-            src_panel = os.path.join(base_dir, "..", "MSFS_Package", "wildbill75-gatefinder")
-            if not os.path.exists(src_panel):
-                messagebox.showerror("Error", "Could not locate 'wildbill75-gatefinder' package folder. Please make sure the zip archive contents are fully extracted.")
-                return
+        src_panel = None
+        for cand in [
+            os.path.join(base_dir, "MSFS_Package", "gatefinder-ingame-panel"),
+            os.path.join(base_dir, "gatefinder-ingame-panel"),
+            os.path.join(base_dir, "..", "MSFS_Package", "gatefinder-ingame-panel"),
+            os.path.join(getattr(sys, "_MEIPASS", ""), "MSFS_Package", "gatefinder-ingame-panel") if hasattr(sys, "_MEIPASS") else "",
+        ]:
+            if cand and os.path.exists(cand):
+                src_panel = cand
+                break
+
+        if not src_panel:
+            messagebox.showerror("Error", "Could not locate 'gatefinder-ingame-panel' package folder. Please make sure the zip archive contents are fully extracted.")
+            return
 
         # Check if already installed in any of the destinations
         already_installed = False
         for dest_path in destinations.keys():
-            package_path = os.path.join(dest_path, "wildbill75-gatefinder")
+            package_path = os.path.join(dest_path, "gatefinder-ingame-panel")
             if os.path.exists(package_path):
                 already_installed = True
                 break
                 
         if already_installed:
-            ans = messagebox.askyesno("Overwrite?", "The GateFinder In-Game Panel is already installed. Do you want to overwrite it with the latest version?")
+            ans = messagebox.askyesno("Overwrite?", "The GateFinder In-Game Panel ('gatefinder-ingame-panel') is already installed. Do you want to overwrite it with the latest version?")
             if not ans:
                 return
                 
@@ -867,9 +1147,18 @@ class SettingsView(ctk.CTkFrame):
             copied_folders = []
             copy_errors = []
             for dest_path, folder_name in destinations.items():
-                package_path = os.path.join(dest_path, "wildbill75-gatefinder")
+                # Clean any legacy V1.x 'wildbill75-gatefinder' folder in the same Community directory
+                legacy_path = os.path.join(dest_path, "wildbill75-gatefinder")
+                if os.path.exists(legacy_path):
+                    try:
+                        shutil.rmtree(legacy_path)
+                    except Exception:
+                        pass
+                package_path = os.path.join(dest_path, "gatefinder-ingame-panel")
                 try:
                     shutil.copytree(src_panel, package_path, dirs_exist_ok=True)
+                    if self.backend and hasattr(self.backend, "_apply_fenix_efb_state_to_pkg"):
+                        self.backend._apply_fenix_efb_state_to_pkg(package_path, src_pkg=src_panel)
                     copied_folders.append(folder_name)
                 except Exception as copy_err:
                     print(f"Warning: Failed to copy to {folder_name}: {copy_err}")
@@ -880,9 +1169,9 @@ class SettingsView(ctk.CTkFrame):
                 messagebox.showerror("Error", "Failed to install In-Game Panel:\n" + "\n".join(copy_errors))
                 return
             elif len(copied_folders) > 1:
-                success_msg = f"GateFinder In-Game Panel installed successfully in folders: {', '.join(copied_folders)}!"
+                success_msg = f"GateFinder MSFS EFB & In-Game Panel ('gatefinder-ingame-panel') installed successfully in folders: {', '.join(copied_folders)}!"
             else:
-                success_msg = "GateFinder In-Game Panel installed successfully in your Community folder!"
+                success_msg = "GateFinder MSFS EFB & In-Game Panel ('gatefinder-ingame-panel') installed successfully in your Community folder!"
             messagebox.showinfo("Success", success_msg)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to copy package: {e}")
@@ -893,9 +1182,10 @@ class SettingsView(ctk.CTkFrame):
         targets = []
         for p in (comm2020, comm2024):
             if p:
-                pkg = os.path.join(p, "wildbill75-gatefinder")
-                if os.path.exists(pkg) and pkg not in targets:
-                    targets.append(pkg)
+                for pkg_name in ("gatefinder-ingame-panel", "wildbill75-gatefinder"):
+                    pkg = os.path.join(p, pkg_name)
+                    if os.path.exists(pkg) and pkg not in targets:
+                        targets.append(pkg)
         if not targets:
             self.refresh_dynamic_statuses()
             return
@@ -910,10 +1200,585 @@ class SettingsView(ctk.CTkFrame):
         if errors:
             messagebox.showerror(
                 "Error",
-                "Failed to uninstall In-Game Panel (please ensure MSFS is closed):\n" + "\n".join(errors)
+                "Failed to uninstall MSFS EFB & In-Game Panel (please ensure MSFS is closed):\n" + "\n".join(errors)
             )
         else:
-            messagebox.showinfo("Success", "GateFinder In-Game Panel has been uninstalled from your Community folder(s).")
+            messagebox.showinfo("Success", "GateFinder MSFS EFB & In-Game Panel has been uninstalled from your Community folder(s).")
+
+    def install_fenix_efb_ui(self):
+        comm20 = self.community2020_entry.get().strip() if hasattr(self, "community2020_entry") else ""
+        comm24 = self.community2024_entry.get().strip() if hasattr(self, "community2024_entry") else ""
+        res = self.backend.install_fenix_efb(extra_community_paths=[comm20, comm24])
+        self.refresh_dynamic_statuses()
+        if res.get("success"):
+            messagebox.showinfo(
+                "Success",
+                "GateFinder Fenix A320 EFB Integration has been installed!\n\n"
+                "You will now see the GateFinder app icon on the Captain & First Officer Fenix EFB Home screen."
+            )
+        else:
+            err_msg = res.get("error") or "\n".join(res.get("errors", []))
+            messagebox.showerror("Error", f"Failed to install Fenix A320 EFB integration:\n{err_msg}")
+
+    def uninstall_fenix_efb_ui(self):
+        comm20 = self.community2020_entry.get().strip() if hasattr(self, "community2020_entry") else ""
+        comm24 = self.community2024_entry.get().strip() if hasattr(self, "community2024_entry") else ""
+        res = self.backend.uninstall_fenix_efb(extra_community_paths=[comm20, comm24])
+        self.refresh_dynamic_statuses()
+        if res.get("success"):
+            messagebox.showinfo(
+                "Success",
+                "GateFinder Fenix A320 EFB Integration has been uninstalled and disabled.\n\n"
+                "Restart your flight (or MSFS) for the Fenix EFB to return to its default state."
+            )
+        else:
+            err_msg = "\n".join(res.get("errors", []))
+            messagebox.showerror("Error", f"Failed to uninstall Fenix A320 EFB integration:\n{err_msg}")
+
+    def open_web_efb_qr_modal(self, url: str):
+        top_win = self.winfo_toplevel()
+        modal = ctk.CTkToplevel(top_win)
+        modal.title("GateFinder - Mobile & Tablet Web EFB")
+        modal.geometry("440x535")
+        modal.configure(fg_color="#0D1017")
+        modal.transient(top_win)
+        modal.grab_set()
+        if hasattr(top_win, "_apply_window_icon"):
+            top_win._apply_window_icon(modal)
+
+        outer = ctk.CTkFrame(modal, fg_color="#0D1017", corner_radius=10, border_width=1, border_color="#1E2532")
+        outer.pack(fill="both", expand=True, padx=10, pady=10)
+
+        ctk.CTkLabel(
+            outer, text="SCAN TO OPEN LIVE WEB EFB",
+            font=ctk.CTkFont(size=14, weight="bold"), text_color="#F8FAFC"
+        ).pack(pady=(14, 4))
+
+        ctk.CTkLabel(
+            outer,
+            text="Scan with your iPhone, iPad, or Android camera (on your local Wi-Fi).\nAuto-detects Smartphone vs Tablet EFB layout.",
+            font=ctk.CTkFont(size=12), text_color="#94A3B8", justify="center"
+        ).pack(padx=18, pady=(0, 10))
+
+        try:
+            import qrcode
+            from PIL import Image
+            qr = qrcode.QRCode(
+                version=None,
+                error_correction=qrcode.constants.ERROR_CORRECT_M,
+                box_size=8,
+                border=3,
+            )
+            qr.add_data(url)
+            qr.make(fit=True)
+            matrix = qr.get_matrix()
+            rows = len(matrix)
+            scale = 8
+            img_sz = rows * scale
+            pil_img = Image.new("RGB", (img_sz, img_sz), (255, 255, 255))
+            pix = pil_img.load()
+            for r in range(rows):
+                for c in range(rows):
+                    if matrix[r][c]:
+                        for dy in range(scale):
+                            for dx in range(scale):
+                                pix[c * scale + dx, r * scale + dy] = (13, 16, 23)
+            ctk_qr = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=(230, 230))
+            qr_frame = ctk.CTkFrame(outer, fg_color="#FFFFFF", corner_radius=12)
+            qr_frame.pack(pady=(2, 10))
+            lbl_qr = ctk.CTkLabel(qr_frame, text="", image=ctk_qr)
+            lbl_qr.pack(padx=10, pady=10)
+        except Exception as e:
+            ctk.CTkLabel(
+                outer, text=f"QR generation error: {e}",
+                font=ctk.CTkFont(size=12), text_color="#EF4444"
+            ).pack(pady=20)
+
+        url_pill = ctk.CTkFrame(outer, fg_color="#161E2E", corner_radius=8, border_width=1, border_color="#25343D")
+        url_pill.pack(fill="x", padx=24, pady=(0, 8))
+        ctk.CTkLabel(
+            url_pill, text=url,
+            font=ctk.CTkFont(family="Consolas", size=14, weight="bold"), text_color="#38BDF8"
+        ).pack(pady=7)
+
+        ctk.CTkLabel(
+            outer,
+            text="⚠️ Using a VPN (ProtonVPN, NordVPN…)? Disable VPN on your phone/tablet\nor enable \"Allow LAN connections\" in your VPN settings.",
+            font=ctk.CTkFont(size=11, weight="bold"), text_color="#FBBF24", justify="center"
+        ).pack(padx=16, pady=(0, 10))
+
+        ctk.CTkButton(
+            outer, text="Close", width=110, height=32, corner_radius=6,
+            fg_color="#578DA8", hover_color="#4A6C7D", text_color="#FFFFFF",
+            font=ctk.CTkFont(size=12, weight="bold"), command=modal.destroy
+        ).pack(pady=(0, 10))
+
+    def report_an_issue(self):
+        from legal_and_diagnostics import CrashReporter
+        cr = getattr(self.backend, "crash_reporter", None) or CrashReporter(config=self.config, backend=self.backend)
+        cr.open_mailto_issue()
+
+    def open_crash_history_modal(self):
+        from legal_and_diagnostics import CrashReporter, get_crashes_dir
+        cr = getattr(self.backend, "crash_reporter", None) or CrashReporter(config=self.config, backend=self.backend)
+        top_win = self.winfo_toplevel()
+
+        modal = ctk.CTkToplevel(top_win)
+        modal.title("GateFinder - Crash & Diagnostic History")
+        modal.geometry("700x460")
+        modal.configure(fg_color="#0D1017")
+        modal.transient(top_win)
+        modal.grab_set()
+        if hasattr(top_win, "_apply_window_icon"):
+            top_win._apply_window_icon(modal)
+
+        outer = ctk.CTkFrame(modal, fg_color="#0D1017", corner_radius=10, border_width=1, border_color="#1E2532")
+        outer.pack(fill="both", expand=True, padx=10, pady=10)
+
+        hdr = ctk.CTkFrame(outer, fg_color="transparent")
+        hdr.pack(fill="x", padx=18, pady=(14, 10))
+        ctk.CTkLabel(
+            hdr, text="CRASH & DIAGNOSTIC HISTORY",
+            font=ctk.CTkFont(size=14, weight="bold"), text_color="#F8FAFC"
+        ).pack(side="left")
+
+        def _open_folder():
+            try:
+                os.startfile(get_crashes_dir())
+            except Exception:
+                pass
+
+        ctk.CTkButton(
+            hdr, text="Open Crashes Folder", width=148, height=28, corner_radius=6,
+            fg_color="#1E2532", hover_color="#2B3446", text_color="#E2E8F0",
+            font=ctk.CTkFont(size=12, weight="bold"), command=_open_folder
+        ).pack(side="right")
+
+        ctk.CTkFrame(outer, height=1, fg_color="#1E2532").pack(fill="x")
+
+        scroll = ctk.CTkScrollableFrame(outer, fg_color="#0D1017", corner_radius=0)
+        scroll.pack(fill="both", expand=True, padx=14, pady=10)
+
+        def _populate():
+            for w in scroll.winfo_children():
+                w.destroy()
+            reports = cr.get_crash_history()
+            if not reports:
+                empty_box = ctk.CTkFrame(scroll, fg_color="#131822", corner_radius=8, border_width=1, border_color="#1E293B")
+                empty_box.pack(fill="x", padx=6, pady=18)
+                ctk.CTkLabel(
+                    empty_box,
+                    text="No crash reports recorded.\nGateFinder V2.0 has been running cleanly with zero unhandled exceptions.",
+                    font=ctk.CTkFont(size=13), text_color="#94A3B8", justify="center"
+                ).pack(padx=20, pady=24)
+                return
+
+            for rep in reports:
+                item = ctk.CTkFrame(scroll, fg_color="#131822", corner_radius=8, border_width=1, border_color="#1E293B")
+                item.pack(fill="x", padx=4, pady=5)
+                top_r = ctk.CTkFrame(item, fg_color="transparent")
+                top_r.pack(fill="x", padx=12, pady=(8, 4))
+                ctk.CTkLabel(
+                    top_r,
+                    text=f"{rep.get('id', 'CRASH')}  •  {rep.get('timestamp', '')}",
+                    font=ctk.CTkFont(size=12, weight="bold"), text_color="#F8FAFC"
+                ).pack(side="left")
+                ctk.CTkButton(
+                    top_r, text="Send Report via Email", width=145, height=24, corner_radius=6,
+                    fg_color="#252932", hover_color="#334155", text_color="#38BDF8",
+                    font=ctk.CTkFont(size=11, weight="bold"),
+                    command=lambda r=rep: cr.open_mailto_for_report(r)
+                ).pack(side="right")
+                ctk.CTkLabel(
+                    item,
+                    text=f"{rep.get('exception_type', 'Exception')}: {rep.get('exception_message', '')}",
+                    font=ctk.CTkFont(size=11), text_color="#CBD5E1", anchor="w", justify="left"
+                ).pack(fill="x", padx=12, pady=(0, 8))
+
+        _populate()
+
+        ctk.CTkFrame(outer, height=1, fg_color="#1E2532").pack(fill="x")
+        ftr = ctk.CTkFrame(outer, fg_color="transparent")
+        ftr.pack(fill="x", padx=18, pady=(10, 12))
+
+        def _clear():
+            cr.clear_crash_history()
+            _populate()
+
+        ctk.CTkButton(
+            ftr, text="Clear History", width=110, height=30, corner_radius=6,
+            fg_color="#1E2532", hover_color="#2B3446", text_color="#94A3B8",
+            font=ctk.CTkFont(size=12, weight="bold"), command=_clear
+        ).pack(side="left")
+
+        ctk.CTkButton(
+            ftr, text="Close", width=90, height=30, corner_radius=6,
+            fg_color="#00B4D8", hover_color="#0284C7", text_color="#081018",
+            font=ctk.CTkFont(size=12, weight="bold"), command=modal.destroy
+        ).pack(side="right")
+
+    def open_legal_modal(self, initial_tab="EULA"):
+        """Opens the SceneryX-style LEGAL & COMPLIANCE modal window (EULA / Privacy Policy / Third-Party Licenses)."""
+        from legal_and_diagnostics import (
+            ensure_local_legal_files, get_legal_dir,
+            EULA_SECTIONS, PRIVACY_SECTIONS, THIRD_PARTY_SECTIONS
+        )
+        ensure_local_legal_files()
+        top_win = self.winfo_toplevel()
+
+        modal = ctk.CTkToplevel(top_win)
+        modal.title("GateFinder - Legal & Compliance")
+        modal.geometry("780x570")
+        modal.configure(fg_color="#0B0E14")
+        modal.transient(top_win)
+        modal.grab_set()
+        if hasattr(top_win, "_apply_window_icon"):
+            top_win._apply_window_icon(modal)
+
+        outer = ctk.CTkFrame(modal, fg_color="#0B0E14", corner_radius=10, border_width=1, border_color="#1E2532")
+        outer.pack(fill="both", expand=True, padx=8, pady=8)
+
+        # Header
+        hdr = ctk.CTkFrame(outer, fg_color="transparent")
+        hdr.pack(fill="x", padx=20, pady=(14, 10))
+        ctk.CTkLabel(
+            hdr, text="LEGAL & COMPLIANCE",
+            font=ctk.CTkFont(size=14, weight="bold"), text_color="#F8FAFC"
+        ).pack(side="left")
+
+        ctk.CTkFrame(outer, height=1, fg_color="#1E2532").pack(fill="x")
+
+        # Segmented Tab Bar Row
+        tab_row = ctk.CTkFrame(outer, fg_color="transparent")
+        tab_row.pack(fill="x", padx=20, pady=(10, 8))
+
+        seg_pill = ctk.CTkFrame(tab_row, fg_color="#0F131C", corner_radius=8, border_width=1, border_color="#1E293B")
+        seg_pill.pack(side="left")
+
+        # Bottom Footer Bar (packed with side="bottom" first so it is always visible)
+        ftr = ctk.CTkFrame(outer, fg_color="transparent")
+        ftr.pack(side="bottom", fill="x", padx=20, pady=(10, 12))
+        ctk.CTkFrame(outer, height=1, fg_color="#1E2532").pack(side="bottom", fill="x")
+
+        ftr_left = ctk.CTkFrame(ftr, fg_color="transparent")
+        ftr_left.pack(side="left")
+        ctk.CTkLabel(
+            ftr_left, text="© 2026 Sidestick Priority   •   ",
+            font=ctk.CTkFont(size=12), text_color="#94A3B8"
+        ).pack(side="left")
+
+        lbl_link = ctk.CTkLabel(
+            ftr_left, text="Local files available in %APPDATA%\\GateFinder\\legal\\",
+            font=ctk.CTkFont(size=12, underline=True), text_color="#38BDF8", cursor="hand2"
+        )
+        lbl_link.pack(side="left")
+        lbl_link.bind("<Button-1>", lambda e: os.startfile(get_legal_dir()) if os.path.isdir(get_legal_dir()) else None)
+
+        ctk.CTkButton(
+            ftr, text="Close", width=90, height=30, corner_radius=6,
+            fg_color="#00B4D8", hover_color="#0284C7", text_color="#081018",
+            font=ctk.CTkFont(size=12, weight="bold"), command=modal.destroy
+        ).pack(side="right")
+
+        tab_btns = {}
+        scroll_body = ctk.CTkScrollableFrame(outer, fg_color="#0B0E14", corner_radius=0)
+        scroll_body.pack(fill="both", expand=True, padx=16, pady=(2, 8))
+
+        def _forward_wheel(event):
+            try:
+                scroll_body._parent_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            except Exception:
+                pass
+            return "break"
+
+        tab_configs = {
+            "EULA": {
+                "title": "End User License Agreement (EULA)",
+                "sub": "Author & Licensor: Sidestick Priority • Software: GateFinder (Desktop Application for Microsoft Windows)",
+                "intro": "Please review the terms of this license carefully. By downloading, installing, copying, or using GateFinder, you agree to be bound by the terms below.",
+                "sections": EULA_SECTIONS,
+            },
+            "Privacy Policy": {
+                "title": "Privacy Policy & Diagnostic Data Protection",
+                "sub": "Author & Data Controller: Sidestick Priority (contact@sidestickpriority.com) • Software: GateFinder V2.0",
+                "intro": "GateFinder is engineered on a strict privacy-by-design principle. Your personal data, SimBrief credentials, and local file paths remain strictly on your device.",
+                "sections": PRIVACY_SECTIONS,
+            },
+            "Third-Party Licenses": {
+                "title": "Third-Party Open Source & Data Licenses",
+                "sub": "Software: GateFinder V2.0 • Open-Source Software & Cartographic Attributions",
+                "intro": "GateFinder incorporates and interacts with the following third-party open-source libraries, APIs, and cartographic data providers.",
+                "sections": THIRD_PARTY_SECTIONS,
+            },
+        }
+
+        def _select_tab(tab_name):
+            for t_key, b_widget in tab_btns.items():
+                if t_key == tab_name:
+                    b_widget.configure(fg_color="#232B3A", text_color="#F8FAFC")
+                else:
+                    b_widget.configure(fg_color="transparent", text_color="#94A3B8")
+
+            for w in scroll_body.winfo_children():
+                w.destroy()
+
+            try:
+                scroll_body._parent_canvas.yview_moveto(0.0)
+            except Exception:
+                pass
+
+            cfg = tab_configs.get(tab_name, tab_configs["EULA"])
+
+            # Top Highlighted Callout Box (SceneryX Style)
+            banner = ctk.CTkFrame(
+                scroll_body, fg_color="#101520", corner_radius=8,
+                border_width=1, border_color="#1E293B"
+            )
+            banner.pack(fill="x", padx=6, pady=(4, 14))
+            l_t = ctk.CTkLabel(
+                banner, text=cfg["title"],
+                font=ctk.CTkFont(size=14, weight="bold"), text_color="#F8FAFC", anchor="w"
+            )
+            l_t.pack(fill="x", padx=16, pady=(12, 2))
+            l_s = ctk.CTkLabel(
+                banner, text=cfg["sub"],
+                font=ctk.CTkFont(size=12), text_color="#94A3B8", anchor="w"
+            )
+            l_s.pack(fill="x", padx=16, pady=(0, 8))
+            l_i = ctk.CTkLabel(
+                banner, text=cfg["intro"],
+                font=ctk.CTkFont(size=12), text_color="#CBD5E1", anchor="w", justify="left", wraplength=680
+            )
+            l_i.pack(fill="x", padx=16, pady=(0, 12))
+            for bw in (banner, l_t, l_s, l_i):
+                bw.bind("<MouseWheel>", _forward_wheel)
+
+            for sec_title, items in cfg["sections"]:
+                sec_lbl = ctk.CTkLabel(
+                    scroll_body, text=sec_title,
+                    font=ctk.CTkFont(size=12, weight="bold"), text_color="#F8FAFC", anchor="w"
+                )
+                sec_lbl.pack(fill="x", padx=8, pady=(10, 4))
+                sec_lbl.bind("<MouseWheel>", _forward_wheel)
+                for label_bold, body_txt in items:
+                    full_len = len(label_bold or "") + len(body_txt or "")
+                    est_lines = max(1, int((full_len + 86) // 82))
+                    rt = tk.Text(
+                        scroll_body,
+                        height=est_lines,
+                        bg="#0B0E14",
+                        fg="#94A3B8",
+                        bd=0,
+                        highlightthickness=0,
+                        wrap="word",
+                        font=("Segoe UI", 10),
+                        padx=8,
+                        pady=2,
+                        cursor="arrow",
+                        spacing1=2,
+                        spacing2=3,
+                        spacing3=2,
+                    )
+                    rt.tag_configure("bold_hdr", font=("Segoe UI", 10, "bold"), foreground="#F8FAFC")
+                    rt.tag_configure("body_txt", font=("Segoe UI", 10), foreground="#94A3B8")
+                    rt.tag_configure("code_pill", font=("Consolas", 9, "bold"), background="#161E2E", foreground="#E2E8F0")
+                    if label_bold:
+                        rt.insert("end", label_bold + " ", "bold_hdr")
+                    if "GateFinder.exe" in body_txt:
+                        parts = body_txt.split("GateFinder.exe")
+                        for idx_p, part_str in enumerate(parts):
+                            if part_str:
+                                rt.insert("end", part_str, "body_txt")
+                            if idx_p < len(parts) - 1:
+                                rt.insert("end", " GateFinder.exe ", "code_pill")
+                    else:
+                        rt.insert("end", body_txt, "body_txt")
+                    rt.configure(state="disabled")
+                    rt.bind("<MouseWheel>", _forward_wheel)
+                    rt.pack(fill="x", padx=6, pady=(1, 3))
+
+        for t_name in ("EULA", "Privacy Policy", "Third-Party Licenses"):
+            btn = ctk.CTkButton(
+                seg_pill, text=t_name, height=28,
+                width=68 if t_name == "EULA" else (112 if t_name == "Privacy Policy" else 148),
+                corner_radius=6, border_width=0,
+                fg_color="transparent", hover_color="#1E2532",
+                text_color="#94A3B8", font=ctk.CTkFont(size=12, weight="bold"),
+                command=lambda tn=t_name: _select_tab(tn)
+            )
+            btn.pack(side="left", padx=3, pady=3)
+            tab_btns[t_name] = btn
+
+        _select_tab(initial_tab if initial_tab in tab_configs else "EULA")
+
+    def open_v1_migration_modal(self):
+        """
+        Provides a guided one-click upgrade & cleanup wizard for users upgrading from GateFinder V1.x:
+        - Automatically detects legacy 'wildbill75-gatefinder' packages in Community and old V1.x folders from exe.xml / disk.
+        - Allows browsing for an old GateFinder V1.x folder if stored elsewhere.
+        - Imports SimBrief/GSX/Community settings, removes 'wildbill75-gatefinder', installs 'gatefinder-ingame-panel' V2.0,
+          updates exe.xml, and optionally removes the old V1.x directory.
+        """
+        from legal_and_diagnostics import LegacyMigrationManager
+        top_win = self.winfo_toplevel()
+
+        modal = ctk.CTkToplevel(top_win)
+        modal.title("GateFinder - Upgrade & Clean Legacy V1.x")
+        modal.geometry("680x430")
+        modal.configure(fg_color="#0D1017")
+        modal.transient(top_win)
+        modal.grab_set()
+        if hasattr(top_win, "_apply_window_icon"):
+            top_win._apply_window_icon(modal)
+
+        outer = ctk.CTkFrame(modal, fg_color="#0D1017", corner_radius=10, border_width=1, border_color="#1E2532")
+        outer.pack(fill="both", expand=True, padx=10, pady=10)
+
+        hdr = ctk.CTkFrame(outer, fg_color="transparent")
+        hdr.pack(fill="x", padx=20, pady=(14, 10))
+        ctk.CTkLabel(
+            hdr, text="UPGRADE FROM GATEFINDER V1.x TO V2.0",
+            font=ctk.CTkFont(size=14, weight="bold"), text_color="#F8FAFC"
+        ).pack(side="left")
+
+        ctk.CTkFrame(outer, height=1, fg_color="#1E2532").pack(fill="x")
+
+        body = ctk.CTkFrame(outer, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=20, pady=12)
+
+        info_box = ctk.CTkFrame(body, fg_color="#131822", corner_radius=8, border_width=1, border_color="#1E293B")
+        info_box.pack(fill="x", pady=(0, 12))
+        ctk.CTkLabel(
+            info_box,
+            text=(
+                "This tool ensures a clean transition from any previous GateFinder V1.x installation:\n"
+                "  1. Imports your SimBrief ID and MSFS/GSX paths from your old V1.x settings.json\n"
+                "  2. Uninstalls the legacy 'wildbill75-gatefinder' package from all MSFS Community folders\n"
+                "  3. Installs the new 'gatefinder-ingame-panel' V2.0 package with the updated GF toolbar icon\n"
+                "  4. Updates MSFS exe.xml auto-start entries and optionally deletes the old V1.x folder"
+            ),
+            font=ctk.CTkFont(size=12), text_color="#CBD5E1", justify="left", anchor="w"
+        ).pack(fill="x", padx=14, pady=12)
+
+        # Detect any legacy folder found on startup
+        mig_summary = getattr(self.backend, "migration_summary", None) or {}
+        found_dirs = mig_summary.get("legacy_app_folders_found") or []
+        initial_v1_dir = found_dirs[0] if found_dirs else ""
+
+        lbl_dir = ctk.CTkLabel(
+            body, text="Old GateFinder V1.x Folder (optional — select to import settings & remove old folder):",
+            font=ctk.CTkFont(size=12, weight="bold"), text_color="#E2E8F0", anchor="w"
+        )
+        lbl_dir.pack(fill="x", pady=(4, 4))
+
+        dir_row = ctk.CTkFrame(body, fg_color="transparent")
+        dir_row.pack(fill="x", pady=(0, 10))
+
+        v1_entry = ctk.CTkEntry(
+            dir_row, height=28, corner_radius=6, border_width=0,
+            fg_color="#252932", text_color="#FFFFFF",
+            placeholder_text="Leave blank to only clean Community folders & exe.xml, or browse to old V1.x folder"
+        )
+        v1_entry.pack(side="left", fill="x", expand=True)
+        if initial_v1_dir:
+            v1_entry.insert(0, initial_v1_dir)
+
+        def _browse_v1():
+            from tkinter import filedialog
+            d = filedialog.askdirectory(title="Select Old GateFinder V1.x Folder")
+            if d:
+                v1_entry.delete(0, "end")
+                v1_entry.insert(0, d)
+
+        ctk.CTkButton(
+            dir_row, text="Browse...", width=90, height=28, corner_radius=6,
+            fg_color="#2B303B", hover_color="#383E4C", text_color="#FFFFFF",
+            font=ctk.CTkFont(size=12, weight="bold"), command=_browse_v1
+        ).pack(side="left", padx=(8, 0))
+
+        del_old_var = ctk.BooleanVar(value=True)
+        chk_del_old = ctk.CTkCheckBox(
+            body,
+            text="Delete the old GateFinder V1.x folder from disk after migrating settings",
+            variable=del_old_var,
+            font=ctk.CTkFont(size=12), text_color="#E2E8F0",
+            fg_color="#578DA8", hover_color="#4A6C7D", border_color="#383E4C",
+            checkbox_width=18, checkbox_height=18, corner_radius=5
+        )
+        chk_del_old.pack(anchor="w", pady=(2, 8))
+
+        lbl_status = ctk.CTkLabel(body, text="", font=ctk.CTkFont(size=12, weight="bold"), text_color="#10B981", anchor="w")
+        lbl_status.pack(fill="x", pady=(4, 0))
+
+        def _execute_upgrade():
+            import shutil
+            selected_old = v1_entry.get().strip()
+            current_dir = os.path.normpath(os.path.dirname(os.path.abspath(sys.executable if getattr(sys, "frozen", False) else __file__)))
+
+            # 1. If a valid old V1 folder is specified, import its settings.json
+            imported_cfg = False
+            if selected_old and os.path.isdir(selected_old):
+                old_cfg_file = os.path.join(selected_old, "settings.json")
+                if os.path.isfile(old_cfg_file):
+                    try:
+                        with open(old_cfg_file, "r", encoding="utf-8") as f:
+                            old_s = json.load(f)
+                        for k in ("simbrief_username", "gsx_profile_path", "msfs_community_path", "msfs_community2024_path", "sayintentions_api_key"):
+                            if old_s.get(k) and not self.config.settings.get(k):
+                                self.config.settings[k] = old_s[k]
+                        self.config.save()
+                        # Refresh UI entries
+                        if self.config.settings.get("simbrief_username"):
+                            self.simbrief_entry.delete(0, "end")
+                            self.simbrief_entry.insert(0, self.config.settings["simbrief_username"])
+                        imported_cfg = True
+                    except Exception:
+                        pass
+
+            # 2. Run migration manager (cleans wildbill75-gatefinder, updates exe.xml, installs gatefinder-ingame-panel)
+            mgr = LegacyMigrationManager(self.config, self.autostart)
+            res = mgr.run_startup_migration()
+
+            # 3. Also ensure gatefinder-ingame-panel is installed in configured Community folders
+            self.backend._sync_msfs_community_packages()
+            self.refresh_dynamic_statuses()
+
+            # 4. Optionally delete old V1 folder if requested and safe
+            deleted_old = False
+            if selected_old and os.path.isdir(selected_old) and del_old_var.get():
+                norm_old = os.path.normpath(os.path.abspath(selected_old))
+                if norm_old.lower() != current_dir.lower() and not current_dir.lower().startswith(norm_old.lower() + os.sep):
+                    try:
+                        shutil.rmtree(norm_old)
+                        deleted_old = True
+                    except Exception as e:
+                        print(f"[Migration] Could not delete old folder {norm_old}: {e}")
+
+            lines = ["Upgrade & Cleanup completed successfully:"]
+            if imported_cfg or res.get("migrated_settings_from"):
+                lines.append("• Migrated user settings from GateFinder V1.x")
+            lines.append("• Cleaned legacy 'wildbill75-gatefinder' from MSFS Community folders")
+            lines.append("• Installed & synced 'gatefinder-ingame-panel' V2.0")
+            if deleted_old:
+                lines.append(f"• Removed old V1.x folder: {selected_old}")
+            messagebox.showinfo("Upgrade Complete", "\n".join(lines))
+            modal.destroy()
+
+        ctk.CTkFrame(outer, height=1, fg_color="#1E2532").pack(fill="x")
+        ftr = ctk.CTkFrame(outer, fg_color="transparent")
+        ftr.pack(fill="x", padx=20, pady=(10, 12))
+
+        ctk.CTkButton(
+            ftr, text="Cancel", width=90, height=30, corner_radius=6,
+            fg_color="#1E2532", hover_color="#2B3446", text_color="#94A3B8",
+            font=ctk.CTkFont(size=12, weight="bold"), command=modal.destroy
+        ).pack(side="left")
+
+        ctk.CTkButton(
+            ftr, text="Clean Legacy V1.x & Install V2.0", width=230, height=30, corner_radius=6,
+            fg_color="#00B4D8", hover_color="#0284C7", text_color="#081018",
+            font=ctk.CTkFont(size=12, weight="bold"), command=_execute_upgrade
+        ).pack(side="right")
 
     def save_settings_silent(self):
         new_vals = {
@@ -924,14 +1789,18 @@ class SettingsView(ctk.CTkFrame):
             "ignored_gates": "",
             "sayintentions_api_key": self.si_api_key_entry.get().strip(),
             "auto_start": self.autostart_var.get(),
+            "auto_quit_with_msfs": self.auto_quit_msfs_var.get() if hasattr(self, "auto_quit_msfs_var") else False,
             "auto_fetch": self.autofetch_var.get(),
             "prioritize_ai_atc": self.prioritize_ai_atc_var.get(),
             "check_online_traffic": self.check_online_traffic_var.get(),
             "auto_lock_turnaround": self.auto_lock_turnaround_var.get(),
             "hibernate_map_in_flight": self.hibernate_map_in_flight_var.get(),
             "auto_clear_ai": self.auto_clear_ai_var.get(),
+            "mars_overlap_protection": self.mars_overlap_protection_var.get() if hasattr(self, "mars_overlap_protection_var") else True,
             "auto_inject_gsx": self.auto_inject_gsx_var.get(),
             "force_cargo_mode": self.force_cargo_var.get(),
+            "send_crash_reports": self.send_crash_reports_var.get() if hasattr(self, "send_crash_reports_var") else True,
+            "share_flight_stats": self.share_flight_stats_var.get() if hasattr(self, "share_flight_stats_var") else True,
             "show_maps": True,
             "show_wingspan": True,
             "exclude_cargo": False,
@@ -954,6 +1823,8 @@ class SettingsView(ctk.CTkFrame):
                 self.autostart.enable()
             else:
                 self.autostart.disable()
+        elif auto and hasattr(self.autostart, "is_enabled") and not self.autostart.is_enabled():
+            self.autostart.enable()
 
         try:
             self.on_save_callback(changed_keys)
@@ -1019,7 +1890,7 @@ class LidoVectorChart(ctk.CTkFrame):
         self.lbl_simconnect_pill.pack(side="left", padx=(12, 5), pady=8)
 
         btn_cfg = {
-            "height": 32,
+            "height": 34,
             "corner_radius": 8,
             "font": ctk.CTkFont(size=12, weight="bold"),
             "fg_color": "#2B303B",
@@ -1028,26 +1899,44 @@ class LidoVectorChart(ctk.CTkFrame):
             "text_color": "#FFFFFF"
         }
         self.btn_theme = ctk.CTkButton(self.header_bar, text="Map Day", width=92, command=self.toggle_theme, **btn_cfg)
-        self.btn_theme.pack(side="right", padx=(5, 12), pady=8)
+        self.btn_theme.pack(side="right", padx=(4, 10), pady=8)
         Tooltip(self.btn_theme, "Switch between Day and Night map themes")
 
-        self.btn_follow = ctk.CTkButton(self.header_bar, text="Follow + Hdg Up", width=128, command=self.toggle_follow, **btn_cfg)
-        self.btn_follow.pack(side="right", padx=5, pady=8)
+        self.btn_follow = ctk.CTkButton(self.header_bar, text="Follow + Hdg Up", width=130, command=self.toggle_follow, **btn_cfg)
+        self.btn_follow.pack(side="right", padx=4, pady=8)
         Tooltip(self.btn_follow, "Follow live aircraft position with Heading-Up rotation")
 
-        self.btn_agc = ctk.CTkButton(self.header_bar, text="Route", width=76, command=self.fit_route_view, **btn_cfg)
-        self.btn_agc.pack(side="right", padx=5, pady=8)
-        Tooltip(self.btn_agc, "Fit full taxi route & runway")
+        self.btn_agc = ctk.CTkButton(self.header_bar, text="Route", width=74, command=self.fit_route_view, **btn_cfg)
+        self.btn_agc.pack(side="right", padx=4, pady=8)
+        Tooltip(self.btn_agc, "Fit full airport layout & taxi route")
 
-        self.btn_apc = ctk.CTkButton(self.header_bar, text="Gate", width=72, command=self.fit_terminal_view, **btn_cfg)
-        self.btn_apc.pack(side="right", padx=5, pady=8)
+        self.btn_apc = ctk.CTkButton(self.header_bar, text="Gate", width=70, command=self.fit_terminal_view, **btn_cfg)
+        self.btn_apc.pack(side="right", padx=4, pady=8)
         Tooltip(self.btn_apc, "Zoom to terminal & assigned stand")
 
         self.btn_zoom_out = ctk.CTkButton(self.header_bar, text="-", width=36, command=lambda: self.zoom_by(1.33), **btn_cfg)
-        self.btn_zoom_out.pack(side="right", padx=5, pady=8)
+        self.btn_zoom_out.pack(side="right", padx=4, pady=8)
 
         self.btn_zoom_in = ctk.CTkButton(self.header_bar, text="+", width=36, command=lambda: self.zoom_by(0.75), **btn_cfg)
-        self.btn_zoom_in.pack(side="right", padx=5, pady=8)
+        self.btn_zoom_in.pack(side="right", padx=4, pady=8)
+
+        import webbrowser
+        self.btn_sceneryx_promo = ctk.CTkButton(
+            self.header_bar,
+            text="BUY SCENERY X & GET 10% DISCOUNT",
+            height=32,
+            width=238,
+            corner_radius=8,
+            fg_color="#132235",
+            hover_color="#1B314B",
+            border_width=1,
+            border_color="#0284C7",
+            text_color="#38BDF8",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            command=lambda: webbrowser.open("https://sidestickpriority.gumroad.com/l/zzlsus/SCENERYX-10")
+        )
+        self.btn_sceneryx_promo.pack(side="left", padx=(4, 6), pady=8)
+        Tooltip(self.btn_sceneryx_promo, "Boost your MSFS 2020/2024 FPS & VRAM with SceneryX by Sidestick Priority — Click to claim your 10% discount on Gumroad!")
 
         # Main Vector Drawing Canvas
         self.canvas = tkinter.Canvas(self, bg="#0B1120", highlightthickness=0, cursor="arrow")
@@ -1416,7 +2305,10 @@ class LidoVectorChart(ctk.CTkFrame):
 
         if not preserve_camera or not self._initial_fit_done:
             self.fit_route_view()
-            self._initial_fit_done = True
+            if self.canvas.winfo_width() >= 200 and self.canvas.winfo_height() >= 200:
+                self._initial_fit_done = True
+            else:
+                self._initial_fit_done = False
         else:
             if self._compute_draw_sig() != getattr(self, "_last_draw_sig", None):
                 self.redraw()
@@ -1450,21 +2342,21 @@ class LidoVectorChart(ctk.CTkFrame):
         self._follow_pan_lon_offset = 0.0
         self._update_theme_buttons()
         pts = []
+        if self.chart_data:
+            for rwy in self.chart_data.get("runways", []):
+                for p in rwy.get("points", []):
+                    pts.append((float(p[0]), float(p[1])))
+            for term in self.chart_data.get("terminals", []):
+                for p in term.get("points", []):
+                    pts.append((float(p[0]), float(p[1])))
         if self.airport_data:
             if self.airport_data.get("lat") is not None and self.airport_data.get("lon") is not None:
                 pts.append((float(self.airport_data["lat"]), float(self.airport_data["lon"])))
             tr = self.airport_data.get("taxi_route") or {}
             for p in tr.get("route_points", []):
-                pts.append((p[0], p[1]))
+                pts.append((float(p[0]), float(p[1])))
             for p in tr.get("rollout_points", []):
-                pts.append((p[0], p[1]))
-            sel_rwy = (self.airport_data.get("selected_runway") or "").upper()
-            if sel_rwy and self.chart_data:
-                for rwy in self.chart_data.get("runways", []):
-                    ends = rwy.get("ends") or {}
-                    if sel_rwy in ends:
-                        for p in rwy.get("points", []):
-                            pts.append((p[0], p[1]))
+                pts.append((float(p[0]), float(p[1])))
 
         if len(pts) >= 2:
             min_lat = min(p[0] for p in pts)
@@ -1473,11 +2365,11 @@ class LidoVectorChart(ctk.CTkFrame):
             max_lon = max(p[1] for p in pts)
             self.center_lat = (min_lat + max_lat) / 2.0
             self.center_lon = (min_lon + max_lon) / 2.0
-            w = max(self.canvas.winfo_width(), 580)
-            h = max(self.canvas.winfo_height(), 460)
-            span_y_m = max(350.0, (max_lat - min_lat) * 111320.0 * 1.32)
-            span_x_m = max(350.0, (max_lon - min_lon) * 111320.0 * max(0.2, math.cos(math.radians(self.center_lat))) * 1.32)
-            self.meters_per_pixel = max(span_x_m / max(200, w - 70), span_y_m / max(200, h - 70), 0.9)
+            w = max(self.canvas.winfo_width(), 780)
+            h = max(self.canvas.winfo_height(), 520)
+            span_y_m = max(450.0, (max_lat - min_lat) * 111320.0 * 1.26)
+            span_x_m = max(450.0, (max_lon - min_lon) * 111320.0 * max(0.2, math.cos(math.radians(self.center_lat))) * 1.26)
+            self.meters_per_pixel = max(span_x_m / max(200, w - 64), span_y_m / max(200, h - 64), 0.9)
         elif len(pts) == 1:
             self.center_lat, self.center_lon = pts[0]
             self.meters_per_pixel = 1.8
@@ -1495,6 +2387,38 @@ class LidoVectorChart(ctk.CTkFrame):
         self._update_theme_buttons()
         self.redraw()
 
+    def _adapt_header_bar_layout(self, width_px):
+        if not hasattr(self, "btn_sceneryx_promo") or not self.btn_sceneryx_promo.winfo_exists():
+            return
+        if width_px >= 1030:
+            mode = "full"
+        elif width_px >= 900:
+            mode = "compact"
+        else:
+            mode = "hidden"
+        if getattr(self, "_promo_btn_mode", None) == mode:
+            return
+        self._promo_btn_mode = mode
+        if mode == "hidden":
+            if self.btn_sceneryx_promo.winfo_ismapped():
+                self.btn_sceneryx_promo.pack_forget()
+        elif mode == "compact":
+            self.btn_sceneryx_promo.configure(text="SCENERY X (-10%)", width=130)
+            if not self.btn_sceneryx_promo.winfo_ismapped():
+                self.btn_sceneryx_promo.pack(side="left", padx=(4, 6), pady=8)
+        else:
+            self.btn_sceneryx_promo.configure(text="BUY SCENERY X & GET 10% DISCOUNT", width=236)
+            if not self.btn_sceneryx_promo.winfo_ismapped():
+                self.btn_sceneryx_promo.pack(side="left", padx=(4, 6), pady=8)
+
+    def _deferred_resize_redraw(self):
+        self._resize_redraw_after_id = None
+        if not self.winfo_exists():
+            return
+        if self.follow_aircraft:
+            self._apply_smart_follow_camera(snap=True)
+        self.redraw()
+
     def _on_resize(self, event):
         if event.width < 100 or event.height < 100:
             return
@@ -1502,6 +2426,7 @@ class LidoVectorChart(ctk.CTkFrame):
         if getattr(self, "_last_canvas_size", None) == cur_sz:
             return
         self._last_canvas_size = cur_sz
+        self._adapt_header_bar_layout(event.width)
         if not self._initial_fit_done and self.airport_data:
             if self.follow_aircraft:
                 self._apply_smart_follow_camera(snap=True)
@@ -1510,9 +2435,24 @@ class LidoVectorChart(ctk.CTkFrame):
                 self.fit_route_view()
             self._initial_fit_done = True
         else:
-            if self.follow_aircraft:
-                self._apply_smart_follow_camera(snap=True)
-            self.redraw()
+            is_sash_drag = False
+            try:
+                is_sash_drag = bool(getattr(self.winfo_toplevel(), "_sash_dragging", False))
+            except Exception:
+                pass
+            if is_sash_drag:
+                if getattr(self, "_resize_redraw_after_id", None) is None:
+                    self._resize_redraw_after_id = self.after(32, self._deferred_resize_redraw)
+            else:
+                if getattr(self, "_resize_redraw_after_id", None) is not None:
+                    try:
+                        self.after_cancel(self._resize_redraw_after_id)
+                    except Exception:
+                        pass
+                    self._resize_redraw_after_id = None
+                if self.follow_aircraft:
+                    self._apply_smart_follow_camera(snap=True)
+                self.redraw()
 
     def _on_drag_start(self, event):
         self._drag_start = (event.x, event.y)
@@ -1555,6 +2495,24 @@ class LidoVectorChart(ctk.CTkFrame):
             self._follow_pan_lon_offset = float(getattr(self, "_follow_pan_lon_offset", 0.0) or 0.0) + dlon
         self.redraw()
 
+    def _pick_stand_hitbox_at(self, mx, my, pad=5.0):
+        if not self._stand_hitboxes:
+            return None
+        best_hb = None
+        best_d2 = float("inf")
+        for hb in reversed(self._stand_hitboxes):
+            x0, y0, x1, y1, s_ref, st_als, st_term, is_assigned = hb
+            if not s_ref:
+                continue
+            if (x0 - pad) <= mx <= (x1 + pad) and (y0 - pad) <= my <= (y1 + pad):
+                cx = 0.5 * (x0 + x1)
+                cy = 0.5 * (y0 + y1)
+                d2 = (mx - cx) ** 2 + (my - cy) ** 2
+                if d2 < best_d2:
+                    best_d2 = d2
+                    best_hb = hb
+        return best_hb
+
     def _on_drag_end(self, event):
         was_drag = bool(getattr(self, "_did_drag", False))
         self._drag_start = None
@@ -1572,28 +2530,21 @@ class LidoVectorChart(ctk.CTkFrame):
                             self.on_runway_click(end_id)
                             return
                         break
-            if self._stand_hitboxes:
-                for hb in reversed(self._stand_hitboxes):
-                    x0, y0, x1, y1, s_ref, st_als, st_term, is_assigned = hb
-                    if (x0 - 5) <= mx <= (x1 + 5) and (y0 - 5) <= my <= (y1 + 5):
-                        if s_ref:
-                            self.canvas.delete("stand_hover_tooltip")
-                            self._open_stand_context_modal(hb)
-                            return
-                        break
+            hb = self._pick_stand_hitbox_at(mx, my, pad=5.0)
+            if hb is not None:
+                self.canvas.delete("stand_hover_tooltip")
+                self._open_stand_context_modal(hb)
+                return
             self._close_stand_context_modal()
         self.redraw()
 
     def _on_right_click(self, event):
         mx, my = event.x, event.y
-        if self._stand_hitboxes:
-            for hb in reversed(self._stand_hitboxes):
-                x0, y0, x1, y1, s_ref, st_als, st_term, is_assigned = hb
-                if (x0 - 5) <= mx <= (x1 + 5) and (y0 - 5) <= my <= (y1 + 5):
-                    if s_ref:
-                        self.canvas.delete("stand_hover_tooltip")
-                        self._open_stand_context_modal(hb)
-                        return
+        hb = self._pick_stand_hitbox_at(mx, my, pad=5.0)
+        if hb is not None:
+            self.canvas.delete("stand_hover_tooltip")
+            self._open_stand_context_modal(hb)
+            return
         self._close_stand_context_modal()
 
     def _close_stand_context_modal(self):
@@ -1688,6 +2639,65 @@ class LidoVectorChart(ctk.CTkFrame):
         py = max(10, min(h_can - ch - 10, py))
         card.place(x=px, y=py)
 
+    def _hide_gate_toast(self, event=None):
+        after_id = getattr(self, "_gate_toast_after_id", None)
+        self._gate_toast_after_id = None
+        if after_id is not None:
+            try:
+                self.after_cancel(after_id)
+            except Exception:
+                pass
+        toast_card = getattr(self, "_gate_toast_card", None)
+        if toast_card is not None:
+            try:
+                if toast_card.winfo_exists():
+                    toast_card.place_forget()
+            except Exception:
+                pass
+
+    def show_gate_toast(self, toast_info):
+        if not toast_info or not isinstance(toast_info, dict):
+            return
+        try:
+            if not self.canvas or not self.canvas.winfo_exists():
+                return
+        except Exception:
+            return
+
+        after_id = getattr(self, "_gate_toast_after_id", None)
+        self._gate_toast_after_id = None
+        if after_id is not None:
+            try:
+                self.after_cancel(after_id)
+            except Exception:
+                pass
+
+        txt = str(toast_info.get("text") or toast_info.get("message") or toast_info.get("title") or "GSX Pro Armed").strip()
+        pill_txt = f"   {txt}   "
+        canvas_bg = self._get_palette().get("bg", "#2B353E")
+
+        toast_card = getattr(self, "_gate_toast_card", None)
+        if toast_card is None or not toast_card.winfo_exists():
+            toast_card = ctk.CTkLabel(
+                self.canvas,
+                text=pill_txt,
+                fg_color="#1B1E24",
+                bg_color=canvas_bg,
+                text_color="#FFFFFF",
+                corner_radius=8,
+                height=34,
+                font=ctk.CTkFont(size=13, weight="bold"),
+                cursor="hand2"
+            )
+            toast_card.bind("<Button-1>", self._hide_gate_toast)
+            self._gate_toast_card = toast_card
+        else:
+            toast_card.configure(text=pill_txt, bg_color=canvas_bg)
+
+        toast_card.place(relx=0.5, rely=0.5, anchor="center")
+        toast_card.lift()
+        self._gate_toast_after_id = self.after(2500, self._hide_gate_toast)
+
     def _trigger_stand_reposition(self, s_ref):
         self._close_stand_context_modal()
         if not s_ref:
@@ -1696,10 +2706,12 @@ class LidoVectorChart(ctk.CTkFrame):
             self.backend.reposition_aircraft(self.phase_mode, s_ref)
             root = self.winfo_toplevel()
             if hasattr(root, "last_flight_data") and hasattr(root, "render_results"):
-                fd = getattr(self.backend, "last_flight_data", None)
+                fd = self.backend.get_dynamic_flight_data() if hasattr(self.backend, "get_dynamic_flight_data") else getattr(self.backend, "last_flight_data", None)
                 if fd:
                     root.last_flight_data = fd
                     root.render_results(fd, preserve_camera=True)
+            if hasattr(root, "_check_and_show_gate_toast"):
+                root._check_and_show_gate_toast()
         elif self.on_stand_click:
             self.on_stand_click(s_ref)
 
@@ -1730,11 +2742,7 @@ class LidoVectorChart(ctk.CTkFrame):
                 hit = ("rwy", rx0, ry0, rx1, ry1, end_id, is_act)
                 break
         if hit is None:
-            for hb in reversed(self._stand_hitboxes):
-                x0, y0, x1, y1 = hb[0], hb[1], hb[2], hb[3]
-                if (x0 - 3) <= mx <= (x1 + 3) and (y0 - 3) <= my <= (y1 + 3):
-                    hit = hb
-                    break
+            hit = self._pick_stand_hitbox_at(mx, my, pad=3.0)
         if hit != self._hovered_stand_info:
             self._hovered_stand_info = hit
             if hit is not None:
@@ -2263,9 +3271,12 @@ class LidoVectorChart(ctk.CTkFrame):
             all_y = [b_rl[1], b_fl[1], b_fr[1], b_rr[1], n_tip[1]]
 
             # 5. Airline icon(s) displayed right in front of the triangular tip ("devant la pointe des markers")
+            #    Applies a progressive scale multiplier (up to 1.45x) when the user zooms in to maximum zoom
             if logo_codes and self.backend and self.meters_per_pixel <= 2.6:
-                raw_lh = (18.0 if sc_mult > 1.05 else 13.5) * sc
-                logo_h = max(12, min(24 if sc_mult > 1.05 else 18, int(round(raw_lh / 2.0)) * 2))
+                logo_zoom_mult = 1.0 + 0.45 * max(0.0, min(1.0, (0.85 - self.meters_per_pixel) / 0.65))
+                raw_lh = (18.0 if sc_mult > 1.05 else 13.5) * sc * logo_zoom_mult
+                max_lh_cap = 34 if sc_mult > 1.05 else 28
+                logo_h = max(12, min(max_lh_cap, int(round(raw_lh / 2.0)) * 2))
                 logo_w = int(round(logo_h * 1.16))
                 max_logos = 2 if (self.meters_per_pixel <= 0.85 and sc_mult <= 1.05) else 1
                 logo_imgs = []
@@ -2280,13 +3291,13 @@ class LidoVectorChart(ctk.CTkFrame):
                     l_along = tip_along + 2.8 + (logo_h * 0.56) + idx_l * (logo_h + 2.0)
                     lx, ly = _pt(l_along, 0.0)
                     self.canvas.create_image(lx, ly, image=tk_l)
-                    all_x.extend((lx - logo_w / 2.0, lx + logo_w / 2.0))
-                    all_y.extend((ly - logo_h / 2.0, ly + logo_h / 2.0))
 
             return min(all_x), min(all_y), max(all_x), max(all_y)
 
+        # Dynamic LOD: Hide individual neighboring stands when zoomed out in global view (> 1.55 m/px)
+        # so only terminal names, main taxiways, runways, and the assigned stand remain visible.
         drawn_stand_boxes = []
-        if self.meters_per_pixel <= 3.2:
+        if self.meters_per_pixel <= 1.55:
             for st in all_stands_list:
                 s_ref = str(st.get("ref", "")).strip()
                 if not s_ref:
@@ -2336,7 +3347,7 @@ class LidoVectorChart(ctk.CTkFrame):
 
         # 5b. Draw Terminal / Pier Names & Apron Names (ORLY 3, ORLY 4, APRON B, APRON C, etc.)
         drawn_area_labels = []
-        if self.meters_per_pixel <= 4.2:
+        if self.meters_per_pixel <= 6.5:
             # Combine OSM terminal polygon names + inferred stand terminal/pier groups
             all_term_labels = list(term_poly_labels)
             for t_name, grp in stand_term_groups.items():
@@ -2672,37 +3683,91 @@ class GUIApp(ctk.CTk):
 
     def __init__(self, config, autostart, backend):
         super().__init__()
-        self.configure(fg_color="#121418")
-        self.title("MSFS 2024 - GateFinder V2.0")
-        screen_w = self.winfo_screenwidth()
-        screen_h = self.winfo_screenheight()
-        
-        win_w = min(1365, int(screen_w * 0.92))
-        win_h = min(1049, int(screen_h * 0.88))
-        min_w = min(1180, int(screen_w * 0.80))
-        min_h = min(720, int(screen_h * 0.70))
-        win_x = max(0, (screen_w - win_w) // 2)
-        win_y = max(10, (screen_h - win_h - 40) // 2)
-        
-        self.geometry(f"{win_w}x{win_h}+{win_x}+{win_y}")
-        self._apply_window_icon(self)
-        self.minsize(min_w, min_h)
-        
-        # Start withdrawn so only the Splash Screen shows during startup OFP loading
-        self.withdraw()
-        self._startup_splash = None
-            
         self.config = config
         self.autostart = autostart
         self.backend = backend
+        self._startup_splash = None
+        self._geom_save_after_id = None
+
+        self.configure(fg_color="#121418")
+        self.title("MSFS 2024 - GateFinder V2.0.4")
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+
+        min_w = min(1180, int(screen_w * 0.80))
+        min_h = min(700, int(screen_h * 0.68))
+        win_w = min(1600, int(screen_w * 0.84))
+        win_h = min(870, int(screen_h * 0.80))
+        win_x = max(0, (screen_w - win_w) // 2)
+        win_y = max(10, (screen_h - win_h - 40) // 2)
+
+        self._restore_zoomed = False
+        saved_geom = self.config.settings.get("window_geometry")
+        if isinstance(saved_geom, dict):
+            try:
+                sw_val = int(saved_geom.get("w", 0))
+                sh_val = int(saved_geom.get("h", 0))
+                sx_val = saved_geom.get("x")
+                sy_val = saved_geom.get("y")
+                self._restore_zoomed = bool(saved_geom.get("zoomed", False))
+                if sw_val >= min_w and sh_val >= min_h:
+                    win_w = min(sw_val, max(min_w, screen_w))
+                    win_h = min(sh_val, max(min_h, screen_h - 30))
+                if sx_val is not None and sy_val is not None:
+                    sx_i = int(sx_val)
+                    sy_i = int(sy_val)
+                    try:
+                        import ctypes
+                        u32 = ctypes.windll.user32
+                        vx = int(u32.GetSystemMetrics(76))
+                        vy = int(u32.GetSystemMetrics(77))
+                        vw = int(u32.GetSystemMetrics(78))
+                        vh = int(u32.GetSystemMetrics(79))
+                        if vw <= 0 or vh <= 0:
+                            vx, vy, vw, vh = 0, 0, screen_w, screen_h
+                    except Exception:
+                        vx, vy, vw, vh = 0, 0, screen_w, screen_h
+                    if (vx - 80) <= sx_i <= (vx + vw - 160) and (vy - 20) <= sy_i <= (vy + vh - 120):
+                        win_x = sx_i
+                        win_y = max(vy, sy_i)
+            except Exception:
+                pass
+
+        self._last_normal_geom = {"w": int(win_w), "h": int(win_h), "x": int(win_x), "y": int(win_y)}
+        self.geometry(f"{win_w}x{win_h}+{win_x}+{win_y}")
+        self._apply_window_icon(self)
+        self.minsize(min_w, min_h)
+
+        has_recent_session = False
+        try:
+            p_sess = self.backend._get_session_state_path()
+            if os.path.exists(p_sess) and (time.time() - os.path.getmtime(p_sess) < 14 * 3600):
+                has_recent_session = True
+        except Exception:
+            pass
+        has_sb_user = bool(self.config.settings.get("simbrief_username", "").strip())
+        will_show_startup_splash = bool(
+            "--silent" not in sys.argv
+            and has_sb_user
+            and (self.config.settings.get("auto_fetch", True) or has_recent_session)
+        )
+
+        # Only start withdrawn if launched silently or if the startup splash screen will be shown
+        if "--silent" in sys.argv or will_show_startup_splash:
+            self.withdraw()
+        if will_show_startup_splash:
+            self._create_startup_splash_window(initial_step="Initializing GateFinder...")
+            self.update()
+            
         self.active_phase = "departure"  # "departure" or "arrival"
         self.user_manual_phase_override = False
         self.vector_chart = None
         
-        # Bind close and minimize events
+        # Bind close, minimize, focus, and window move/resize persistence events
         self.protocol("WM_DELETE_WINDOW", self.on_close_request)
         self.bind("<Unmap>", self.on_unmap)
         self.bind("<FocusIn>", self._on_window_focus_in)
+        self.bind("<Configure>", self._on_root_configure)
         
         self.create_widgets()
         
@@ -2729,24 +3794,32 @@ class GUIApp(ctk.CTk):
         threading.Thread(target=self.check_for_updates, daemon=True).start()
         
         # Check if setup is needed
-        if not self.config.settings.get("simbrief_username"):
+        if not has_sb_user:
             self.show_settings()
             if "--silent" not in sys.argv:
                 self.deiconify()
+                self.after(80, self.show_main_window)
         else:
+            self._startup_init_running = True
             self.show_main_view()
-            has_recent_session = False
-            try:
-                p_sess = self.backend._get_session_state_path()
-                if os.path.exists(p_sess) and (time.time() - os.path.getmtime(p_sess) < 14 * 3600):
-                    has_recent_session = True
-            except Exception:
-                pass
-            if self.config.settings.get("auto_fetch") or has_recent_session:
-                self.after(50, lambda keep=has_recent_session: self.fetch_simbrief(turnaround_keep_gate=True if keep else None, startup_splash=True))
+            self._startup_init_running = False
+            if self.config.settings.get("auto_fetch", True) or has_recent_session:
+                self.after(10, lambda keep=has_recent_session: self.fetch_simbrief(turnaround_keep_gate=True if keep else None, startup_splash=True))
+                if "--silent" not in sys.argv:
+                    self.after(12000, self._ensure_window_visible_after_splash)
             else:
                 if "--silent" not in sys.argv:
                     self.deiconify()
+                    self.after(80, self.show_main_window)
+
+    def _ensure_window_visible_after_splash(self):
+        """Safety watchdog so the main window is guaranteed to open even if startup SimBrief takes too long."""
+        if getattr(self, "_is_importing_ofp", False):
+            self.after(5000, self._ensure_window_visible_after_splash)
+            return
+        if "--silent" not in sys.argv and self.state() == "withdrawn":
+            self._close_startup_splash()
+            self.show_main_window()
 
     def _on_window_focus_in(self, event=None):
         """Immediately check SimBrief when the user switches focus back to GateFinder (e.g. from their browser)."""
@@ -2760,6 +3833,9 @@ class GUIApp(ctk.CTk):
     def check_sync_loop(self):
         next_delay_ms = 200
         try:
+            if getattr(self.backend, "show_window_requested", False):
+                self.backend.show_window_requested = False
+                self.show_main_window()
             if getattr(self, "_is_importing_ofp", False):
                 return
             fd = self.backend.get_dynamic_flight_data()
@@ -2840,7 +3916,7 @@ class GUIApp(ctk.CTk):
                                                 final_g,
                                                 coords,
                                                 gate_meta=meta,
-                                                source="MSFS Live (Parked Stand)"
+                                                source=arr.get("atc_runway_source") or "GateFinder"
                                             )
                                             self.config.settings["last_arrival_icao"] = arr_ic
                                             self.config.settings["last_arrival_gate"] = final_g
@@ -2889,10 +3965,16 @@ class GUIApp(ctk.CTk):
                             norm_cur = re.sub(r'[^A-Z0-9]', '', str(dep_gate).upper())
                             if norm_live and norm_live != norm_cur:
                                 # Do not overwrite if the user manually picked a sub-stand (e.g. P2A vs P2) within the last 25s
+                                # or if `dep_gate` and `live_stand` are overlapping MARS stands of the same bay (e.g. A 4 vs A 41)
                                 hub_obj = getattr(self.backend, "interop_hub", None)
-                                last_manual_ts = float(getattr(hub_obj, "_last_manual_gate_change_ts", 0.0) or 0.0) if hub_obj else 0.0
+                                last_manual_ts = max(
+                                    float(getattr(hub_obj, "_last_user_manual_gate_ts", 0.0) or 0.0),
+                                    float(getattr(hub_obj, "_last_manual_gate_change_ts", 0.0) or 0.0)
+                                ) if hub_obj else 0.0
                                 skip_substand = False
-                                if (now_ts - last_manual_ts) < 25.0:
+                                if hasattr(self.backend, "are_mars_related_stands") and self.backend.are_mars_related_stands(dep_gate, live_stand, 25.0):
+                                    skip_substand = True
+                                elif (now_ts - last_manual_ts) < 25.0:
                                     m_c = re.match(r'^([A-Z]*)(\d+)([A-Z]*)$', norm_cur)
                                     m_l = re.match(r'^([A-Z]*)(\d+)([A-Z]*)$', norm_live)
                                     if m_c and m_l and int(m_c.group(2)) == int(m_l.group(2)):
@@ -2911,12 +3993,8 @@ class GUIApp(ctk.CTk):
                                                 canon_g or live_stand,
                                                 coords,
                                                 gate_meta=meta,
-                                                source="GSX Pro"
+                                                source=dep.get("atc_runway_source") or "GateFinder"
                                             )
-                                            if hub_obj is not None:
-                                                from src.interoperability_hub import GateSource
-                                                hub_obj._suppress_next_gsx_auto_inject = True
-                                                hub_obj.inject_manual_gate("departure", canon_g or live_stand, coords, source=GateSource.GSX_LIVE)
                                         except Exception as err_auto_dep:
                                             print(f"[GUI] Error auto-syncing live departure stand {live_stand}: {err_auto_dep}")
 
@@ -2928,8 +4006,8 @@ class GUIApp(ctk.CTk):
 
                 sig = (
                     fd.get("aircraft"), fd.get("airline"),
-                    dep.get("icao"), dep.get("gate"), dep.get("gate_source"), dep.get("selected_runway"), dep.get("atc_runway"), tuple(dep.get("atc_taxi_via") or ()), dep.get("bypassed_summary"),
-                    arr.get("icao"), arr.get("gate"), arr.get("gate_source"), arr.get("selected_runway"), arr.get("atc_runway"), tuple(arr.get("atc_taxi_via") or ()), arr.get("bypassed_summary"),
+                    dep.get("icao"), dep.get("gate"), dep.get("gate_source"), dep.get("atc_runway_source"), dep.get("selected_runway"), dep.get("atc_runway"), tuple(dep.get("atc_taxi_via") or ()), dep.get("bypassed_summary"),
+                    arr.get("icao"), arr.get("gate"), arr.get("gate_source"), arr.get("atc_runway_source"), arr.get("selected_runway"), arr.get("atc_runway"), tuple(arr.get("atc_taxi_via") or ()), arr.get("bypassed_summary"),
                     self.active_phase, eff_map_hib, show_maps_cfg, is_airborne
                 )
                 self.last_flight_data = fd
@@ -2947,11 +4025,37 @@ class GUIApp(ctk.CTk):
                         # Fast canvas refresh for live aircraft movement without rebuilding sidebar widgets
                         self.vector_chart.set_data(apt_active, phase_mode=self.active_phase, user_aircraft=u_ac, preserve_camera=True)
 
+                self._check_and_show_gate_toast()
+
                 next_delay_ms = 800 if eff_map_hib else 200
         except Exception as e:
             print(f"[GUI] check_sync_loop recovered from error: {e}")
         finally:
             self.after(next_delay_ms, self.check_sync_loop)
+
+    def _check_and_show_gate_toast(self):
+        try:
+            if not hasattr(self, "backend") or not self.backend:
+                return
+            hub = getattr(self.backend, "interop_hub", None)
+            if not hub:
+                return
+            toast = getattr(hub, "last_gate_toast", None)
+            if not toast or not isinstance(toast, dict):
+                return
+            tid = toast.get("id")
+            if not tid or tid == getattr(self, "_last_shown_gate_toast_id", None):
+                return
+            # Wait until main window is visible and vector_chart exists before consuming the toast
+            if self.state() == "withdrawn":
+                return
+            if not hasattr(self, "vector_chart") or not self.vector_chart or not self.vector_chart.winfo_exists():
+                return
+            self._last_shown_gate_toast_id = tid
+            if (time.time() - float(toast.get("timestamp") or 0.0)) <= 12.0:
+                self.vector_chart.show_gate_toast(toast)
+        except Exception:
+            pass
 
     def _format_gsx_pill_info(self, gsx_st, gate_name=""):
         raw_lbl = str((gsx_st or {}).get("label") or "").strip()
@@ -3034,10 +4138,62 @@ class GUIApp(ctk.CTk):
                 self._sb_gsx_tip.text = tip_gsx
                 self._sb_gsx_pill.grid(row=1, column=1, sticky="ew", padx=(4, 0), pady=(0, 0))
 
+    def _on_root_configure(self, event=None):
+        if event is not None and event.widget != self:
+            return
+        try:
+            st = self.state()
+            if st not in ("normal", "zoomed"):
+                return
+            if st == "normal":
+                w, h, x, y = self._parse_geometry_string(self.geometry())
+                if w is not None and h is not None and w >= 900 and h >= 550:
+                    self._last_normal_geom = {
+                        "w": int(w),
+                        "h": int(h),
+                        "x": int(x if x is not None else self.winfo_x()),
+                        "y": int(y if y is not None else self.winfo_y()),
+                    }
+            if getattr(self, "_geom_save_after_id", None) is not None:
+                try:
+                    self.after_cancel(self._geom_save_after_id)
+                except Exception:
+                    pass
+            self._geom_save_after_id = self.after(450, self._save_window_geometry)
+        except Exception:
+            pass
+
+    def _save_window_geometry(self):
+        self._geom_save_after_id = None
+        try:
+            if not self.winfo_exists():
+                return
+            st = self.state()
+            if st == "normal":
+                w, h, x, y = self._parse_geometry_string(self.geometry())
+                if w is not None and h is not None and w >= 900 and h >= 550:
+                    self._last_normal_geom = {
+                        "w": int(w),
+                        "h": int(h),
+                        "x": int(x if x is not None else self.winfo_x()),
+                        "y": int(y if y is not None else self.winfo_y()),
+                    }
+            base = dict(getattr(self, "_last_normal_geom", None) or {})
+            if not base:
+                return
+            base["zoomed"] = bool(st == "zoomed")
+            if self.config.settings.get("window_geometry") != base:
+                self.config.settings["window_geometry"] = base
+                self.config.save()
+        except Exception:
+            pass
+
     def on_close_request(self):
         from tkinter import messagebox
+        self._save_window_geometry()
         ans = messagebox.askyesno("Quit GateFinder", "Are you sure you want to quit GateFinder?")
         if ans:
+            self._save_window_geometry()
             self.destroy()
             sys.exit(0)
 
@@ -3047,17 +4203,29 @@ class GUIApp(ctk.CTk):
                 self.hide_to_tray()
 
     def hide_to_tray(self):
+        self._save_window_geometry()
         self.withdraw()
 
     def show_main_window(self):
-        self.deiconify()
-        self.state("normal")
-        self.lift()
+        try:
+            self.deiconify()
+            if getattr(self, "_restore_zoomed", False):
+                self._restore_zoomed = False
+                self.state("zoomed")
+            else:
+                self.state("normal")
+            self.lift()
+            self.focus_force()
+            if hasattr(self, "vector_chart") and self.vector_chart and self.vector_chart.winfo_exists():
+                if not getattr(self.vector_chart, "_initial_fit_done", False) and not getattr(self.vector_chart, "follow_aircraft", False):
+                    self.after(40, self.vector_chart.fit_route_view)
+        except Exception:
+            pass
 
     def check_for_updates(self):
         import urllib.request
         import json
-        current_ver = "v2.0.0"
+        current_ver = "v2.0.4"
         try:
             req = urllib.request.Request(
                 "https://api.github.com/repos/wildbill75/gsx-gatefinder/releases/latest",
@@ -3105,9 +4273,9 @@ class GUIApp(ctk.CTk):
         self.header_frame = ctk.CTkFrame(self, fg_color="#1B1E24", corner_radius=12, border_width=0)
         self.header_frame.pack(fill="x", padx=16, pady=(12, 8))
 
-        # Right side controls in Top Bar: Settings & Import SimBrief
+        # Right side controls in Top Bar: Settings & Import SimBrief (Solid filled action buttons)
         self.btn_settings = ctk.CTkButton(
-            self.header_frame, text="Settings", width=105, height=44,
+            self.header_frame, text="Settings", width=116, height=46,
             fg_color="#2B303B", hover_color="#383E4C", border_width=0,
             text_color="#FFFFFF",
             font=ctk.CTkFont(size=13, weight="bold"),
@@ -3116,16 +4284,27 @@ class GUIApp(ctk.CTk):
         self.btn_settings.pack(side="right", padx=(8, 16), pady=12)
 
         self.btn_import = ctk.CTkButton(
-            self.header_frame, text="Import SimBrief", width=175, height=44,
+            self.header_frame, text="Import SimBrief", width=182, height=46,
             fg_color="#0A86C2", hover_color="#0A6E9E", border_width=0,
             font=ctk.CTkFont(size=13, weight="bold"),
             command=self.fetch_simbrief
         )
-        self.btn_import.pack(side="right", padx=4, pady=12)
+        self.btn_import.pack(side="right", padx=6, pady=12)
 
-        # Left/Center SimBrief OFP Summary Pill Container
-        self.flight_strip_frame = ctk.CTkFrame(self.header_frame, fg_color="transparent")
+        # Left/Center SimBrief OFP Summary Pill Container (fixed 46px height when empty so header never stretches vertically)
+        self.flight_strip_frame = ctk.CTkFrame(self.header_frame, fg_color="transparent", height=46, width=1)
         self.flight_strip_frame.pack(side="left", padx=(16, 8), pady=12)
+        ctk.CTkLabel(
+            self.flight_strip_frame,
+            text="GATEFINDER V2.0.4  •  SIMBRIEF EFB DISPATCH",
+            height=46,
+            fg_color="#2B303B",
+            text_color="#94A3B8",
+            corner_radius=8,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            padx=18,
+            pady=6,
+        ).pack(side="left")
 
         # Dedicated container for update banner
         self.update_banner_container = ctk.CTkFrame(self, fg_color="transparent")
@@ -3154,13 +4333,13 @@ class GUIApp(ctk.CTk):
             card.grid(row=0, column=col_idx, sticky="ew", padx=(0, 6) if col_idx == 0 else (6, 0), pady=0)
 
             inner = ctk.CTkFrame(card, fg_color="#1B1E24", corner_radius=0, border_width=0, cursor="hand2")
-            inner.pack(anchor="center", pady=10)
+            inner.pack(anchor="center", pady=11)
 
             lbl_title = ctk.CTkLabel(
                 inner, text=title_txt, fg_color="transparent",
                 font=ctk.CTkFont(size=15, weight="bold"), text_color="#FFFFFF", cursor="hand2"
             )
-            lbl_title.pack(side="left", padx=(4, 14))
+            lbl_title.pack(side="left", padx=(6, 16))
 
             pill_icao = ctk.CTkFrame(inner, fg_color="#0A6E9E", corner_radius=8, border_width=0, cursor="hand2")
             pill_icao.pack(side="left", padx=(0, 8))
@@ -3168,7 +4347,7 @@ class GUIApp(ctk.CTk):
                 pill_icao, text="----", fg_color="transparent",
                 font=ctk.CTkFont(size=14, weight="bold"), text_color="#FFFFFF", cursor="hand2"
             )
-            lbl_icao.pack(padx=16, pady=6)
+            lbl_icao.pack(padx=18, pady=7)
 
             pill_stand = ctk.CTkFrame(inner, fg_color="#0D587D", corner_radius=8, border_width=0, cursor="hand2")
             pill_stand.pack(side="left", padx=(0, 8))
@@ -3176,7 +4355,7 @@ class GUIApp(ctk.CTk):
                 pill_stand, text="STAND --", fg_color="transparent",
                 font=ctk.CTkFont(size=14, weight="bold"), text_color="#FFFFFF", cursor="hand2"
             )
-            lbl_stand.pack(padx=16, pady=6)
+            lbl_stand.pack(padx=18, pady=7)
 
             pill_rwy = ctk.CTkFrame(inner, fg_color="#0D435E", corner_radius=8, border_width=0, cursor="hand2")
             pill_rwy.pack(side="left")
@@ -3184,7 +4363,7 @@ class GUIApp(ctk.CTk):
                 pill_rwy, text="RWY --", fg_color="transparent",
                 font=ctk.CTkFont(size=14, weight="bold"), text_color="#FFFFFF", cursor="hand2"
             )
-            lbl_rwy.pack(padx=16, pady=6)
+            lbl_rwy.pack(padx=18, pady=7)
 
             def _on_stand_pill_click(event, p=phase_key):
                 self.switch_phase(p, manual=True)
@@ -3227,7 +4406,7 @@ class GUIApp(ctk.CTk):
             font=ctk.CTkFont(size=15, weight="bold"),
             text_color="#94A3B8"
         )
-        self.placeholder_lbl.pack(expand=True)
+        self.placeholder_lbl.place(relx=0.5, rely=0.5, anchor="center")
 
         # 2. Settings View Frame
         self.settings_view = SettingsView(self.content_container, self.config, self.autostart, self.backend, self.on_settings_saved, self.show_main_view)
@@ -3490,6 +4669,13 @@ class GUIApp(ctk.CTk):
                 self.settings_view.save_settings_silent()
             except Exception:
                 pass
+        if (
+            not getattr(self, "_startup_init_running", False)
+            and getattr(self, "last_flight_data", None) is None
+            and not getattr(self, "_is_importing_ofp", False)
+            and self.config.settings.get("simbrief_username", "").strip()
+        ):
+            self.after(80, lambda: self.fetch_simbrief(startup_splash=True))
 
     def on_settings_saved(self, changed_keys=None):
         if changed_keys is not None and not changed_keys:
@@ -3511,6 +4697,7 @@ class GUIApp(ctk.CTk):
     def _close_startup_splash(self):
         sp = getattr(self, "_startup_splash", None)
         self._startup_splash = None
+        self._splash_prog_card = None
         if sp:
             try:
                 if sp.winfo_exists():
@@ -3518,7 +4705,131 @@ class GUIApp(ctk.CTk):
             except Exception:
                 pass
 
+    def _populate_progress_card(self, prog_card, initial_step="Fetching SimBrief flight plan..."):
+        try:
+            from PIL import Image, ImageDraw
+            gf_png = self.get_resource_path("icon.png")
+            if os.path.exists(gf_png):
+                logo_sz = 88
+                pil_gf = Image.open(gf_png).convert("RGBA").resize((logo_sz, logo_sz), Image.Resampling.LANCZOS)
+                mask = Image.new("L", (logo_sz, logo_sz), 0)
+                draw_m = ImageDraw.Draw(mask)
+                draw_m.rounded_rectangle((0, 0, logo_sz - 1, logo_sz - 1), radius=16, fill=255)
+                rounded_gf = Image.new("RGBA", (logo_sz, logo_sz), (0, 0, 0, 0))
+                rounded_gf.paste(pil_gf, (0, 0), mask)
+                self._splash_gf_ctk = ctk.CTkImage(light_image=rounded_gf, dark_image=rounded_gf, size=(logo_sz, logo_sz))
+                ctk.CTkLabel(prog_card, text="", image=self._splash_gf_ctk).pack(pady=(34, 8))
+        except Exception:
+            pass
+
+        ctk.CTkLabel(
+            prog_card, text="GATEFINDER",
+            font=ctk.CTkFont(size=18, weight="bold"), text_color="#F8FAFC"
+        ).pack(pady=(0, 20))
+
+        self.lbl_import_step = ctk.CTkLabel(
+            prog_card, text=initial_step,
+            font=ctk.CTkFont(size=13), text_color="#CBD5E1"
+        )
+        self.lbl_import_step.pack(pady=(0, 14))
+
+        bar_w, bar_h = 350, 8
+        prog_canvas = tk.Canvas(
+            prog_card, width=bar_w, height=bar_h,
+            bg="#0B0E14", bd=0, highlightthickness=0
+        )
+        prog_canvas.pack(pady=(0, 12))
+        self.import_progress_bar = prog_canvas
+
+        def _render_blue_gradient_bar(pct_val):
+            try:
+                if not prog_canvas.winfo_exists():
+                    return
+                from PIL import Image, ImageDraw, ImageTk
+                scale = 2
+                sw_b, sh_b = bar_w * scale, bar_h * scale
+                img = Image.new("RGBA", (sw_b, sh_b), (11, 14, 20, 255))
+                draw = ImageDraw.Draw(img)
+                draw.rounded_rectangle((0, 0, sw_b - 1, sh_b - 1), radius=sh_b // 2, fill=(24, 30, 44, 255))
+
+                clamped = max(0.06, min(1.0, float(pct_val)))
+                fill_w = max(sh_b, int(sw_b * clamped))
+
+                grad = Image.new("RGBA", (fill_w, sh_b))
+                g_px = grad.load()
+                stops = [
+                    (0.0, (224, 242, 254)),
+                    (0.30, (125, 211, 252)),
+                    (0.65, (56, 189, 248)),
+                    (1.0, (2, 132, 199)),
+                ]
+                for x in range(fill_w):
+                    t = x / max(1, fill_w - 1)
+                    r, g, b = stops[-1][1]
+                    for idx_s in range(len(stops) - 1):
+                        t0, c0 = stops[idx_s]
+                        t1, c1 = stops[idx_s + 1]
+                        if t0 <= t <= t1:
+                            f = (t - t0) / max(1e-6, t1 - t0)
+                            r = int(c0[0] + (c1[0] - c0[0]) * f)
+                            g = int(c0[1] + (c1[1] - c0[1]) * f)
+                            b = int(c0[2] + (c1[2] - c0[2]) * f)
+                            break
+                    for y in range(sh_b):
+                        g_px[x, y] = (r, g, b, 255)
+
+                p_mask = Image.new("L", (fill_w, sh_b), 0)
+                ImageDraw.Draw(p_mask).rounded_rectangle((0, 0, fill_w - 1, sh_b - 1), radius=sh_b // 2, fill=255)
+                img.paste(grad, (0, 0), p_mask)
+
+                final_bar = img.resize((bar_w, bar_h), Image.Resampling.LANCZOS)
+                self._splash_bar_photo = ImageTk.PhotoImage(final_bar)
+                prog_canvas.delete("all")
+                prog_canvas.create_image(0, 0, anchor="nw", image=self._splash_bar_photo)
+            except Exception:
+                pass
+
+        self._render_blue_gradient_bar = _render_blue_gradient_bar
+        _render_blue_gradient_bar(0.06)
+
+        lbl_ver_ftr = ctk.CTkLabel(
+            prog_card, text="V2.0.4 • © 2026 Sidestick Priority",
+            font=ctk.CTkFont(size=11), text_color="#475569"
+        )
+        lbl_ver_ftr.place(relx=1.0, rely=1.0, x=-20, y=-12, anchor="se")
+
+    def _create_startup_splash_window(self, initial_step="Initializing GateFinder..."):
+        sp = getattr(self, "_startup_splash", None)
+        if sp and sp.winfo_exists():
+            if hasattr(self, "lbl_import_step") and self.lbl_import_step.winfo_exists():
+                self.lbl_import_step.configure(text=initial_step)
+            return sp
+        sp_w, sp_h = 520, 330
+        splash = ctk.CTkToplevel(self)
+        splash.title("GateFinder V2.0.4")
+        splash.overrideredirect(True)
+        splash.configure(fg_color="#0B0E14")
+        self._apply_window_icon(splash)
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        splash.geometry(f"{sp_w}x{sp_h}+{max(0, (sw - sp_w) // 2)}+{max(0, (sh - sp_h) // 2)}")
+        try:
+            splash.attributes("-topmost", True)
+        except Exception:
+            pass
+        self._startup_splash = splash
+        prog_card = ctk.CTkFrame(
+            splash, fg_color="#0B0E14", corner_radius=12,
+            border_width=1, border_color="#1E2532"
+        )
+        prog_card.pack(fill="both", expand=True, padx=0, pady=0)
+        self._splash_prog_card = prog_card
+        self._populate_progress_card(prog_card, initial_step=initial_step)
+        return splash
+
     def fetch_simbrief(self, turnaround_keep_gate=None, startup_splash=False):
+        if getattr(self, "_is_importing_ofp", False):
+            return
         # Always sync the live SimBrief entry from Settings if the user typed it there without clicking Save yet
         if hasattr(self, "settings_view") and hasattr(self.settings_view, "simbrief_entry"):
             typed_user = self.settings_view.simbrief_entry.get().strip()
@@ -3535,9 +4846,9 @@ class GUIApp(ctk.CTk):
             self.show_settings()
             return
             
+        self._is_importing_ofp = True
         # Ensure we are on the Main View when importing
         self.show_main_view()
-        self._is_importing_ofp = True
         self.btn_import.configure(text="Importing OFP...", state="disabled")
 
         # Build Sleek EFB On-the-Fly Airport Construction Progress Card
@@ -3547,71 +4858,30 @@ class GUIApp(ctk.CTk):
         for w in self.results_frame.winfo_children():
             w.destroy()
 
-        use_splash = bool(startup_splash and "--silent" not in sys.argv)
+        use_splash = bool((startup_splash or getattr(self, "last_flight_data", None) is None) and "--silent" not in sys.argv)
+        sp_w, sp_h = 520, 330
         if use_splash:
-            self._close_startup_splash()
-            splash = ctk.CTkToplevel(self)
-            splash.title("GateFinder V2.0")
-            splash.overrideredirect(True)
-            splash.configure(fg_color="#0F172A")
-            self._apply_window_icon(splash)
-            sw = self.winfo_screenwidth()
-            sh = self.winfo_screenheight()
-            sp_w, sp_h = 480, 155
-            splash.geometry(f"{sp_w}x{sp_h}+{max(0, (sw - sp_w) // 2)}+{max(0, (sh - sp_h) // 2)}")
-            try:
-                splash.attributes("-topmost", True)
-            except Exception:
-                pass
-            self._startup_splash = splash
-            prog_card = ctk.CTkFrame(
-                splash, fg_color="#111827", corner_radius=12,
-                border_width=0
-            )
-            prog_card.pack(fill="both", expand=True, padx=0, pady=0)
+            if self.state() != "withdrawn":
+                self.withdraw()
+            self._create_startup_splash_window(initial_step="Fetching SimBrief flight plan...")
         else:
             prog_card = ctk.CTkFrame(
-                self.results_frame, fg_color="#111827", corner_radius=12,
-                border_width=0, width=480, height=155
+                self.results_frame, fg_color="#0B0E14", corner_radius=12,
+                border_width=1, border_color="#1E2532", width=sp_w, height=sp_h
             )
             prog_card.place(relx=0.5, rely=0.5, anchor="center")
             prog_card.pack_propagate(False)
+            self._populate_progress_card(prog_card, initial_step="Fetching SimBrief flight plan...")
 
-        splash_hdr = ctk.CTkFrame(prog_card, fg_color="transparent")
-        splash_hdr.pack(pady=(22, 8))
-        try:
-            from PIL import Image
-            gf_png = self.get_resource_path("icon.png")
-            if os.path.exists(gf_png):
-                pil_gf = Image.open(gf_png).convert("RGBA")
-                self._splash_gf_ctk = ctk.CTkImage(light_image=pil_gf, dark_image=pil_gf, size=(24, 24))
-                ctk.CTkLabel(splash_hdr, text="", image=self._splash_gf_ctk).pack(side="left", padx=(0, 8))
-        except Exception:
-            pass
-        ctk.CTkLabel(
-            splash_hdr, text="GATEFINDER",
-            font=ctk.CTkFont(size=13, weight="bold"), text_color="#F8FAFC"
-        ).pack(side="left")
+        _render_blue_gradient_bar = getattr(self, "_render_blue_gradient_bar", lambda v: None)
+        _render_blue_gradient_bar(0.08)
 
-        self.lbl_import_step = ctk.CTkLabel(
-            prog_card, text="Fetching SimBrief flight plan...",
-            font=ctk.CTkFont(size=14, weight="bold"), text_color="#94A3B8"
-        )
-        self.lbl_import_step.pack(pady=(0, 14))
-
-        self.import_progress_bar = ctk.CTkProgressBar(
-            prog_card, width=400, height=10, corner_radius=5,
-            fg_color="#1E293B", progress_color="#10B981"
-        )
-        self.import_progress_bar.set(0.08)
-        self.import_progress_bar.pack(pady=(0, 12))
         self.update()
 
         import threading
         def _on_progress(pct, step_msg):
             def _upd():
-                if hasattr(self, "import_progress_bar") and self.import_progress_bar.winfo_exists():
-                    self.import_progress_bar.set(max(0.05, min(1.0, float(pct))))
+                _render_blue_gradient_bar(pct)
                 if hasattr(self, "lbl_import_step") and self.lbl_import_step.winfo_exists():
                     self.lbl_import_step.configure(text=step_msg)
             self.after(0, _upd)
@@ -3680,9 +4950,7 @@ class GUIApp(ctk.CTk):
                     self.btn_import.configure(text="Import SimBrief", state="normal")
                     self._close_startup_splash()
                     if "--silent" not in sys.argv and self.state() == "withdrawn":
-                        self.deiconify()
-                        self.state("normal")
-                        self.lift()
+                        self.show_main_window()
                     if chose_new_stand_holder[0]:
                         self.after(120, lambda: self._open_manual_stand_picker_modal(phase="departure"))
                 self.after(0, _on_ok)
@@ -3692,9 +4960,7 @@ class GUIApp(ctk.CTk):
                     self._is_importing_ofp = False
                     self._close_startup_splash()
                     if "--silent" not in sys.argv and self.state() == "withdrawn":
-                        self.deiconify()
-                        self.state("normal")
-                        self.lift()
+                        self.show_main_window()
                     if self.last_flight_data:
                         self._last_rendered_signature = None
                         self.render_results(self.last_flight_data, preserve_camera=True)
@@ -4355,12 +5621,11 @@ class GUIApp(ctk.CTk):
             if reposition and hasattr(self.backend, "reposition_aircraft"):
                 self.backend.reposition_aircraft(target_phase, gate_str)
             else:
-                if gate_str.replace(" ", "").upper() == cur_gate.replace(" ", "").upper():
-                    return
                 self.backend.interop_hub.set_manual_gate(target_phase, gate_str)
             self.last_flight_data = self.backend.get_dynamic_flight_data()
             self._last_rendered_signature = None
             self.render_results(self.last_flight_data, preserve_camera=True)
+            self._check_and_show_gate_toast()
 
     def _open_manual_stand_picker_modal(self, phase=None):
         if not self.last_flight_data:
@@ -4737,36 +6002,112 @@ class GUIApp(ctk.CTk):
         self._last_clearance_val = None
         self._last_traffic_pills_val = None
 
+        saved_sb_w = int(self.config.settings.get("sidebar_width", 356) or 356)
+        self._sidebar_width = max(340, min(780, saved_sb_w))
+
         self.results_frame.grid_rowconfigure(0, weight=1)
-        self.results_frame.grid_columnconfigure(0, weight=0, minsize=330)
+        self.results_frame.grid_columnconfigure(0, weight=0, minsize=self._sidebar_width + 10)
         self.results_frame.grid_columnconfigure(1, weight=1)
 
-        sidebar = ctk.CTkFrame(self.results_frame, width=330, fg_color="transparent", border_width=0)
-        sidebar.grid(row=0, column=0, sticky="nsew", padx=(0, 6), pady=0)
-        sidebar.grid_propagate(False)
+        sidebar_outer = ctk.CTkFrame(self.results_frame, width=self._sidebar_width + 10, fg_color="transparent", border_width=0)
+        sidebar_outer.grid(row=0, column=0, sticky="nsew", padx=(0, 2), pady=0)
+        sidebar_outer.grid_propagate(False)
+        sidebar_outer.pack_propagate(False)
+        self._sidebar_outer = sidebar_outer
+
+        sidebar = ctk.CTkFrame(sidebar_outer, width=self._sidebar_width, fg_color="transparent", border_width=0)
+        sidebar.pack(side="left", fill="both", expand=True, padx=0, pady=0)
+        sidebar.pack_propagate(False)
         self.sidebar_frame = sidebar
+
+        # Vertical Draggable Splitter Handle between Left Sidebar and Map
+        sash = ctk.CTkFrame(sidebar_outer, width=10, fg_color="transparent", corner_radius=4, cursor="sb_h_double_arrow")
+        sash.pack(side="right", fill="y", padx=(2, 0), pady=0)
+        sash.pack_propagate(False)
+        sash_grip = ctk.CTkFrame(sash, width=4, height=64, fg_color="#2B303B", corner_radius=2, cursor="sb_h_double_arrow")
+        sash_grip.place(relx=0.5, rely=0.5, anchor="center")
+        Tooltip(sash, "Drag left or right to resize the left panel — cards & pills reflow automatically")
+
+        def _on_sash_enter(e):
+            sash_grip.configure(fg_color="#38BDF8")
+
+        def _on_sash_leave(e):
+            if not getattr(self, "_sash_dragging", False):
+                sash_grip.configure(fg_color="#2B303B")
+
+        def _on_sash_press(e):
+            self._sash_dragging = True
+            self._sash_start_x = e.x_root
+            self._sash_start_w = getattr(self, "_sidebar_width", 356)
+            self._last_sash_ts = 0.0
+            sash_grip.configure(fg_color="#38BDF8")
+
+        def _on_sash_motion(e):
+            if not getattr(self, "_sash_dragging", False):
+                return
+            now_t = time.perf_counter()
+            if (now_t - getattr(self, "_last_sash_ts", 0.0)) < 0.015:
+                return
+            dx = e.x_root - getattr(self, "_sash_start_x", e.x_root)
+            tot_w = max(800, self.results_frame.winfo_width())
+            max_allowed = max(420, int(tot_w * 0.65))
+            new_w = max(340, min(max_allowed, self._sash_start_w + dx))
+            if abs(new_w - getattr(self, "_sidebar_width", 356)) >= 3:
+                self._last_sash_ts = now_t
+                self._apply_sidebar_width(new_w, is_dragging=True)
+
+        def _on_sash_release(e):
+            if getattr(self, "_sash_dragging", False):
+                self._sash_dragging = False
+                sash_grip.configure(fg_color="#2B303B")
+                dx = e.x_root - getattr(self, "_sash_start_x", e.x_root)
+                tot_w = max(800, self.results_frame.winfo_width())
+                max_allowed = max(420, int(tot_w * 0.65))
+                new_w = max(340, min(max_allowed, self._sash_start_w + dx))
+                self._apply_sidebar_width(new_w, is_dragging=False)
+                if hasattr(self, "vector_chart") and self.vector_chart and self.vector_chart.winfo_exists():
+                    if getattr(self.vector_chart, "_resize_redraw_after_id", None) is not None:
+                        try:
+                            self.vector_chart.after_cancel(self.vector_chart._resize_redraw_after_id)
+                        except Exception:
+                            pass
+                        self.vector_chart._resize_redraw_after_id = None
+                    self.vector_chart.redraw()
+                try:
+                    self.config.settings["sidebar_width"] = int(self._sidebar_width)
+                    self.config.save()
+                except Exception:
+                    pass
+
+        for sw in (sash, sash_grip):
+            sw.bind("<Enter>", _on_sash_enter)
+            sw.bind("<Leave>", _on_sash_leave)
+            sw.bind("<ButtonPress-1>", _on_sash_press)
+            sw.bind("<B1-Motion>", _on_sash_motion)
+            sw.bind("<ButtonRelease-1>", _on_sash_release)
 
         # Card 1: Airport & Assigned Stand Hero Card (Borderless)
         gate_card = ctk.CTkFrame(sidebar, fg_color="#1B1E24", corner_radius=12, border_width=0)
         gate_card.pack(fill="x", pady=(0, 10))
         self._sb_gate_card = gate_card
 
+        lbl_wrap = max(320, self._sidebar_width - 20)
         self._sb_icao_title_lbl = ctk.CTkLabel(
-            gate_card, text="---", font=ctk.CTkFont(size=20, weight="bold"),
-            text_color="#FFFFFF", wraplength=295, justify="center"
+            gate_card, text="---", font=ctk.CTkFont(size=22, weight="bold"),
+            text_color="#FFFFFF", wraplength=lbl_wrap, justify="center"
         )
-        self._sb_icao_title_lbl.pack(anchor="center", padx=14, pady=(14, 4))
+        self._sb_icao_title_lbl.pack(fill="x", padx=10, pady=(16, 4))
 
         self._sb_city_lbl = ctk.CTkLabel(
-            gate_card, text="", font=ctk.CTkFont(size=16, weight="bold"),
-            text_color="#CBD5E1", wraplength=295, justify="center"
+            gate_card, text="", font=ctk.CTkFont(size=17, weight="bold"),
+            text_color="#CBD5E1", wraplength=lbl_wrap, justify="center"
         )
-        self._sb_city_lbl.pack(anchor="center", padx=14, pady=(0, 14))
+        self._sb_city_lbl.pack(fill="x", padx=10, pady=(0, 14))
 
         self._sb_err_container = ctk.CTkFrame(gate_card, fg_color="transparent", height=0, border_width=0)
         self._sb_err_lbl = ctk.CTkLabel(
             self._sb_err_container, text="", text_color="#EF4444",
-            font=ctk.CTkFont(size=11, weight="bold"), wraplength=295, justify="center"
+            font=ctk.CTkFont(size=11, weight="bold"), wraplength=lbl_wrap, justify="center"
         )
         self._sb_err_lbl.pack(anchor="center", padx=14, pady=(0, 8))
 
@@ -4842,6 +6183,7 @@ class GUIApp(ctk.CTk):
         def _on_manual_gsx_sync(event=None):
             if hasattr(self, "backend") and self.backend and hasattr(self.backend, "interop_hub") and self.backend.interop_hub:
                 self.backend.interop_hub.trigger_manual_gsx_sync("arrival")
+                self._check_and_show_gate_toast()
 
         self._sb_gsx_pill = ctk.CTkFrame(
             self._sb_pills_grid, fg_color="#0D435E", corner_radius=8,
@@ -4858,9 +6200,9 @@ class GUIApp(ctk.CTk):
         self._sb_gsx_tip = Tooltip(self._sb_gsx_pill, "Click to manually sync GSX Pro with the arrival stand")
         self._sb_gsx_tip.bind_child(self._sb_gsx_lbl)
 
-        # Card 2: ATC Taxi Clearance & Flight Status Card (Borderless, simplified)
+        # Card 2: ATC Taxi Clearance & Flight Status Card (Borderless, hugs content height)
         route_card = ctk.CTkFrame(sidebar, fg_color="#1B1E24", corner_radius=12, border_width=0)
-        route_card.pack(fill="both", expand=True, pady=(0, 10))
+        route_card.pack(fill="x", expand=False, pady=(0, 10))
         self._sb_route_card = route_card
 
         self.lbl_live_status_pill = ctk.CTkLabel(
@@ -4877,21 +6219,50 @@ class GUIApp(ctk.CTk):
         self._sb_clearance_hdr_lbl.pack(anchor="w", padx=14, pady=(12, 8))
 
         self.clearance_pills_frame = ctk.CTkFrame(route_card, fg_color="transparent", border_width=0)
-        self.clearance_pills_frame.pack(fill="both", expand=True, padx=14, pady=(0, 12))
+        self.clearance_pills_frame.pack(fill="x", expand=False, padx=14, pady=(0, 12))
 
-        # Card 3: Network Traffic & Stand Status Card (Borderless, harmonized with ATC TAXI CLEARANCE)
+        # Card 3: Network Traffic & Stand Status Card (Expands to fill remaining sidebar height + internal vertical scrollbar)
         status_card = ctk.CTkFrame(sidebar, fg_color="#1B1E24", corner_radius=12, border_width=0)
-        status_card.pack(fill="x", pady=(0, 0))
+        status_card.pack(fill="both", expand=True, pady=(0, 0))
         self._sb_status_card = status_card
 
         self._sb_traffic_hdr_lbl = ctk.CTkLabel(
             status_card, text="TRAFFIC & STAND STATUS",
             font=ctk.CTkFont(size=13, weight="bold"), text_color="#FFFFFF"
         )
-        self._sb_traffic_hdr_lbl.pack(anchor="w", padx=14, pady=(12, 8))
+        self._sb_traffic_hdr_lbl.pack(anchor="w", padx=14, pady=(12, 6))
 
-        self.traffic_pills_frame = ctk.CTkFrame(status_card, fg_color="transparent", border_width=0)
-        self.traffic_pills_frame.pack(fill="x", padx=14, pady=(0, 12))
+        self.traffic_pills_frame = ctk.CTkScrollableFrame(
+            status_card,
+            fg_color="transparent",
+            border_width=0,
+            corner_radius=0,
+            scrollbar_button_color="#2B303B",
+            scrollbar_button_hover_color="#578DA8"
+        )
+        self.traffic_pills_frame.pack(fill="both", expand=True, padx=(10, 4), pady=(0, 10))
+
+    def _apply_sidebar_width(self, new_w: int, is_dragging: bool = False):
+        self._sidebar_width = int(new_w)
+        if hasattr(self, "results_frame") and self.results_frame and self.results_frame.winfo_exists():
+            self.results_frame.grid_columnconfigure(0, weight=0, minsize=self._sidebar_width + 10)
+        if hasattr(self, "_sidebar_outer") and self._sidebar_outer and self._sidebar_outer.winfo_exists():
+            self._sidebar_outer.configure(width=self._sidebar_width + 10)
+        if hasattr(self, "sidebar_frame") and self.sidebar_frame and self.sidebar_frame.winfo_exists():
+            self.sidebar_frame.configure(width=self._sidebar_width)
+        lbl_wrap = max(320, self._sidebar_width - 20)
+        if not is_dragging or abs(lbl_wrap - getattr(self, "_last_lbl_wrap", 0)) >= 24:
+            self._last_lbl_wrap = lbl_wrap
+            for lbl_attr in ("_sb_icao_title_lbl", "_sb_city_lbl", "_sb_err_lbl"):
+                w_lbl = getattr(self, lbl_attr, None)
+                if w_lbl and w_lbl.winfo_exists():
+                    w_lbl.configure(wraplength=lbl_wrap)
+        if hasattr(self, "_last_clearance_args") and self._last_clearance_args:
+            c_str, c_cam, c_rwy, c_exit = self._last_clearance_args
+            self._render_clearance_pills(c_str, cam=c_cam, sel_rwy=c_rwy, det_exit=c_exit)
+        if hasattr(self, "_last_traffic_args") and self._last_traffic_args:
+            t_str, t_cam = self._last_traffic_args
+            self._render_traffic_pills(t_str, cam=t_cam)
 
     def _render_clearance_pills(self, clearance_str, cam=None, sel_rwy="", det_exit=""):
         if not hasattr(self, "clearance_pills_frame") or not self.clearance_pills_frame or not self.clearance_pills_frame.winfo_exists():
@@ -5062,6 +6433,10 @@ class GUIApp(ctk.CTk):
             else:
                 pill_items.append(rwy_item)
 
+        self._last_clearance_args = (clearance_str, cam, sel_rwy, det_exit)
+        sb_w = int(getattr(self, "_sidebar_width", 356) or 356)
+        max_row_w = max(295, sb_w - 34)
+
         pool = (
             cam["s1"],
             cam["s2"],
@@ -5070,7 +6445,24 @@ class GUIApp(ctk.CTk):
             cam.get("s5", cam["s2"]),
             cam.get("s6", cam["s3"]),
         )
-        sig = (tuple((k, t) for k, t, _ in pill_items), pool, self.active_phase)
+        # Pre-calculate how pills wrap into rows so dragging the splitter only rebuilds
+        # when a pill actually crosses a row boundary (zero widget churn during smooth drag!)
+        rows_plan = []
+        cur_plan_row = []
+        cur_w = 0
+        for idx, (kind, tok, tip_txt) in enumerate(pill_items):
+            est_w = max(56, len(tok) * 9.5 + 34)
+            if cur_plan_row and (cur_w + est_w > max_row_w):
+                rows_plan.append(cur_plan_row)
+                cur_plan_row = []
+                cur_w = 0
+            cur_plan_row.append((idx, kind, tok, tip_txt))
+            cur_w += est_w + 7
+        if cur_plan_row:
+            rows_plan.append(cur_plan_row)
+
+        plan_sig = tuple(tuple((kind, tok) for _, kind, tok, _ in r) for r in rows_plan)
+        sig = (plan_sig, pool, self.active_phase)
         if getattr(self, "_last_clearance_val", None) == sig and len(self.clearance_pills_frame.winfo_children()) > 0:
             return
         self._last_clearance_val = sig
@@ -5079,57 +6471,55 @@ class GUIApp(ctk.CTk):
         for w in self.clearance_pills_frame.winfo_children():
             w.destroy()
 
-        cur_row = None
-        cur_w = 0
-        max_row_w = 290
-        for idx, (kind, tok, tip_txt) in enumerate(pill_items):
-            est_w = len(tok) * 9 + 28
-            if cur_row is None or (cur_w > 0 and cur_w + est_w > max_row_w):
-                cur_row = ctk.CTkFrame(self.clearance_pills_frame, fg_color="transparent", border_width=0)
-                cur_row.pack(anchor="w", pady=(0, 6))
-                cur_w = 0
-            pill_bg = pool[idx % len(pool)]
-            if kind == "RWY_DROPDOWN":
-                p_frame = ctk.CTkFrame(cur_row, fg_color=pill_bg, corner_radius=8, border_width=0, cursor="hand2")
-                p_frame.pack(side="left", padx=(0, 6))
-                lbl_p = ctk.CTkLabel(
-                    p_frame,
-                    text=tok,
-                    fg_color="transparent",
-                    text_color="#FFFFFF",
-                    font=ctk.CTkFont(size=14, weight="bold"),
-                    padx=14,
-                    pady=6,
-                    cursor="hand2"
-                )
-                lbl_p.pack()
-                self._clearance_rwy_pill_widget = p_frame
-                for cw in (p_frame, lbl_p):
-                    cw.bind("<Button-1>", self._open_clearance_rwy_dropdown)
-                if tip_txt:
-                    t_obj = Tooltip(p_frame, tip_txt)
-                    t_obj.bind_child(lbl_p)
-                    self._clearance_rwy_tooltip = t_obj
-            else:
-                is_stand_pill = bool(re.match(r'^(?:STAND|GATE|PARKING|RAMP|DOCK)\b', str(tok or ""), flags=re.IGNORECASE))
-                lbl_p = ctk.CTkLabel(
-                    cur_row,
-                    text=tok,
-                    fg_color=pill_bg,
-                    text_color="#FFFFFF",
-                    corner_radius=8,
-                    font=ctk.CTkFont(size=14, weight="bold"),
-                    padx=14,
-                    pady=6,
-                    cursor="hand2" if is_stand_pill else ""
-                )
-                lbl_p.pack(side="left", padx=(0, 6))
-                if is_stand_pill:
-                    lbl_p.bind("<Button-1>", lambda e: self._open_manual_stand_picker_modal())
-                    Tooltip(lbl_p, f"{tok} - Click to open Terminal/Gate Selector")
-                elif tip_txt:
-                    Tooltip(lbl_p, tip_txt)
-            cur_w += est_w + 6
+        for plan_row in rows_plan:
+            cur_row = ctk.CTkFrame(self.clearance_pills_frame, fg_color="transparent", border_width=0)
+            cur_row.pack(anchor="w", pady=(0, 8))
+            for idx, kind, tok, tip_txt in plan_row:
+                pill_bg = pool[idx % len(pool)]
+                if kind == "RWY_DROPDOWN":
+                    p_frame = ctk.CTkFrame(cur_row, fg_color=pill_bg, corner_radius=8, border_width=0, cursor="hand2")
+                    p_frame.pack(side="left", padx=(0, 7))
+                    lbl_p = ctk.CTkLabel(
+                        p_frame,
+                        text=tok,
+                        width=54,
+                        height=38,
+                        fg_color="transparent",
+                        text_color="#FFFFFF",
+                        font=ctk.CTkFont(size=14, weight="bold"),
+                        padx=16,
+                        pady=8,
+                        cursor="hand2"
+                    )
+                    lbl_p.pack()
+                    self._clearance_rwy_pill_widget = p_frame
+                    for cw in (p_frame, lbl_p):
+                        cw.bind("<Button-1>", self._open_clearance_rwy_dropdown)
+                    if tip_txt:
+                        t_obj = Tooltip(p_frame, tip_txt)
+                        t_obj.bind_child(lbl_p)
+                        self._clearance_rwy_tooltip = t_obj
+                else:
+                    is_stand_pill = bool(re.match(r'^(?:STAND|GATE|PARKING|RAMP|DOCK)\b', str(tok or ""), flags=re.IGNORECASE))
+                    lbl_p = ctk.CTkLabel(
+                        cur_row,
+                        text=tok,
+                        width=52,
+                        height=38,
+                        fg_color=pill_bg,
+                        text_color="#FFFFFF",
+                        corner_radius=8,
+                        font=ctk.CTkFont(size=14, weight="bold"),
+                        padx=16,
+                        pady=8,
+                        cursor="hand2" if is_stand_pill else ""
+                    )
+                    lbl_p.pack(side="left", padx=(0, 7))
+                    if is_stand_pill:
+                        lbl_p.bind("<Button-1>", lambda e: self._open_manual_stand_picker_modal())
+                        Tooltip(lbl_p, f"{tok} - Click to open Terminal/Gate Selector")
+                    elif tip_txt:
+                        Tooltip(lbl_p, tip_txt)
 
     def _render_traffic_pills(self, traffic_str, cam=None):
         if not hasattr(self, "traffic_pills_frame") or not self.traffic_pills_frame or not self.traffic_pills_frame.winfo_exists():
@@ -5137,9 +6527,13 @@ class GUIApp(ctk.CTk):
         if cam is None:
             cam = self._get_active_camaieu()
 
+        self._last_traffic_args = (traffic_str, cam)
+
         s = str(traffic_str or "VATSIM / IVAO: Stand clear of online traffic").strip()
         tokens = []
+        is_occupied_list = False
         if s.upper().startswith("OCCUPIED") and ":" in s:
+            is_occupied_list = True
             _, tail = s.split(":", 1)
             for part in tail.split(","):
                 p_clean = part.strip()
@@ -5147,9 +6541,14 @@ class GUIApp(ctk.CTk):
                     tokens.append(p_clean)
             if not tokens:
                 tokens = [s]
+                is_occupied_list = False
         else:
             # Single pill when no stands are occupied
             tokens = [s]
+
+        sb_w = int(getattr(self, "_sidebar_width", 356) or 356)
+        avail_w = max(300, sb_w - 44)
+        num_cols = max(3, avail_w // 100)
 
         pool = (
             cam["s1"],
@@ -5159,19 +6558,48 @@ class GUIApp(ctk.CTk):
             cam.get("s5", cam["s2"]),
             cam.get("s6", cam["s3"]),
         )
-        sig = (tuple(tokens), pool)
+        sig = (tuple(tokens), pool, num_cols, is_occupied_list)
         if getattr(self, "_last_traffic_pills_val", None) == sig and len(self.traffic_pills_frame.winfo_children()) > 0:
             return
         self._last_traffic_pills_val = sig
 
+        content_sig = (tuple(tokens), pool, is_occupied_list)
+        existing_widgets = getattr(self, "_traffic_pill_widgets", None) or []
+        if (
+            is_occupied_list
+            and getattr(self, "_last_traffic_content_sig", None) == content_sig
+            and len(existing_widgets) == len(tokens)
+            and all(w.winfo_exists() for w in existing_widgets)
+        ):
+            # Fast in-place re-gridding during splitter drag: zero widget destruction/recreation!
+            for c_idx in range(8):
+                if c_idx < num_cols:
+                    self.traffic_pills_frame.grid_columnconfigure(c_idx, weight=1, uniform="traf_col")
+                else:
+                    self.traffic_pills_frame.grid_columnconfigure(c_idx, weight=0, uniform="")
+            for idx, lbl_p in enumerate(existing_widgets):
+                lbl_p.grid(row=idx // num_cols, column=idx % num_cols, sticky="ew", padx=3, pady=3)
+            return
+
+        self._last_traffic_content_sig = content_sig
+        self._traffic_pill_widgets = []
         for w in self.traffic_pills_frame.winfo_children():
             w.destroy()
 
-        if len(tokens) == 1:
-            cur_row = ctk.CTkFrame(self.traffic_pills_frame, fg_color="transparent", border_width=0)
-            cur_row.pack(anchor="w", pady=(0, 4))
+        def _scroll_traffic_wheel(event):
+            try:
+                if hasattr(self.traffic_pills_frame, "_parent_canvas"):
+                    self.traffic_pills_frame._parent_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            except Exception:
+                pass
+            return "break"
+
+        if not is_occupied_list and len(tokens) == 1:
+            for c_idx in range(max(3, num_cols)):
+                self.traffic_pills_frame.grid_columnconfigure(c_idx, weight=0, uniform="")
+            self.traffic_pills_frame.grid_columnconfigure(0, weight=1)
             lbl_p = ctk.CTkLabel(
-                cur_row,
+                self.traffic_pills_frame,
                 text=tokens[0],
                 fg_color=pool[0],
                 text_color="#FFFFFF",
@@ -5180,31 +6608,36 @@ class GUIApp(ctk.CTk):
                 padx=12,
                 pady=6
             )
-            lbl_p.pack(side="left")
+            lbl_p.grid(row=0, column=0, sticky="w", padx=2, pady=2)
+            lbl_p.bind("<MouseWheel>", _scroll_traffic_wheel)
+            self._traffic_pill_widgets.append(lbl_p)
             return
 
-        cur_row = None
-        cur_w = 0
-        max_row_w = 290
+        # Equal-width multi-column grid (at least 3 columns wide, expanding to 4, 5, 6+ as sidebar widens)
+        for c_idx in range(8):
+            if c_idx < num_cols:
+                self.traffic_pills_frame.grid_columnconfigure(c_idx, weight=1, uniform="traf_col")
+            else:
+                self.traffic_pills_frame.grid_columnconfigure(c_idx, weight=0, uniform="")
+
         for idx, tok in enumerate(tokens):
-            est_w = len(tok) * 8.5 + 28
-            if cur_row is None or (cur_w > 0 and cur_w + est_w > max_row_w):
-                cur_row = ctk.CTkFrame(self.traffic_pills_frame, fg_color="transparent", border_width=0)
-                cur_row.pack(anchor="w", pady=(0, 6))
-                cur_w = 0
+            r_idx = idx // num_cols
+            c_idx = idx % num_cols
             pill_bg = pool[idx % len(pool)]
             lbl_p = ctk.CTkLabel(
-                cur_row,
+                self.traffic_pills_frame,
                 text=tok,
+                height=28,
                 fg_color=pill_bg,
                 text_color="#FFFFFF",
-                corner_radius=8,
-                font=ctk.CTkFont(size=13, weight="bold"),
-                padx=14,
-                pady=6
+                corner_radius=7,
+                font=ctk.CTkFont(size=11, weight="bold"),
+                padx=4,
+                pady=2
             )
-            lbl_p.pack(side="left", padx=(0, 6))
-            cur_w += est_w + 6
+            lbl_p.grid(row=r_idx, column=c_idx, sticky="ew", padx=3, pady=3)
+            lbl_p.bind("<MouseWheel>", _scroll_traffic_wheel)
+            self._traffic_pill_widgets.append(lbl_p)
 
     def _update_sidebar_in_place(self, airport_data, result):
         self._ensure_sidebar_built()
@@ -5221,7 +6654,11 @@ class GUIApp(ctk.CTk):
         term_str = _clean_terminal_label(airport_data.get("terminal") or "MAIN APRON").upper()
 
         icao_code = str(airport_data.get('icao') or '').strip()
-        apt_name = str(airport_data.get('name') or '').strip()
+        raw_apt_name = str(airport_data.get('name') or '').strip()
+        if hasattr(self, "backend") and self.backend and hasattr(self.backend, "get_airport_display_name"):
+            apt_name = self.backend.get_airport_display_name(icao_code, raw_apt_name)
+        else:
+            apt_name = raw_apt_name
         icao_title = f"{icao_code} - {apt_name}" if apt_name else icao_code
         self._sb_icao_title_lbl.configure(text=icao_title)
 
@@ -5230,7 +6667,7 @@ class GUIApp(ctk.CTk):
             city_str = self.backend.get_airport_city(icao_code, lat=airport_data.get("lat"), lon=airport_data.get("lon"))
         if city_str:
             self._sb_city_lbl.configure(text=city_str)
-            self._sb_city_lbl.pack(anchor="center", padx=14, pady=(0, 14), after=self._sb_icao_title_lbl)
+            self._sb_city_lbl.pack(fill="x", padx=10, pady=(0, 14), after=self._sb_icao_title_lbl)
         else:
             self._sb_city_lbl.pack_forget()
 
@@ -5274,25 +6711,27 @@ class GUIApp(ctk.CTk):
             self._sb_wingspan_pill.grid_remove()
 
         raw_gate_src = str(airport_data.get("gate_source") or "GateFinder").strip()
+        raw_rwy_src = str(airport_data.get("atc_runway_source") or airport_data.get("runway_source") or "").strip()
         src_u = raw_gate_src.upper()
-        if "BEYOND" in src_u:
-            clean_src = "BeyondATC"
-            src_tip = f"{raw_gate_src}: Stand automatically synchronized from BeyondATC ATC assignment."
-        elif "SAYINTENTIONS" in src_u:
-            clean_src = "SayIntentions.AI"
-            src_tip = f"{raw_gate_src}: Stand automatically synchronized from SayIntentions.AI ATC assignment."
-        elif "MANUAL" in src_u:
+        rwy_src_u = raw_rwy_src.upper()
+        if "MANUAL" in src_u:
             clean_src = "Manual Selection"
             src_tip = "Manual Selection: Stand manually chosen by you on the ground chart or stand list."
-        elif "LIVE" in src_u or "PARKED" in src_u:
-            clean_src = "MSFS Live"
-            src_tip = f"{raw_gate_src}: Stand detected from your live aircraft position in MSFS."
+        elif "BEYOND" in src_u or "BEYOND" in rwy_src_u:
+            clean_src = "BeyondATC"
+            src_tip = "BeyondATC: Active clearance / stand synchronized with BeyondATC."
+        elif "SAYINTENTIONS" in src_u or "SAYINTENTIONS" in rwy_src_u:
+            clean_src = "SayIntentions.AI"
+            src_tip = "SayIntentions.AI: Active clearance / stand synchronized with SayIntentions.AI."
+        elif "REASSIGNED" in src_u:
+            clean_src = "VATSIM / IVAO"
+            src_tip = "VATSIM / IVAO: Stand dynamically reassigned to avoid online traffic conflict."
         else:
             clean_src = "GateFinder"
             if "TURNAROUND" in src_u:
-                src_tip = "GateFinder (Turnaround Stand): Stand automatically kept from your previous arrival or live MSFS parked position for a seamless turnaround."
+                src_tip = "GateFinder (Turnaround Stand): Stand automatically kept from your previous arrival or parked position for a seamless turnaround."
             else:
-                src_tip = "GateFinder: Stand automatically selected by GateFinder's smart dispatch engine (airline, terminal, aircraft wingspan, and online traffic)."
+                src_tip = "GateFinder: Stand and routing managed by GateFinder's smart dispatch engine."
         self._sb_source_pill.configure(fg_color=cam["s4"])
         self._sb_source_lbl.configure(text=clean_src, text_color="#FFFFFF")
         self._sb_source_tip.text = src_tip
@@ -5401,7 +6840,7 @@ class GUIApp(ctk.CTk):
             self._lbl_strip_cs = ctk.CTkLabel(
                 self.flight_strip_frame, text=cs_str, height=46,
                 fg_color=cam["s2"], text_color="#FFFFFF", corner_radius=8,
-                font=ctk.CTkFont(size=14, weight="bold"), padx=12, pady=6
+                font=ctk.CTkFont(size=14, weight="bold"), padx=14, pady=6
             )
             if cs_str:
                 self._lbl_strip_cs.pack(side="left", padx=(0, 8))
@@ -5409,7 +6848,7 @@ class GUIApp(ctk.CTk):
             self._lbl_strip_reg = ctk.CTkLabel(
                 self.flight_strip_frame, text=reg_str, height=46,
                 fg_color=cam["s3"], text_color="#FFFFFF", corner_radius=8,
-                font=ctk.CTkFont(size=14, weight="bold"), padx=12, pady=6
+                font=ctk.CTkFont(size=14, weight="bold"), padx=14, pady=6
             )
             if reg_str:
                 self._lbl_strip_reg.pack(side="left", padx=(0, 8))
@@ -5417,7 +6856,7 @@ class GUIApp(ctk.CTk):
             self._lbl_strip_ac = ctk.CTkLabel(
                 self.flight_strip_frame, text=ac_str, height=46,
                 fg_color=cam["s4"], text_color="#FFFFFF", corner_radius=8,
-                font=ctk.CTkFont(size=14, weight="bold"), padx=12, pady=6
+                font=ctk.CTkFont(size=14, weight="bold"), padx=14, pady=6
             )
             self._lbl_strip_ac.pack(side="left")
             self._last_strip_vals = strip_sig
@@ -5496,8 +6935,8 @@ class GUIApp(ctk.CTk):
         # Keep sync loop signature up-to-date so check_sync_loop never double-renders 200ms after a click
         self._last_rendered_signature = (
             result.get("aircraft"), result.get("airline"),
-            dep.get("icao"), dep.get("gate"), dep.get("gate_source"), dep.get("selected_runway"), dep.get("atc_runway"), tuple(dep.get("atc_taxi_via") or ()), dep.get("bypassed_summary"),
-            arr.get("icao"), arr.get("gate"), arr.get("gate_source"), arr.get("selected_runway"), arr.get("atc_runway"), tuple(arr.get("atc_taxi_via") or ()), arr.get("bypassed_summary"),
+            dep.get("icao"), dep.get("gate"), dep.get("gate_source"), dep.get("atc_runway_source"), dep.get("selected_runway"), dep.get("atc_runway"), tuple(dep.get("atc_taxi_via") or ()), dep.get("bypassed_summary"),
+            arr.get("icao"), arr.get("gate"), arr.get("gate_source"), arr.get("atc_runway_source"), arr.get("selected_runway"), arr.get("atc_runway"), tuple(arr.get("atc_taxi_via") or ()), arr.get("bypassed_summary"),
             self.active_phase, eff_map_hib, show_maps_cfg, is_airborne
         )
         self._last_route_cam_key = (

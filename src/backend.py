@@ -27,7 +27,9 @@ from SimConnect.scdefs import (
     SIMOBJECT_TYPE_AIRCRAFT,
     PERIOD_SIM_FRAME,
     DATATYPE_FLOAT64,
+    DATATYPE_INT32,
     DATA_REQUEST_FLAG_CHANGED,
+    DATA_REQUEST_FLAG_TAGGED,
 )
 
 AIRCRAFT_WINGSPANS = {
@@ -1510,6 +1512,55 @@ def is_ga_ramp_gate(name, terminal="", g_type="", is_cargo=False):
         
     return False
 
+
+def are_mars_related_stands(name_a, name_b, dist_m, user_wingspan=36.0):
+    """
+    Determines whether stand `name_b` at distance `dist_m` (meters) from `name_a`
+    is an overlapping / MARS (Multiple Aircraft Ramp System) twin or triple stand
+    whose occupancy physically conflicts with an aircraft of `user_wingspan` on `name_a`.
+    Examples:
+      - LFPO Orly: A4 <-> A41, A3 <-> A31
+      - Letter-suffixed split stands: 10 <-> 10L / 10R, E14 <-> E14A / E14B
+      - Geometric wingtip collision overlap (< max(36.5m, user_wingspan/2 + 18.5m))
+    """
+    if dist_m is None or dist_m <= 0.2:
+        return False
+    tok_a = clean_gate_token(name_a)
+    tok_b = clean_gate_token(name_b)
+    if not tok_a or not tok_b or tok_a == tok_b:
+        return False
+
+    try:
+        ws = float(user_wingspan or 36.0)
+    except (ValueError, TypeError):
+        ws = 36.0
+    half_u = max(17.5, ws * 0.5)
+    geom_overlap_m = max(36.5, half_u + 18.5)
+    if dist_m <= geom_overlap_m:
+        return True
+
+    m_a = re.match(r'^([A-Z]*)(\d+)([A-Z]*)$', tok_a)
+    m_b = re.match(r'^([A-Z]*)(\d+)([A-Z]*)$', tok_b)
+    if m_a and m_b:
+        pa, da, sa = m_a.groups()
+        pb, db, sb = m_b.groups()
+        if pa == pb:
+            # 1. Same base number with L/R/A/B/C suffix (e.g. 12 vs 12L/12R, A4 vs A4A)
+            if da == db and dist_m <= 65.0:
+                return True
+            # 2. Parent number vs sub-digit stand (e.g. A4 vs A41/A42, A3 vs A31/A32)
+            if ((len(db) == len(da) + 1 and db.startswith(da)) or (len(da) == len(db) + 1 and da.startswith(db))) and dist_m <= 55.0:
+                return True
+            # 3. Sub-stands sharing the same parent prefix digit on the same bay (e.g. A41 vs A42)
+            if len(da) >= 2 and len(db) == len(da) and da[:-1] == db[:-1]:
+                try:
+                    if abs(int(da) - int(db)) == 1 and dist_m <= 42.0:
+                        return True
+                except ValueError:
+                    pass
+    return False
+
+
 class SimConnectManager:
     def __init__(self, backend):
         self.backend = backend
@@ -1524,18 +1575,27 @@ class SimConnectManager:
         self.in_menu = False
         self.dep_gate_name = None
         self.dep_coords = None
+        self.dep_mars_stands = []
+        self.dep_user_was_parked = False
         self.arr_gate_name = None
         self.arr_coords = None
+        self.arr_mars_stands = []
+        self.arr_icao = None
+        self.arr_protected_history = []
+        self.user_wingspan = 36.0
         self.dep_loop_active = False
         self.arr_loop_active = False
         self.dep_cleared = False
         self.arr_cleared = False
         self.ai_def_id = None
+        self.ai_evict_def_id = None
+        self.user_object_id = None
         self.req_id_counter = 1000
         self.lock = threading.Lock()
         self._last_check_time = 0
         self._active_query_req_id = None
         self._active_query_target_coords = None
+        self._active_query_mars_stands = []
         self._lvar_write_queue = []
         self._event_write_queue = []
         self._lvar_def_ids = {}
@@ -1548,10 +1608,66 @@ class SimConnectManager:
             "search_gen": 0.0,
         }
         self.gsx_dd = None
+        self._msfs_was_running = False
 
         self._log("SimConnectManager initialized.")
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
+
+    def _is_msfs_process_running(self) -> bool:
+        try:
+            import ctypes
+            from ctypes import wintypes
+            TH32CS_SNAPPROCESS = 0x00000002
+
+            class PROCESSENTRY32W(ctypes.Structure):
+                _fields_ = [
+                    ("dwSize", wintypes.DWORD),
+                    ("cntUsage", wintypes.DWORD),
+                    ("th32ProcessID", wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t),
+                    ("th32ModuleID", wintypes.DWORD),
+                    ("cntThreads", wintypes.DWORD),
+                    ("th32ParentProcessID", wintypes.DWORD),
+                    ("pcPriClassBase", ctypes.c_long),
+                    ("dwFlags", wintypes.DWORD),
+                    ("szExeFile", ctypes.c_wchar * 260),
+                ]
+
+            k32 = ctypes.windll.kernel32
+            h_snap = k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+            if h_snap == -1 or h_snap is None:
+                return False
+            try:
+                pe = PROCESSENTRY32W()
+                pe.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+                if k32.Process32FirstW(h_snap, ctypes.byref(pe)):
+                    while True:
+                        exe_name = (pe.szExeFile or "").lower()
+                        if exe_name in ("flightsimulator2024.exe", "flightsimulator.exe"):
+                            return True
+                        if not k32.Process32NextW(h_snap, ctypes.byref(pe)):
+                            break
+            finally:
+                k32.CloseHandle(h_snap)
+            return False
+        except Exception:
+            return False
+
+    def _check_auto_quit_if_msfs_closed(self):
+        try:
+            if not self.backend.config.settings.get("auto_quit_with_msfs", False):
+                return
+            if self._is_msfs_process_running():
+                self._msfs_was_running = True
+                return
+            if self._msfs_was_running:
+                time.sleep(2.0)
+                if not self._is_msfs_process_running() and self.backend.config.settings.get("auto_quit_with_msfs", False):
+                    self._log("MSFS process closed and auto_quit_with_msfs is enabled. Exiting GateFinder...")
+                    os._exit(0)
+        except Exception:
+            pass
 
     def set_lvar(self, lvar_name: str, value: float):
         if not lvar_name:
@@ -1671,32 +1787,125 @@ class SimConnectManager:
             self.req_id_counter = 1000
         return self.req_id_counter
 
+    def _find_overlapping_mars_stands(self, apt_dict, user_wingspan=36.0):
+        if not apt_dict or not isinstance(apt_dict, dict):
+            return []
+        g_name = str(apt_dict.get("gate") or "").strip()
+        g_lat = apt_dict.get("lat")
+        g_lon = apt_dict.get("lon")
+        icao = str(apt_dict.get("icao") or "").strip().upper()
+        if not g_name or g_lat is None or g_lon is None:
+            return []
+        try:
+            g_lat_f = float(g_lat)
+            g_lon_f = float(g_lon)
+        except (ValueError, TypeError):
+            return []
+
+        candidates = {}
+        chart_stands = (apt_dict.get("chart_data") or {}).get("stands") or []
+        for st in chart_stands:
+            s_ref = str(st.get("ref") or st.get("name") or "").strip()
+            slat, slon = st.get("lat"), st.get("lon")
+            if s_ref and slat is not None and slon is not None:
+                tok = clean_gate_token(s_ref)
+                if tok and tok not in candidates:
+                    candidates[tok] = (s_ref, float(slat), float(slon))
+
+        if icao and hasattr(self, "backend") and self.backend:
+            coherent_map = getattr(self.backend, "coherent_airports", {}) or {}
+            for db in (coherent_map.get(icao), self.backend.data.get(icao), self.backend.builtin_data.get(icao)):
+                if not db or not isinstance(db, dict):
+                    continue
+                for _, al_list in db.items():
+                    if not isinstance(al_list, list):
+                        continue
+                    for g in al_list:
+                        s_ref = str(g.get("name") or "").strip()
+                        slat, slon = g.get("lat"), g.get("lon")
+                        if s_ref and slat is not None and slon is not None:
+                            tok = clean_gate_token(s_ref)
+                            if tok and tok not in candidates:
+                                candidates[tok] = (s_ref, float(slat), float(slon))
+
+        mars_list = []
+        for tok, (s_ref, slat, slon) in candidates.items():
+            d_m = self._haversine(g_lat_f, g_lon_f, slat, slon)
+            if are_mars_related_stands(g_name, s_ref, d_m, user_wingspan=user_wingspan):
+                mars_list.append({
+                    "name": s_ref,
+                    "lat": slat,
+                    "lon": slon,
+                    "dist_m": round(d_m, 1)
+                })
+        mars_list.sort(key=lambda x: x["dist_m"])
+        return mars_list
+
     def register_flight(self, flight_data):
         if not flight_data:
             self._log("register_flight called with no flight data.")
             return
         dep = flight_data.get("departure")
         arr = flight_data.get("arrival")
+        try:
+            ws = float(flight_data.get("aircraft_wingspan") or 36.0)
+        except (ValueError, TypeError):
+            ws = 36.0
         with self.lock:
+            self.user_wingspan = ws
             self.dep_cleared = False
             self.arr_cleared = False
+            self.dep_user_was_parked = False
             if dep and dep.get("gate_coords_found") and dep.get("lat") is not None:
                 self.dep_gate_name = dep.get("gate")
                 self.dep_coords = (dep.get("lat"), dep.get("lon"))
+                self.dep_mars_stands = self._find_overlapping_mars_stands(dep, user_wingspan=ws)
+                dep["mars_protected_stands"] = [m["name"] for m in self.dep_mars_stands]
                 self.dep_loop_active = True
-                self._log(f"Departure gate registered: {self.dep_gate_name} @ {self.dep_coords}")
+                mars_names = ", ".join(f"{m['name']} ({m['dist_m']}m)" for m in self.dep_mars_stands) or "none"
+                self._log(f"Departure gate registered: {self.dep_gate_name} @ {self.dep_coords} | MARS overlapping stands: {mars_names}")
             else:
                 self.dep_coords = None
+                self.dep_mars_stands = []
                 self.dep_loop_active = False
                 self._log("Departure gate not registered (no coordinates).")
 
             if arr and arr.get("gate_coords_found") and arr.get("lat") is not None:
+                arr_icao_cur = str(arr.get("icao") or "").strip().upper()
+                if arr_icao_cur != self.arr_icao:
+                    self.arr_icao = arr_icao_cur
+                    self.arr_protected_history = []
                 self.arr_gate_name = arr.get("gate")
-                self.arr_coords = (arr.get("lat"), arr.get("lon"))
+                self.arr_coords = (float(arr.get("lat")), float(arr.get("lon")))
+                cur_tok = clean_gate_token(self.arr_gate_name or "")
+                if cur_tok and not any(clean_gate_token(h.get("name", "")) == cur_tok for h in self.arr_protected_history):
+                    self.arr_protected_history.append({
+                        "name": self.arr_gate_name,
+                        "lat": self.arr_coords[0],
+                        "lon": self.arr_coords[1],
+                    })
+                mars_base = self._find_overlapping_mars_stands(arr, user_wingspan=ws)
+                seen_mars_toks = {clean_gate_token(m["name"]) for m in mars_base}
+                for h_st in self.arr_protected_history:
+                    h_tok = clean_gate_token(h_st["name"])
+                    if h_tok and h_tok != cur_tok and h_tok not in seen_mars_toks:
+                        seen_mars_toks.add(h_tok)
+                        d_hist = self._haversine(self.arr_coords[0], self.arr_coords[1], h_st["lat"], h_st["lon"])
+                        mars_base.append({
+                            "name": h_st["name"],
+                            "lat": h_st["lat"],
+                            "lon": h_st["lon"],
+                            "dist_m": round(d_hist, 1),
+                        })
+                self.arr_mars_stands = mars_base
+                arr["mars_protected_stands"] = [m["name"] for m in self.arr_mars_stands]
                 self.arr_loop_active = True
-                self._log(f"Arrival gate registered: {self.arr_gate_name} @ {self.arr_coords}")
+                self._last_check_time = 0
+                mars_names = ", ".join(f"{m['name']} ({m['dist_m']}m)" for m in self.arr_mars_stands) or "none"
+                self._log(f"Arrival gate registered: {self.arr_gate_name} @ {self.arr_coords} | Protected/MARS stands: {mars_names}")
             else:
                 self.arr_coords = None
+                self.arr_mars_stands = []
                 self.arr_loop_active = False
                 self._log("Arrival gate not registered (no coordinates).")
 
@@ -1713,21 +1922,54 @@ class SimConnectManager:
         c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - a))
         return R * c
 
+    def _evict_ai_simobject(self, ai_id: int):
+        """
+        Removes or teleports an AI aircraft off a protected stand.
+        1. Calls `AIRemoveObject` (works for native MSFS traffic).
+        2. Calls `SetDataOnSimObject` on `self.ai_evict_def_id` to teleport the aircraft to
+           (0.0, 0.0, -20000.0 ft), which bypasses SimConnect's creator-handle restriction
+           when the AI aircraft was spawned by an external injector (BeyondATC, FSLTL, AIG).
+        """
+        import ctypes
+        delete_req_id = self._next_req_id()
+        try:
+            self.sm.AIRemoveObject(ai_id, delete_req_id)
+        except Exception:
+            pass
+        if self.ai_evict_def_id is not None:
+            try:
+                evict_vec = (ctypes.c_double * 3)(0.0, 0.0, -20000.0)
+                self.sm.SetDataOnSimObject(
+                    self.ai_evict_def_id,
+                    ai_id,
+                    0,
+                    0,
+                    ctypes.sizeof(evict_vec),
+                    ctypes.cast(ctypes.byref(evict_vec), ctypes.c_void_p)
+                )
+            except Exception as ev_err:
+                self._log(f"SetDataOnSimObject eviction fallback warning for {ai_id}: {ev_err}")
+
     def _on_bytype_recv(self, recv) -> bool:
         import ctypes
 
         with self.lock:
             active_req_id = self._active_query_req_id
             target_coords = self._active_query_target_coords
+            target_mars = list(self._active_query_mars_stands or [])
+            user_ws = float(self.user_wingspan or 36.0)
+            known_user_id = self.user_object_id
 
         if active_req_id is None or recv.dwRequestID != active_req_id:
             return False
 
         ai_id = recv.dwObjectID
-        if ai_id == 0 or ai_id == OBJECT_ID_USER:
+        if ai_id == 0 or ai_id == OBJECT_ID_USER or (known_user_id is not None and ai_id == known_user_id):
             return True
 
         offset = RECV_SIMOBJECT_DATA.dwData.offset
+        gs_val = 0.0
+        is_user_sim = 0
         try:
             ptr_lat = ctypes.cast(ctypes.byref(recv, offset), ctypes.POINTER(ctypes.c_double))
             lat_val = ptr_lat[0]
@@ -1735,41 +1977,81 @@ class SimConnectManager:
 
             ptr_lon = ctypes.cast(ctypes.byref(recv, offset), ctypes.POINTER(ctypes.c_double))
             lon_val = ptr_lon[0]
+            offset += ctypes.sizeof(ctypes.c_double)
+
+            try:
+                ptr_gs = ctypes.cast(ctypes.byref(recv, offset), ctypes.POINTER(ctypes.c_double))
+                gs_val = float(ptr_gs[0])
+                offset += ctypes.sizeof(ctypes.c_double)
+            except Exception:
+                gs_val = 0.0
+
+            try:
+                ptr_usr = ctypes.cast(ctypes.byref(recv, offset), ctypes.POINTER(ctypes.c_int32))
+                is_user_sim = int(ptr_usr[0])
+            except Exception:
+                is_user_sim = 0
         except Exception as err:
             self._log(f"Error unpacking AI position: {err}")
             return True
 
+        # Layer 1 self-protection: SimConnect 'IS USER SIM' flag
+        if is_user_sim != 0:
+            self.user_object_id = ai_id
+            return True
+
+        # Layer 2 self-protection: 18.0m radius around the user's live GPS coordinates
         if self.user_lat is not None and self.user_lon is not None:
             u_dist = self._haversine(lat_val, lon_val, self.user_lat, self.user_lon)
-            if u_dist < 5.0:
+            if u_dist < 18.0:
                 return True
 
         if target_coords:
             dist = self._haversine(lat_val, lon_val, target_coords[0], target_coords[1])
-            self._log(f"Found AI aircraft near target {target_coords} at {dist:.1f}m distance")
+            mars_enabled = bool(self.backend.config.settings.get("mars_overlap_protection", True))
+            should_delete = False
+            delete_reason = ""
+
             if dist < 25.0:
-                self._log(f"Deleting AI aircraft {ai_id} occupying gate ({dist:.1f}m away)")
+                should_delete = True
+                delete_reason = f"occupying primary gate ({dist:.1f}m away)"
+            elif mars_enabled:
+                # 1. Check MARS / overlapping twin or triple stands (and previously assigned arrival stands)
+                for m_st in target_mars:
+                    m_dist = self._haversine(lat_val, lon_val, m_st["lat"], m_st["lon"])
+                    if m_dist < 25.0 and gs_val <= 6.0:
+                        should_delete = True
+                        delete_reason = f"occupying protected/MARS stand {m_st['name']} ({m_dist:.1f}m from {m_st['name']}, {dist:.1f}m from primary)"
+                        break
+                # 2. Geometric wingtip collision envelope for stationary/parked AI aircraft
+                if not should_delete and gs_val <= 2.5:
+                    wingtip_envelope_m = max(36.5, (user_ws * 0.5) + 18.5)
+                    if dist < wingtip_envelope_m:
+                        should_delete = True
+                        delete_reason = f"parked inside wingtip overlap zone ({dist:.1f}m < {wingtip_envelope_m:.1f}m, gs={gs_val:.1f}kt)"
+
+            if should_delete:
+                self._log(f"Deleting AI aircraft {ai_id} {delete_reason}")
                 try:
-                    delete_req_id = self._next_req_id()
-                    self.sm.AIRemoveObject(ai_id, delete_req_id)
-                    # Mark as cleared
+                    self._evict_ai_simobject(ai_id)
                     if self.dep_loop_active and target_coords == self.dep_coords:
                         self.dep_cleared = True
-                        self._log("Cleared departure gate.")
+                        self._log("Cleared departure gate / MARS zone.")
                     elif self.arr_loop_active and target_coords == self.arr_coords:
                         self.arr_cleared = True
-                        self._log("Cleared arrival gate.")
+                        self._log("Cleared arrival gate / MARS zone.")
                 except Exception as ex:
                     self._log(f"Failed to delete AI aircraft {ai_id}: {ex}")
         return True
 
-    def _query_and_clear_gate(self, gate_coords, radius):
+    def _query_and_clear_gate(self, gate_coords, radius, mars_stands=None):
         if not self.connected or not self.sm or self.ai_def_id is None:
             return
         req_id = self._next_req_id()
         with self.lock:
             self._active_query_req_id = req_id
             self._active_query_target_coords = gate_coords
+            self._active_query_mars_stands = list(mars_stands or [])
         try:
             self.sm.RequestDataOnSimObjectType(
                 req_id,
@@ -1786,7 +2068,7 @@ class SimConnectManager:
         if not self.backend.config.settings.get("auto_clear_ai", True):
             return
 
-        if self.user_lat is None or self.user_lon is None:
+        if self.user_lat is None or self.user_lon is None or self.in_menu:
             return
 
         now = time.time()
@@ -1794,23 +2076,23 @@ class SimConnectManager:
             return
         self._last_check_time = now
 
-        self._log(f"Tick: user_pos=({self.user_lat:.6f}, {self.user_lon:.6f}), dep_loop={self.dep_loop_active}, arr_loop={self.arr_loop_active}")
-
         if self.dep_coords and self.dep_loop_active:
             user_dist = self._haversine(self.user_lat, self.user_lon, self.dep_coords[0], self.dep_coords[1])
-            self._log(f"Departure loop: user is {user_dist:.1f}m away from departure gate.")
-            if user_dist > 50.0:
-                self._log(f"User is {user_dist:.1f}m away. Deactivating departure loop.")
+            if user_dist <= 90.0:
+                self.dep_user_was_parked = True
+                self._query_and_clear_gate(self.dep_coords, radius=200, mars_stands=self.dep_mars_stands)
+            elif self.dep_user_was_parked and user_dist > 150.0:
+                self._log(f"User taxied away ({user_dist:.1f}m from departure stand). Deactivating departure loop.")
                 self.dep_loop_active = False
-            else:
-                self._query_and_clear_gate(self.dep_coords, radius=100)
+            elif not self.dep_user_was_parked and user_dist < 4000.0:
+                # Pre-clear departure gate & MARS stands while at the departure airport before/during spawn
+                self._query_and_clear_gate(self.dep_coords, radius=4500, mars_stands=self.dep_mars_stands)
 
         if self.arr_coords and self.arr_loop_active:
             user_dist = self._haversine(self.user_lat, self.user_lon, self.arr_coords[0], self.arr_coords[1])
-            self._log(f"Arrival loop: user is {user_dist:.1f}m away from arrival gate.")
             if user_dist < 27780.0: # 15 NM
                 query_radius = 30000 if user_dist > 500.0 else 500
-                self._query_and_clear_gate(self.arr_coords, radius=query_radius)
+                self._query_and_clear_gate(self.arr_coords, radius=query_radius, mars_stands=self.arr_mars_stands)
 
     def _run(self):
         self.user_dd = None
@@ -1818,18 +2100,47 @@ class SimConnectManager:
             if not self.connected:
                 try:
                     self._log("Attempting to connect to MSFS...")
-                    self.sm = SC(name="GateFinder V1.8")
+                    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+                        try:
+                            import shutil
+                            exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+                            for cand_cfg in (
+                                os.path.join(exe_dir, "SimConnect.cfg"),
+                                os.path.join(os.getcwd(), "SimConnect.cfg"),
+                            ):
+                                if os.path.isfile(cand_cfg):
+                                    for dst_cfg in (
+                                        os.path.join(sys._MEIPASS, "SimConnect", "SimConnect.cfg"),
+                                        os.path.join(sys._MEIPASS, "SimConnect.cfg"),
+                                    ):
+                                        shutil.copy2(cand_cfg, dst_cfg)
+                                    self._log(f"Loaded custom SimConnect.cfg from {cand_cfg}")
+                                    break
+                        except Exception:
+                            pass
+                    DataDefinition._instances.clear()
+                    self.sm = SC(name="GateFinder V2.0")
                     self.connected = True
+                    self._msfs_was_running = True
                     self._log("Connected to MSFS successfully!")
                     self.sm.add_receiver(RECV_SIMOBJECT_DATA_BYTYPE, self._on_bytype_recv)
                     
-                    # Setup AI query definitions
+                    # Setup AI query definitions (Lat, Lon, Groundspeed, IsUserSim for MARS stationary check)
                     ai_simvars = [
                         {"name": "PLANE LATITUDE", "units": "degrees"},
-                        {"name": "PLANE LONGITUDE", "units": "degrees"}
+                        {"name": "PLANE LONGITUDE", "units": "degrees"},
+                        {"name": "GROUND VELOCITY", "units": "knots"},
+                        {"name": "IS USER SIM", "units": "bool", "dtyp": DATATYPE_INT32}
                     ]
                     ai_dd = DataDefinition.create(self.sm, ai_simvars)
                     self.ai_def_id = ai_dd.id
+
+                    ai_evict_dd = DataDefinition.create(self.sm, [
+                        {"name": "PLANE LATITUDE", "units": "degrees"},
+                        {"name": "PLANE LONGITUDE", "units": "degrees"},
+                        {"name": "PLANE ALTITUDE", "units": "feet"}
+                    ])
+                    self.ai_evict_def_id = ai_evict_dd.id
                     
                     # Setup User Position & Telemetry subscription (PERIOD_SIM_FRAME w/ interval=4 -> ~15 Hz continuous updates)
                     user_simvars = [
@@ -1853,10 +2164,10 @@ class SimConnectManager:
                             {"name": "L:FSDT_GSX_SEARCH_GEN", "units": "number", "dtyp": DATATYPE_FLOAT64, "epsilon": 0},
                         ]
                         self.gsx_dd = DataDefinition(self.sm, 850, gsx_defs)
-                        self.sm.add_receiver_instance(self.gsx_dd)
+                        self.gsx_dd.add_receiver(self.sm, 850)
                         self.sm.RequestDataOnSimObject(
                             850, 850, OBJECT_ID_USER, PERIOD_SIM_FRAME,
-                            DATA_REQUEST_FLAG_CHANGED, 0, 4, 0
+                            DATA_REQUEST_FLAG_CHANGED | DATA_REQUEST_FLAG_TAGGED, 0, 4, 0
                         )
                     except Exception as gsx_err:
                         self.gsx_dd = None
@@ -1867,6 +2178,7 @@ class SimConnectManager:
                     self.gsx_dd = None
                     self.sm = None
                     self._log(f"Connection failed: {e}")
+                    self._check_auto_quit_if_msfs_closed()
                     time.sleep(10)
                     continue
 
@@ -1946,6 +2258,7 @@ class SimConnectManager:
                     try: self.sm.Close()
                     except Exception: pass
                     self.sm = None
+                self._check_auto_quit_if_msfs_closed()
                 time.sleep(5)
 
 BGL_PARKING_NAMES = {
@@ -2036,19 +2349,87 @@ def convert_bgl_entry_to_gate_info(name_idx, number, ptype, radius, lat, lon, ha
     }
     return gate_info, al_clean
 
+class _LazyGSXDataDict(dict):
+    """
+    Fast on-demand GSX profile dictionary: indexes `.ini` filenames in `gsx_profile_path`
+    in < 1ms on startup and lazily parses individual airport `.ini` + companion `.py`
+    files the first time `data.get(icao)`, `icao in data`, or `data[icao]` is accessed.
+    """
+    def __init__(self, backend):
+        super().__init__()
+        self._backend = backend
+        self._ini_index = {}
+        self._loaded_icaos = set()
+        self._lock = threading.RLock()
+
+    def reset_index(self, ini_index):
+        with self._lock:
+            super().clear()
+            self._ini_index = dict(ini_index or {})
+            self._loaded_icaos.clear()
+
+    def _ensure_icao(self, key):
+        if not isinstance(key, str):
+            return
+        icao = key.strip().upper()
+        if not icao or icao in self._loaded_icaos:
+            return
+        with self._lock:
+            if icao in self._loaded_icaos:
+                return
+            self._loaded_icaos.add(icao)
+            paths = self._ini_index.get(icao)
+            if not paths:
+                return
+            merged = {}
+            for fp in paths:
+                try:
+                    icao_gates = self._backend._parse_gsx_ini_file(icao, fp)
+                    if icao_gates:
+                        for al_k, g_list in icao_gates.items():
+                            if al_k not in merged:
+                                merged[al_k] = []
+                            merged[al_k].extend(g_list)
+                except Exception:
+                    pass
+            if merged:
+                super().__setitem__(icao, merged)
+
+    def __contains__(self, key):
+        if super().__contains__(key):
+            return True
+        if isinstance(key, str) and key.strip().upper() in self._ini_index:
+            self._ensure_icao(key)
+            return super().__contains__(key.strip().upper())
+        return False
+
+    def __getitem__(self, key):
+        if not super().__contains__(key):
+            self._ensure_icao(key)
+        return super().__getitem__(key)
+
+    def get(self, key, default=None):
+        if not super().__contains__(key):
+            self._ensure_icao(key)
+        return super().get(key, default)
+
+    def __len__(self):
+        return max(super().__len__(), len(self._ini_index))
+
+
 class GateFinderBackend:
-    def __init__(self, config):
+    def __init__(self, config, defer_heavy_init=False):
         self.config = config
+        self._init_lock = threading.RLock()
+        self._init_done = False
         self.network_checker = OnlineNetworkChecker()
-        self.data = {}
+        self.data = _LazyGSXDataDict(self)
         self.builtin_data = {}
+        self.coherent_airports = {}
         self.airport_names = {}
         self.current_flight_data = None
         self.airline_names = self._load_airlines()
-        self.cloud_ruleset = self._fetch_cloud_ruleset()
-        self._load_builtin_db()
-        self.load_data()
-        self._sync_msfs_community_packages()
+        self.cloud_ruleset = {}
         self.server_thread = None
         self.osm_cache = {}
         self.city_cache = {}
@@ -2057,9 +2438,177 @@ class GateFinderBackend:
         self._logo_fetch_inflight = set()
         self._logo_fetch_failed = set()
         self.logo_generation = 0
-        self.taxi_router = TaxiRouter()
+        self.taxi_router = TaxiRouter(defer_load=defer_heavy_init)
         self.simconnect_manager = SimConnectManager(self)
         self.interop_hub = InteroperabilityHub(self, self.config)
+        if not defer_heavy_init:
+            self.ensure_initialized()
+
+    def ensure_initialized(self, progress_callback=None):
+        if self._init_done:
+            return
+        with self._init_lock:
+            if self._init_done:
+                return
+            if progress_callback:
+                try:
+                    progress_callback(0.05, "Loading airport & GSX stand databases...")
+                except Exception:
+                    pass
+            if not self.cloud_ruleset:
+                self.cloud_ruleset = self._fetch_cloud_ruleset()
+            if not self.builtin_data:
+                self._load_builtin_db()
+            self.load_data()
+            if hasattr(self, "taxi_router") and self.taxi_router:
+                self.taxi_router.ensure_disk_cache_loaded()
+            threading.Thread(target=self._sync_msfs_community_packages, daemon=True).start()
+            self._init_done = True
+
+    OFFICIAL_AIRPORT_NAMES = {
+        "EBBR": "Brussels National",
+        "EBCI": "Brussels South Charleroi",
+        "EBLG": "Liège",
+        "EBAW": "Antwerp International",
+        "EBOS": "Ostend-Bruges International",
+        "ELLX": "Luxembourg Findel",
+        "LFPG": "Paris Charles de Gaulle",
+        "LFPO": "Paris Orly",
+        "LFPB": "Paris Le Bourget",
+        "LFOB": "Paris Beauvais",
+        "LFMN": "Nice Côte d'Azur",
+        "LFML": "Marseille Provence",
+        "LFLL": "Lyon Saint-Exupéry",
+        "LFBO": "Toulouse Blagnac",
+        "LFBD": "Bordeaux Mérignac",
+        "LFRS": "Nantes Atlantique",
+        "LFSB": "EuroAirport Basel-Mulhouse",
+        "LFST": "Strasbourg Entzheim",
+        "LFQQ": "Lille Lesquin",
+        "LFMT": "Montpellier Méditerranée",
+        "LFBZ": "Biarritz Pays Basque",
+        "LFKJ": "Ajaccio Napoléon Bonaparte",
+        "LFKB": "Bastia Poretta",
+        "LFKC": "Calvi Sainte-Catherine",
+        "LFKF": "Figari Sud-Corse",
+        "TFFR": "Pointe-à-Pitre Le Raizet",
+        "TFFF": "Fort-de-France Aimé Césaire",
+        "FMEE": "Roland Garros",
+        "EGLL": "London Heathrow",
+        "EGKK": "London Gatwick",
+        "EGSS": "London Stansted",
+        "EGGW": "London Luton",
+        "EGLC": "London City",
+        "EGCC": "Manchester",
+        "EGBB": "Birmingham",
+        "EGPH": "Edinburgh",
+        "EGPF": "Glasgow International",
+        "EGGD": "Bristol",
+        "EIDW": "Dublin",
+        "LSGG": "Geneva Cointrin",
+        "LSZH": "Zurich Kloten",
+        "EDDF": "Frankfurt Main",
+        "EDDM": "Munich",
+        "EDDB": "Berlin Brandenburg",
+        "EDDL": "Düsseldorf",
+        "EDDH": "Hamburg",
+        "EDDK": "Cologne Bonn",
+        "EDDS": "Stuttgart",
+        "EDDV": "Hannover",
+        "LOWW": "Vienna Schwechat",
+        "LOWI": "Innsbruck Kranebitten",
+        "LOWS": "Salzburg",
+        "EHAM": "Amsterdam Schiphol",
+        "EHRD": "Rotterdam The Hague",
+        "EHEH": "Eindhoven",
+        "LIRF": "Rome Fiumicino",
+        "LIRA": "Rome Ciampino",
+        "LIMC": "Milan Malpensa",
+        "LIML": "Milan Linate",
+        "LIME": "Milan Bergamo",
+        "LIPZ": "Venice Marco Polo",
+        "LIPE": "Bologna Guglielmo Marconi",
+        "LIRQ": "Florence Peretola",
+        "LIRP": "Pisa International",
+        "LIRN": "Naples Capodichino",
+        "LICC": "Catania Fontanarossa",
+        "LICJ": "Palermo Falcone-Borsellino",
+        "LEMD": "Madrid Barajas",
+        "LEBL": "Barcelona El Prat",
+        "LEPA": "Palma de Mallorca",
+        "LEMG": "Málaga Costa del Sol",
+        "LEAL": "Alicante-Elche",
+        "LEVC": "Valencia",
+        "LEZL": "Seville",
+        "GCLP": "Gran Canaria",
+        "GCTS": "Tenerife South",
+        "GCXO": "Tenerife North",
+        "LPPT": "Lisbon Humberto Delgado",
+        "LPPR": "Porto Francisco Sá Carneiro",
+        "LPFR": "Faro",
+        "LPMA": "Madeira Cristiano Ronaldo",
+        "LGAV": "Athens Eleftherios Venizelos",
+        "EKCH": "Copenhagen Kastrup",
+        "ENGM": "Oslo Gardermoen",
+        "ESSA": "Stockholm Arlanda",
+        "EFHK": "Helsinki Vantaa",
+        "BIKF": "Keflavík International",
+        "EPWA": "Warsaw Chopin",
+        "LKPR": "Prague Václav Havel",
+        "LHBP": "Budapest Ferenc Liszt",
+        "LROP": "Bucharest Henri Coandă",
+        "LTFM": "Istanbul",
+        "LTAI": "Antalya",
+        "OMDB": "Dubai International",
+        "OMAA": "Abu Dhabi International",
+        "OTHH": "Doha Hamad International",
+        "KJFK": "New York John F. Kennedy",
+        "KEWR": "Newark Liberty International",
+        "KLGA": "New York LaGuardia",
+        "KBOS": "Boston Logan International",
+        "KIAD": "Washington Dulles International",
+        "KATL": "Atlanta Hartsfield-Jackson",
+        "KMIA": "Miami International",
+        "KMCO": "Orlando International",
+        "KORD": "Chicago O'Hare International",
+        "KDFW": "Dallas/Fort Worth International",
+        "KDEN": "Denver International",
+        "KLAX": "Los Angeles International",
+        "KSFO": "San Francisco International",
+        "KLAS": "Las Vegas Harry Reid",
+        "KSEA": "Seattle-Tacoma International",
+        "CYYZ": "Toronto Pearson International",
+        "CYUL": "Montréal-Trudeau International",
+        "CYVR": "Vancouver International",
+    }
+
+    def get_airport_display_name(self, icao, raw_name=""):
+        icao_u = str(icao or "").strip().upper()
+        if icao_u in self.OFFICIAL_AIRPORT_NAMES:
+            return self.OFFICIAL_AIRPORT_NAMES[icao_u]
+        s = str(raw_name or "").strip()
+        if not s:
+            return ""
+        s_title = s.title()
+        # Expand SimBrief ARINC 424 13-character abbreviations
+        abbrev_map = [
+            (r"\bNatl\.?\b", "National"),
+            (r"\bNat\.?\b", "National"),
+            (r"\bInt'L\.?\b", "International"),
+            (r"\bIntl\.?\b", "International"),
+            (r"\bInt\.?\b", "International"),
+            (r"\bIntercont\.?\b", "Intercontinental"),
+            (r"\bMuni\.?\b", "Municipal"),
+            (r"\bRegl\.?\b", "Regional"),
+            (r"\bMetro\.?\b", "Metropolitan"),
+            (r"\bArpt\.?\b", "Airport"),
+            (r"\bApt\.?\b", "Airport"),
+            (r"\bMem\.?\b", "Memorial"),
+            (r"\bFld\.?\b", "Field"),
+        ]
+        for pat, repl in abbrev_map:
+            s_title = re.sub(pat, repl, s_title, flags=re.IGNORECASE)
+        return s_title
 
     def get_airport_city(self, icao, lat=None, lon=None, ofp_apt_block=None):
         if not icao:
@@ -2854,12 +3403,15 @@ class GateFinderBackend:
 
     def _sync_msfs_community_packages(self):
         """
-        Automatically keeps any installed `wildbill75-gatefinder` folder in MSFS Community / Community2024
-        synchronized with the latest local MSFS_Package files (and updates layout.json file sizes).
+        Automatically keeps any installed `gatefinder-ingame-panel` folder in MSFS Community / Community2024
+        synchronized with the latest local MSFS_Package files (and automatically migrates/removes any legacy
+        `wildbill75-gatefinder` folder).
         """
         import shutil
         from config import find_all_possible_community_folders
-        src_pkg = self._get_resource_file(os.path.join("MSFS_Package", "wildbill75-gatefinder"))
+        src_pkg = self._get_resource_file(os.path.join("MSFS_Package", "gatefinder-ingame-panel"))
+        if not src_pkg or not os.path.isdir(src_pkg):
+            src_pkg = self._get_resource_file("gatefinder-ingame-panel")
         if not src_pkg or not os.path.isdir(src_pkg):
             return
 
@@ -2884,7 +3436,7 @@ class GateFinderBackend:
         except Exception:
             pass
 
-        # 2. Sync to any existing Community / Community2024 folders where wildbill75-gatefinder is installed
+        # 2. Sync to any existing Community / Community2024 folders where gatefinder-ingame-panel (or legacy wildbill75-gatefinder) is installed
         comm_dirs = set()
         for k in ("msfs_community_path", "msfs_community2024_path"):
             val = self.config.settings.get(k, "")
@@ -2904,19 +3456,185 @@ class GateFinderBackend:
                         comm_dirs.add(os.path.normpath(sp))
 
         src_real = os.path.realpath(src_pkg)
+        exe_dir_norm = ""
         if getattr(sys, 'frozen', False):
             exe_dir = os.path.dirname(os.path.abspath(sys.executable))
             if os.path.isdir(exe_dir):
-                comm_dirs.add(os.path.normpath(exe_dir))
+                exe_dir_norm = os.path.normpath(exe_dir)
+                comm_dirs.add(exe_dir_norm)
         for cdir in comm_dirs:
-            dst_pkg = os.path.join(cdir, "wildbill75-gatefinder")
-            if os.path.exists(dst_pkg):
+            legacy_pkg = os.path.join(cdir, "wildbill75-gatefinder")
+            had_legacy = False
+            if os.path.exists(legacy_pkg) or os.path.islink(legacy_pkg):
                 try:
-                    if os.path.realpath(dst_pkg) == src_real:
-                        continue  # Already a symlink/junction to src_pkg
-                    shutil.copytree(src_pkg, dst_pkg, dirs_exist_ok=True)
+                    if os.path.islink(legacy_pkg):
+                        os.unlink(legacy_pkg)
+                    elif os.path.isdir(legacy_pkg):
+                        shutil.rmtree(legacy_pkg)
+                    else:
+                        os.remove(legacy_pkg)
+                    had_legacy = True
                 except Exception:
                     pass
+            dst_pkg = os.path.join(cdir, "gatefinder-ingame-panel")
+            if os.path.exists(dst_pkg) or had_legacy:
+                try:
+                    if os.path.exists(dst_pkg) and os.path.realpath(dst_pkg) == src_real:
+                        continue  # Already a symlink/junction to src_pkg
+                    shutil.copytree(src_pkg, dst_pkg, dirs_exist_ok=True)
+                    if not exe_dir_norm or os.path.normpath(cdir) != exe_dir_norm:
+                        self._apply_fenix_efb_state_to_pkg(dst_pkg, src_pkg=src_pkg)
+                except Exception:
+                    pass
+
+    def _apply_fenix_efb_state_to_pkg(self, dst_pkg: str, src_pkg: str = None):
+        """
+        Ensures `dst_pkg` (inside an MSFS Community folder) either includes or excludes
+        the Fenix A320 EFB VFS override files (`html_ui/Pages/VCockpit/Instruments/FNX32X/...`)
+        and updates `dst_pkg/layout.json` accordingly, based on `fenix_efb_enabled`.
+        """
+        import shutil
+        if not dst_pkg or not os.path.isdir(dst_pkg):
+            return
+        fenix_enabled = bool(self.config.settings.get("fenix_efb_enabled", True))
+        fnx_rel_dir = os.path.join("html_ui", "Pages", "VCockpit", "Instruments", "FNX32X")
+        dst_fnx_dir = os.path.join(dst_pkg, fnx_rel_dir)
+
+        if not src_pkg or not os.path.isdir(src_pkg):
+            src_pkg = self._get_resource_file(os.path.join("MSFS_Package", "gatefinder-ingame-panel"))
+            if not src_pkg or not os.path.isdir(src_pkg):
+                src_pkg = self._get_resource_file("gatefinder-ingame-panel")
+
+        fnx_rel_files = [
+            "html_ui/Pages/VCockpit/Instruments/FNX32X/EFB/EfbHost_Captain.html",
+            "html_ui/Pages/VCockpit/Instruments/FNX32X/EFB/EfbHost_FO.html",
+        ]
+
+        if fenix_enabled:
+            if src_pkg and os.path.isdir(src_pkg):
+                src_fnx_dir = os.path.join(src_pkg, fnx_rel_dir)
+                if os.path.isdir(src_fnx_dir) and os.path.realpath(src_pkg) != os.path.realpath(dst_pkg):
+                    os.makedirs(os.path.dirname(dst_fnx_dir), exist_ok=True)
+                    shutil.copytree(src_fnx_dir, dst_fnx_dir, dirs_exist_ok=True)
+        else:
+            if os.path.exists(dst_fnx_dir):
+                try:
+                    shutil.rmtree(dst_fnx_dir)
+                except Exception:
+                    pass
+
+        layout_path = os.path.join(dst_pkg, "layout.json")
+        if os.path.exists(layout_path):
+            try:
+                with open(layout_path, "r", encoding="utf-8") as f:
+                    layout_data = json.load(f)
+                content = [
+                    e for e in layout_data.get("content", [])
+                    if "FNX32X/" not in str(e.get("path", "")).replace("\\", "/")
+                ]
+                if fenix_enabled:
+                    for rel_f in fnx_rel_files:
+                        full_f = os.path.join(dst_pkg, rel_f.replace("/", os.sep))
+                        if os.path.isfile(full_f):
+                            content.append({
+                                "path": rel_f,
+                                "size": os.path.getsize(full_f),
+                                "date": 133760000000000000,
+                            })
+                for e in content:
+                    full_p = os.path.join(dst_pkg, str(e.get("path", "")).replace("/", os.sep))
+                    if os.path.isfile(full_p):
+                        e["size"] = os.path.getsize(full_p)
+                layout_data["content"] = content
+                with open(layout_path, "w", encoding="utf-8") as f:
+                    json.dump(layout_data, f, indent=2)
+            except Exception:
+                pass
+
+    def is_fenix_efb_installed(self, extra_community_paths=None) -> bool:
+        """Returns True if the Fenix A320 EFB integration files are present in any configured MSFS Community folder."""
+        paths = []
+        for k in ("msfs_community_path", "msfs_community2024_path"):
+            v = str(self.config.settings.get(k, "")).strip()
+            if v:
+                paths.append(v)
+        for p in (extra_community_paths or []):
+            if p and str(p).strip():
+                paths.append(str(p).strip())
+        for cdir in paths:
+            cap_html = os.path.join(
+                cdir, "gatefinder-ingame-panel",
+                "html_ui", "Pages", "VCockpit", "Instruments", "FNX32X", "EFB", "EfbHost_Captain.html"
+            )
+            if os.path.isfile(cap_html):
+                return True
+        return False
+
+    def install_fenix_efb(self, extra_community_paths=None) -> dict:
+        """Installs/enables the Fenix A320 EFB integration inside the user's MSFS Community folder(s)."""
+        import shutil
+        self.config.settings["fenix_efb_enabled"] = True
+        self.config.save()
+
+        src_pkg = self._get_resource_file(os.path.join("MSFS_Package", "gatefinder-ingame-panel"))
+        if not src_pkg or not os.path.isdir(src_pkg):
+            src_pkg = self._get_resource_file("gatefinder-ingame-panel")
+        if not src_pkg or not os.path.isdir(src_pkg):
+            return {"success": False, "error": "Could not locate source 'gatefinder-ingame-panel' package."}
+
+        comm_dirs = []
+        for p in (extra_community_paths or []):
+            if p and os.path.isdir(p) and p not in comm_dirs:
+                comm_dirs.append(p)
+        for k in ("msfs_community_path", "msfs_community2024_path"):
+            v = str(self.config.settings.get(k, "")).strip()
+            if v and os.path.isdir(v) and v not in comm_dirs:
+                comm_dirs.append(v)
+        if not comm_dirs:
+            return {"success": False, "error": "Please select a valid MSFS Community folder path first."}
+
+        installed_in = []
+        errors = []
+        for cdir in comm_dirs:
+            dst_pkg = os.path.join(cdir, "gatefinder-ingame-panel")
+            try:
+                if not os.path.exists(dst_pkg):
+                    shutil.copytree(src_pkg, dst_pkg, dirs_exist_ok=True)
+                self._apply_fenix_efb_state_to_pkg(dst_pkg, src_pkg=src_pkg)
+                installed_in.append(cdir)
+            except Exception as e:
+                errors.append(f"{cdir}: {e}")
+        return {"success": bool(installed_in), "installed_in": installed_in, "errors": errors}
+
+    def uninstall_fenix_efb(self, extra_community_paths=None) -> dict:
+        """Uninstalls/disables the Fenix A320 EFB integration from all MSFS Community folders."""
+        from config import find_all_possible_community_folders
+        self.config.settings["fenix_efb_enabled"] = False
+        self.config.save()
+
+        comm_dirs = []
+        for p in (extra_community_paths or []):
+            if p and os.path.isdir(p) and p not in comm_dirs:
+                comm_dirs.append(p)
+        for k in ("msfs_community_path", "msfs_community2024_path"):
+            v = str(self.config.settings.get(k, "")).strip()
+            if v and os.path.isdir(v) and v not in comm_dirs:
+                comm_dirs.append(v)
+        for p in find_all_possible_community_folders():
+            if p and os.path.isdir(p) and p not in comm_dirs:
+                comm_dirs.append(p)
+
+        removed_from = []
+        errors = []
+        for cdir in comm_dirs:
+            dst_pkg = os.path.join(cdir, "gatefinder-ingame-panel")
+            if os.path.isdir(dst_pkg):
+                try:
+                    self._apply_fenix_efb_state_to_pkg(dst_pkg)
+                    removed_from.append(cdir)
+                except Exception as e:
+                    errors.append(f"{cdir}: {e}")
+        return {"success": len(errors) == 0, "removed_from": removed_from, "errors": errors}
 
     def _get_resource_file(self, filename):
         import sys
@@ -3091,7 +3809,7 @@ class GateFinderBackend:
 
         def _scan_pkg_dir(pkg_path, pkg_name, is_official_dir=False):
             nl = pkg_name.lower()
-            if nl.endswith(".disabled") or nl == "wildbill75-gatefinder":
+            if nl.endswith(".disabled") or nl in ("gatefinder-ingame-panel", "wildbill75-gatefinder"):
                 return
             if is_official_dir and nl.startswith(asobo_prefixes):
                 return
@@ -3625,38 +4343,28 @@ class GateFinderBackend:
         return icao_gates
 
     def load_data(self):
-        gsx_path = self.config.settings["gsx_profile_path"]
-        self.data = {}
+        gsx_path = self.config.settings.get("gsx_profile_path", "")
+        if not isinstance(getattr(self, "data", None), _LazyGSXDataDict):
+            self.data = _LazyGSXDataDict(self)
         self.coherent_airports = {}
         self.airport_names = {}
         self._scan_installed_msfs_packages()
-        if not os.path.exists(gsx_path):
-            return
-
-        for filename in os.listdir(gsx_path):
-            if filename.lower().endswith('.ini'):
-                icao = extract_icao_from_filename(filename)
-                if not icao:
-                    continue
-                filepath = os.path.join(gsx_path, filename)
-                try:
-                    parser = configparser.ConfigParser(interpolation=None)
-                    try:
-                        parser.read(filepath, encoding='utf-8')
-                    except UnicodeDecodeError:
-                        parser.read(filepath, encoding='cp1252')
-                except Exception:
-                    continue
-
-                icao_gates = self._parse_gsx_ini_file(icao, filepath)
-                if icao_gates:
-                    if icao not in self.data:
-                        self.data[icao] = icao_gates
-                    else:
-                        for al_k, g_list in icao_gates.items():
-                            if al_k not in self.data[icao]:
-                                self.data[icao][al_k] = []
-                            self.data[icao][al_k].extend(g_list)
+        ini_index = {}
+        if gsx_path and os.path.exists(gsx_path):
+            try:
+                for filename in os.listdir(gsx_path):
+                    if filename.lower().endswith('.ini'):
+                        icao = extract_icao_from_filename(filename)
+                        if not icao:
+                            continue
+                        icao_u = icao.strip().upper()
+                        filepath = os.path.join(gsx_path, filename)
+                        if icao_u not in ini_index:
+                            ini_index[icao_u] = []
+                        ini_index[icao_u].append(filepath)
+            except Exception:
+                pass
+        self.data.reset_index(ini_index)
 
     def _load_airlines(self):
         return {
@@ -4042,6 +4750,7 @@ class GateFinderBackend:
         icao_u = (icao or "").strip().upper()
         if not icao_u:
             return None
+        self.ensure_initialized()
         if not hasattr(self, "coherent_airports"):
             self.coherent_airports = {}
         if icao_u in self.coherent_airports and self.coherent_airports[icao_u]:
@@ -4313,10 +5022,10 @@ class GateFinderBackend:
             with urllib.request.urlopen(req, timeout=5.0) as response:
                 data = json.loads(response.read().decode('utf-8'))
             origin = data.get('origin', {}).get('icao_code', '')
-            origin_name = data.get('origin', {}).get('name', '').title()
+            origin_name = self.get_airport_display_name(origin, data.get('origin', {}).get('name', ''))
             origin_rwy = data.get('origin', {}).get('plan_rwy', '')
             destination = data.get('destination', {}).get('icao_code', '')
-            dest_name = data.get('destination', {}).get('name', '').title()
+            dest_name = self.get_airport_display_name(destination, data.get('destination', {}).get('name', ''))
             dest_rwy = data.get('destination', {}).get('plan_rwy', '')
             params_block = data.get('params', {}) if isinstance(data.get('params'), dict) else {}
             req_id = str(params_block.get('request_id') or '')
@@ -4352,6 +5061,7 @@ class GateFinderBackend:
                 except Exception:
                     pass
 
+        self.ensure_initialized(progress_callback=_report_progress)
         _report_progress(0.10, "Fetching SimBrief OFP...")
         from concurrent.futures import ThreadPoolExecutor
         check_traffic = self.config.settings.get("check_online_traffic", True)
@@ -4403,11 +5113,13 @@ class GateFinderBackend:
             
         origin = data.get('origin', {}).get('icao_code', '')
         origin_rwy = data.get('origin', {}).get('plan_rwy', '')
-        if origin: self.airport_names[origin] = data.get('origin', {}).get('name', '').title()
+        if origin:
+            self.airport_names[origin] = self.get_airport_display_name(origin, data.get('origin', {}).get('name', ''))
         
         destination = data.get('destination', {}).get('icao_code', '')
         dest_rwy = data.get('destination', {}).get('plan_rwy', '')
-        if destination: self.airport_names[destination] = data.get('destination', {}).get('name', '').title()
+        if destination:
+            self.airport_names[destination] = self.get_airport_display_name(destination, data.get('destination', {}).get('name', ''))
         
         params_block = data.get('params', {}) if isinstance(data.get('params'), dict) else {}
         req_id = str(params_block.get('request_id') or '')
@@ -5038,6 +5750,20 @@ class GateFinderBackend:
                     print(f"Error fetching traffic data: {e}")
                     pilots = []
                 if pilots:
+                    mars_prot = bool(self.config.settings.get("mars_overlap_protection", True))
+                    occ_rad = max(46.0, (float(wingspan or 36.0) * 0.5) + 19.0) if mars_prot else 32.0
+                    direct_occ_stands = []
+                    for g in unique_gates:
+                        glat, glon = g.get('lat'), g.get('lon')
+                        if glat is None or glon is None:
+                            continue
+                        for pilot in pilots:
+                            if self.network_checker.is_pilot_self(pilot, user_lat=u_lat_self, user_lon=u_lon_self, user_callsign=ofp_callsign):
+                                continue
+                            if haversine(glat, glon, pilot["lat"], pilot["lon"]) < 28.0:
+                                direct_occ_stands.append((g['name'], glat, glon, pilot))
+                                break
+
                     clean_gates = []
                     for g in unique_gates:
                         lat, lon = g.get('lat'), g.get('lon')
@@ -5047,10 +5773,17 @@ class GateFinderBackend:
                             for pilot in pilots:
                                 if self.network_checker.is_pilot_self(pilot, user_lat=u_lat_self, user_lon=u_lon_self, user_callsign=ofp_callsign):
                                     continue
-                                if haversine(lat, lon, pilot["lat"], pilot["lon"]) < 50:
+                                if haversine(lat, lon, pilot["lat"], pilot["lon"]) < occ_rad:
                                     occupied = True
                                     occupying_pilot = pilot
                                     break
+                            if not occupied and mars_prot and direct_occ_stands:
+                                for occ_name, olat, olon, opilot in direct_occ_stands:
+                                    d_mars = haversine(lat, lon, olat, olon)
+                                    if are_mars_related_stands(g['name'], occ_name, d_mars, user_wingspan=wingspan):
+                                        occupied = True
+                                        occupying_pilot = opilot
+                                        break
                         if occupied:
                             bypassed.append({
                                 "name": g['name'],
@@ -5270,37 +6003,44 @@ class GateFinderBackend:
                     else:
                         score += 95.0 if has_jw else -40.0
 
-                # 6. ICAO Aircraft Size Class Plateau
+                # 6. ICAO Aircraft Size Class Plateau & MARS Bay Variant Matching
                 if wingspan < 30.0:
                     if g_ws <= 36.5:
-                        score += 68.0
+                        score += 75.0
                     elif g_ws <= 45.0:
-                        score += 45.0
+                        score += 35.0
                     elif g_ws <= 53.0:
-                        score += 15.0
+                        score -= 90.0
                     else:
-                        score -= 35.0
+                        score -= 180.0
                 elif wingspan <= 36.2:
                     if g_ws <= 39.5:
-                        score += 70.0
+                        score += 78.0
                     elif g_ws <= 45.5:
-                        score += 65.0
+                        score += 55.0
                     elif g_ws <= 53.0:
-                        score += 40.0
+                        score -= 85.0
                     elif g_ws <= 66.0:
-                        score += 15.0
+                        score -= 165.0
                     else:
-                        score -= 25.0
+                        score -= 220.0
+                elif wingspan <= 42.5:
+                    if g_ws <= 45.5:
+                        score += 75.0
+                    elif g_ws <= 53.0:
+                        score -= 45.0
+                    else:
+                        score -= 140.0
                 elif wingspan <= 52.0:
                     if g_ws <= 55.0:
-                        score += 68.0
+                        score += 72.0
                     elif g_ws <= 68.5:
                         score += 45.0
                     else:
                         score += 15.0
                 elif wingspan <= 65.5:
                     if g_ws <= 68.5:
-                        score += 68.0
+                        score += 72.0
                     else:
                         score += 40.0
                 else:
@@ -5308,7 +6048,43 @@ class GateFinderBackend:
                     if "a380" in g["name"].lower():
                         score += 40.0
 
+                # 7. MARS Double/Triple Bay Variant Discrimination (e.g. A4 Heavy 65m vs A41 Narrowbody 36m)
+                if g.get("_mars_has_better_size_sibling"):
+                    score -= 380.0
+                elif g.get("_mars_is_optimal_size_sibling"):
+                    score += 42.0
+
                 return score
+
+            # Precompute MARS sibling size relationships so narrowbodies never pick the widebody parent of a MARS bay
+            for idx_a, g_a in enumerate(available_gates):
+                lat_a, lon_a = g_a.get("lat"), g_a.get("lon")
+                if lat_a is None or lon_a is None:
+                    continue
+                ws_a = float(g_a.get("wingspan") or 36.0)
+                mars_siblings = []
+                for idx_b, g_b in enumerate(available_gates):
+                    if idx_a == idx_b:
+                        continue
+                    lat_b, lon_b = g_b.get("lat"), g_b.get("lon")
+                    if lat_b is None or lon_b is None:
+                        continue
+                    d_ab = haversine(float(lat_a), float(lon_a), float(lat_b), float(lon_b))
+                    if d_ab <= 60.0 and are_mars_related_stands(g_a["name"], g_b["name"], d_ab, user_wingspan=65.0):
+                        mars_siblings.append(g_b)
+                if mars_siblings:
+                    # Check if a sibling on the same MARS bay has a much closer wingspan match for this aircraft
+                    my_excess = max(0.0, ws_a - wingspan)
+                    better_sib = False
+                    for sib in mars_siblings:
+                        ws_b = float(sib.get("wingspan") or 36.0)
+                        if ws_b >= wingspan - 0.3:
+                            sib_excess = max(0.0, ws_b - wingspan)
+                            if sib_excess + 6.0 < my_excess:
+                                better_sib = True
+                                sib["_mars_is_optimal_size_sibling"] = True
+                    if better_sib:
+                        g_a["_mars_has_better_size_sibling"] = True
 
             for g in available_gates:
                 g["_match_score"] = score_candidate_gate(g)
@@ -5470,7 +6246,8 @@ class GateFinderBackend:
             default_lat=dep_data.get("lat") if dep_data else None,
             default_lon=dep_data.get("lon") if dep_data else None,
             prev_flight_snapshot=prev_flight_snapshot,
-            fresh_dep_chart=(dep_data or {}).get("chart_data")
+            fresh_dep_chart=(dep_data or {}).get("chart_data"),
+            aircraft_wingspan=wingspan
         )
         if candidate_stand and candidate_stand.get("gate"):
             cand_gate = candidate_stand["gate"]
@@ -5513,10 +6290,18 @@ class GateFinderBackend:
         # If Turnaround / MSFS Live stand lock was confirmed, apply the locked stand onto the freshly scanned departure airport
         if locked_turnaround_stand and dep_data:
             t_gate = locked_turnaround_stand["gate"]
+            mars_best_lock = self.resolve_mars_stand_variant_for_aircraft(
+                origin, t_gate,
+                gate_lat=locked_turnaround_stand.get("lat"),
+                gate_lon=locked_turnaround_stand.get("lon"),
+                aircraft_wingspan=wingspan
+            )
+            if mars_best_lock:
+                t_gate = mars_best_lock["name"]
             canon_gate, coords, g_meta = self.resolve_stand_in_airport_db(
                 origin, t_gate,
-                fallback_lat=locked_turnaround_stand.get("lat"),
-                fallback_lon=locked_turnaround_stand.get("lon")
+                fallback_lat=(mars_best_lock or locked_turnaround_stand).get("lat"),
+                fallback_lon=(mars_best_lock or locked_turnaround_stand).get("lon")
             )
             dep_data["gate"] = canon_gate or t_gate
             dep_data["error"] = None
@@ -5571,6 +6356,18 @@ class GateFinderBackend:
                 ofp_id=ofp_id,
                 skip_dep_gate=stand_decision_made
             )
+            for ph_d, ph_icao, ph_rwy in ((dep_data, origin, origin_rwy), (arr_data, destination, dest_rwy)):
+                if ph_d and ph_d.get("gate") and ph_icao:
+                    m_var = self.resolve_mars_stand_variant_for_aircraft(
+                        ph_icao, ph_d["gate"],
+                        gate_lat=ph_d.get("lat"), gate_lon=ph_d.get("lon"),
+                        aircraft_wingspan=wingspan
+                    )
+                    if m_var and clean_gate_token(m_var["name"]) != clean_gate_token(ph_d["gate"]):
+                        ph_d["gate"] = m_var["name"]
+                        ph_d["lat"] = m_var["lat"]
+                        ph_d["lon"] = m_var["lon"]
+                        ph_d["max_wingspan"] = m_var["wingspan"]
 
         style_key = self.config.settings.get("map_style", "Satellite Imagery")
         style_mapping = {
@@ -5609,7 +6406,78 @@ class GateFinderBackend:
 
         return self.current_flight_data
 
-    def detect_live_msfs_parked_stand(self, icao, default_lat=None, default_lon=None, extra_chart_data=None):
+    def resolve_mars_stand_variant_for_aircraft(self, icao, gate_name, gate_lat=None, gate_lon=None, aircraft_wingspan=None):
+        """
+        If `gate_name` belongs to a multi-stand MARS bay (e.g. A 4 [65m Widebody] & A 41 [36m Narrowbody] at LFPO),
+        automatically selects the stand variant on that same bay whose max wingspan best matches `aircraft_wingspan`.
+        """
+        icao_u = str(icao or "").strip().upper()
+        g_clean = str(gate_name or "").strip()
+        if not icao_u or not g_clean or aircraft_wingspan is None:
+            return None
+        try:
+            ac_ws = float(aircraft_wingspan)
+        except (ValueError, TypeError):
+            return None
+
+        canon_g, coords, g_meta = self.resolve_stand_in_airport_db(
+            icao_u, g_clean, fallback_lat=gate_lat, fallback_lon=gate_lon
+        )
+        base_name = canon_g or g_clean
+        base_lat = coords[0] if (coords and coords[0] is not None) else gate_lat
+        base_lon = coords[1] if (coords and coords[1] is not None) else gate_lon
+        if base_lat is None or base_lon is None:
+            return None
+        base_ws = float((g_meta or {}).get("wingspan") or 36.0)
+
+        bay_variants = [{
+            "name": base_name,
+            "lat": float(base_lat),
+            "lon": float(base_lon),
+            "wingspan": base_ws,
+            "meta": g_meta or {}
+        }]
+        seen_toks = {clean_gate_token(base_name)}
+
+        coherent_map = getattr(self, "coherent_airports", {}) or {}
+        for db in (coherent_map.get(icao_u), self.data.get(icao_u), self.builtin_data.get(icao_u)):
+            if not db or not isinstance(db, dict):
+                continue
+            for al_list in db.values():
+                if not isinstance(al_list, list):
+                    continue
+                for g in al_list:
+                    sname = str(g.get("name") or "").strip()
+                    slat, slon = g.get("lat"), g.get("lon")
+                    if not sname or slat is None or slon is None:
+                        continue
+                    stok = clean_gate_token(sname)
+                    if not stok or stok in seen_toks:
+                        continue
+                    d_m = haversine(float(base_lat), float(base_lon), float(slat), float(slon))
+                    if d_m <= 55.0 and are_mars_related_stands(base_name, sname, d_m, user_wingspan=65.0):
+                        seen_toks.add(stok)
+                        bay_variants.append({
+                            "name": sname,
+                            "lat": float(slat),
+                            "lon": float(slon),
+                            "wingspan": float(g.get("wingspan") or 36.0),
+                            "meta": g
+                        })
+
+        if len(bay_variants) < 2:
+            return None
+
+        compatible = [v for v in bay_variants if v["wingspan"] >= ac_ws - 0.3]
+        if not compatible:
+            return None
+        compatible.sort(key=lambda v: (abs(v["wingspan"] - ac_ws), v["wingspan"]))
+        best_v = compatible[0]
+        if clean_gate_token(best_v["name"]) != clean_gate_token(base_name):
+            print(f"[MARS Variant Match] Remapped {icao_u} '{base_name}' ({base_ws:.1f}m) -> '{best_v['name']}' ({best_v['wingspan']:.1f}m) for aircraft wingspan {ac_ws:.1f}m")
+        return best_v
+
+    def detect_live_msfs_parked_stand(self, icao, default_lat=None, default_lon=None, extra_chart_data=None, aircraft_wingspan=None, resolve_mars_variant=False):
         """
         If MSFS is open (SimConnect connected) and the user aircraft is on the ground
         and stationary/slow (<= 8 kt) at `icao`, returns the stand at `icao` closest
@@ -5626,6 +6494,9 @@ class GateFinderBackend:
 
         u_lat = float(sc.user_lat)
         u_lon = float(sc.user_lon)
+        ac_ws = aircraft_wingspan
+        if ac_ws is None and self.current_flight_data:
+            ac_ws = self.current_flight_data.get("aircraft_wingspan")
 
         best_stand = None
         best_dist = 9999.0
@@ -5671,26 +6542,35 @@ class GateFinderBackend:
                         }
 
         if best_stand and best_dist <= 45.0:
+            mars_best = None
+            if resolve_mars_variant:
+                mars_best = self.resolve_mars_stand_variant_for_aircraft(
+                    icao_u, best_stand["name"],
+                    gate_lat=best_stand.get("lat"),
+                    gate_lon=best_stand.get("lon"),
+                    aircraft_wingspan=ac_ws
+                )
+            target_name = mars_best["name"] if mars_best else best_stand["name"]
             canon_gate, coords, g_meta = self.resolve_stand_in_airport_db(
-                icao_u, best_stand["name"],
-                fallback_lat=best_stand.get("lat"),
-                fallback_lon=best_stand.get("lon")
+                icao_u, target_name,
+                fallback_lat=(mars_best or best_stand).get("lat"),
+                fallback_lon=(mars_best or best_stand).get("lon")
             )
             return {
-                "gate": canon_gate or best_stand["name"],
-                "lat": coords[0] if coords else best_stand.get("lat"),
-                "lon": coords[1] if coords else best_stand.get("lon"),
+                "gate": canon_gate or target_name,
+                "lat": coords[0] if coords else (mars_best or best_stand).get("lat"),
+                "lon": coords[1] if coords else (mars_best or best_stand).get("lon"),
                 "heading": (g_meta or {}).get("heading", best_stand.get("heading")),
                 "no_pushback": (g_meta or {}).get("no_pushback", best_stand.get("no_pushback", False)),
                 "terminal": (g_meta or {}).get("terminal", best_stand.get("terminal")),
                 "has_jetway": (g_meta or {}).get("has_jetway", best_stand.get("has_jetway")),
-                "max_wingspan": (g_meta or {}).get("wingspan", best_stand.get("wingspan")),
+                "max_wingspan": (g_meta or {}).get("wingspan", (mars_best or best_stand).get("wingspan")),
                 "reason": "msfs_live",
                 "distance_m": round(best_dist, 1)
             }
         return None
 
-    def get_candidate_departure_stand(self, origin_icao, default_lat=None, default_lon=None, prev_flight_snapshot=None, fresh_dep_chart=None):
+    def get_candidate_departure_stand(self, origin_icao, default_lat=None, default_lon=None, prev_flight_snapshot=None, fresh_dep_chart=None, aircraft_wingspan=None):
         """
         Returns the candidate stand to propose keeping at `origin_icao` when importing a flight plan:
           1. Live MSFS aircraft parked at a stand at `origin_icao` (SimConnect GPS match <= 45m).
@@ -5704,7 +6584,9 @@ class GateFinderBackend:
 
         # 1. Live MSFS parked stand at `origin_icao`
         live_st = self.detect_live_msfs_parked_stand(
-            icao_u, default_lat=default_lat, default_lon=default_lon, extra_chart_data=fresh_dep_chart
+            icao_u, default_lat=default_lat, default_lon=default_lon,
+            extra_chart_data=fresh_dep_chart, aircraft_wingspan=aircraft_wingspan,
+            resolve_mars_variant=True
         )
         if live_st and live_st.get("gate") and live_st.get("gate") != "N/A":
             return live_st
@@ -5886,7 +6768,10 @@ class GateFinderBackend:
                             apt["lon"] = float(coords[1])
                             apt["gate_coords_found"] = True
                             if saved.get(f"{prefix}_gate_source"):
-                                apt["gate_source"] = saved[f"{prefix}_gate_source"]
+                                s_src = str(saved[f"{prefix}_gate_source"])
+                                if "LIVE" in s_src.upper() or "PARKED" in s_src.upper():
+                                    s_src = "GateFinder"
+                                apt["gate_source"] = s_src
                             if g_meta:
                                 if g_meta.get("terminal"):
                                     apt["terminal"] = g_meta["terminal"]
@@ -5958,7 +6843,8 @@ class GateFinderBackend:
                         coords = (g["lat"], g["lon"]) if (g.get("lat") is not None and g.get("lon") is not None) else None
                         return g["name"], coords, g
             # Second pass: BGL parking-type trailing letter strip (e.g. "P8G" -> "P8") or numeric match
-            if bgl_type_stripped_tok or num_only:
+            is_pure_num_target = bool(re.match(r'^\d+[A-Z]?$', target_tok))
+            if bgl_type_stripped_tok or num_only or is_pure_num_target:
                 for al_list in db.values():
                     for g in al_list:
                         g_tok = clean_gate_token(g.get("name", ""))
@@ -5972,6 +6858,12 @@ class GateFinderBackend:
                         if num_only and (g_tok == num_only or r_tok == num_only or o_tok == num_only):
                             coords = (g["lat"], g["lon"]) if (g.get("lat") is not None and g.get("lon") is not None) else None
                             return g["name"], coords, g
+                        if is_pure_num_target:
+                            g_num = re.sub(r'^[A-Z]+', '', g_tok) if g_tok else ""
+                            r_num = re.sub(r'^[A-Z]+', '', r_tok) if r_tok else ""
+                            if g_num == target_tok or r_num == target_tok:
+                                coords = (g["lat"], g["lon"]) if (g.get("lat") is not None and g.get("lon") is not None) else None
+                                return g["name"], coords, g
 
         # 2. Search cached chart_data stands (OSM + BGL merged stands)
         if self.current_flight_data:
@@ -5981,10 +6873,12 @@ class GateFinderBackend:
                     for st in (apt["chart_data"].get("stands") or []):
                         s_ref = str(st.get("ref") or "").strip()
                         s_tok = clean_gate_token(s_ref)
+                        s_num = re.sub(r'^[A-Z]+', '', s_tok) if s_tok else ""
                         if (
                             gate_tokens_match(s_tok, target_tok)
                             or (bgl_type_stripped_tok and s_tok == bgl_type_stripped_tok)
                             or (num_only and s_tok == num_only)
+                            or (re.match(r'^\d+[A-Z]?$', target_tok) and s_num == target_tok)
                         ):
                             return s_ref, (st.get("lat"), st.get("lon")), {
                                 "name": s_ref,
@@ -6114,7 +7008,7 @@ class GateFinderBackend:
                         canon_g or live_stand,
                         coords,
                         gate_meta=meta,
-                        source="MSFS Live (Parked Stand)"
+                        source="GateFinder"
                     )
                 except Exception as e:
                     print(f"[Backend] Error applying live MSFS stand {live_stand}: {e}")
@@ -6455,6 +7349,7 @@ class GateFinderBackend:
         if fd.get("aircraft_version") and "•" in str(fd["aircraft_version"]):
             fd["aircraft_version"] = re.sub(r"\s*•\s*", " - ", str(fd["aircraft_version"]))
         fd["camaieu_palette"] = self.get_airline_camaieu_palette(al_code_cam)
+        fd["app_version"] = "2.0.4"
         return fd
 
     def scan_gsx_profiles(self):
@@ -6600,26 +7495,27 @@ class GateFinderBackend:
         removed_paths = []
         failed_paths = []
 
-        # 3. Check and remove package in every candidate Community folder
+        # 3. Check and remove package (both V2.0 'gatefinder-ingame-panel' and legacy 'wildbill75-gatefinder') in every candidate Community folder
         for comm_dir in searched_folders:
-            package_path = os.path.join(comm_dir, "wildbill75-gatefinder")
-            if os.path.exists(package_path) or os.path.islink(package_path):
-                try:
-                    if os.path.islink(package_path):
-                        os.unlink(package_path)
-                    elif os.path.isdir(package_path):
-                        try:
-                            os.rmdir(package_path)
-                        except OSError:
-                            shutil.rmtree(package_path)
-                    else:
-                        os.remove(package_path)
+            for pkg_folder_name in ("gatefinder-ingame-panel", "wildbill75-gatefinder", "gsx-gatefinder"):
+                package_path = os.path.join(comm_dir, pkg_folder_name)
+                if os.path.exists(package_path) or os.path.islink(package_path):
+                    try:
+                        if os.path.islink(package_path):
+                            os.unlink(package_path)
+                        elif os.path.isdir(package_path):
+                            try:
+                                os.rmdir(package_path)
+                            except OSError:
+                                shutil.rmtree(package_path)
+                        else:
+                            os.remove(package_path)
 
-                    removed_paths.append(package_path)
-                    print(f"[Uninstall] Successfully removed package: {package_path}")
-                except Exception as e:
-                    failed_paths.append((package_path, str(e)))
-                    print(f"[Uninstall] Error removing {package_path}: {e}")
+                        removed_paths.append(package_path)
+                        print(f"[Uninstall] Successfully removed package: {package_path}")
+                    except Exception as e:
+                        failed_paths.append((package_path, str(e)))
+                        print(f"[Uninstall] Error removing {package_path}: {e}")
 
         success = (len(failed_paths) == 0)
         return {
@@ -6629,6 +7525,57 @@ class GateFinderBackend:
             "autostart_disabled": autostart_ok,
             "searched_folders": sorted(list(searched_folders))
         }
+
+    def get_local_lan_ip(self) -> str:
+        import socket
+        candidate_ips = []
+        try:
+            _, _, host_ips = socket.gethostbyname_ex(socket.gethostname())
+            for hip in (host_ips or []):
+                if hip and not hip.startswith("127.") and not hip.startswith("169.254."):
+                    candidate_ips.append(hip)
+        except Exception:
+            pass
+        routed_ip = None
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                s.connect(("8.8.8.8", 80))
+                ip = s.getsockname()[0]
+                if ip and not ip.startswith("127.") and not ip.startswith("169.254."):
+                    routed_ip = ip
+            finally:
+                s.close()
+        except Exception:
+            pass
+        # If the default internet route goes through a VPN tunnel (e.g. ProtonVPN 10.2.x.x or Tailscale 100.x.x.x),
+        # prefer the PC's physical 192.168.x.x Wi-Fi / Ethernet LAN address so tablets/phones on home Wi-Fi can connect!
+        if routed_ip and routed_ip.startswith("192.168."):
+            return routed_ip
+        for cip in candidate_ips:
+            if cip.startswith("192.168."):
+                return cip
+        if routed_ip:
+            return routed_ip
+        if candidate_ips:
+            return candidate_ips[0]
+        return "127.0.0.1"
+
+    def get_web_efb_url(self) -> str:
+        return f"http://{self.get_local_lan_ip()}:8420/"
+
+    def _get_panel_asset_dir(self) -> str:
+        rel_p = os.path.join("MSFS_Package", "gatefinder-ingame-panel", "html_ui", "ingamePanels", "GateFinderPanel")
+        if getattr(sys, "frozen", False):
+            exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+            cand_ext = os.path.join(exe_dir, rel_p)
+            if os.path.isdir(cand_ext):
+                return cand_ext
+            if hasattr(sys, "_MEIPASS"):
+                cand_mei = os.path.join(sys._MEIPASS, rel_p)
+                if os.path.isdir(cand_mei):
+                    return cand_mei
+        return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", rel_p))
 
     def start_server(self):
         class APIHandler(http.server.SimpleHTTPRequestHandler):
@@ -6641,6 +7588,10 @@ class GateFinderBackend:
                 self.send_header('Access-Control-Allow-Origin', '*')
                 self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
                 self.send_header('Access-Control-Allow-Headers', '*')
+                if not getattr(self, '_custom_cache_control', False):
+                    self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+                    self.send_header('Pragma', 'no-cache')
+                    self.send_header('Expires', '0')
                 ctype = getattr(self, '_custom_content_type', 'application/json')
                 self.send_header('Content-type', ctype)
                 super().end_headers()
@@ -6651,6 +7602,628 @@ class GateFinderBackend:
 
             def do_GET(self):
                 parsed = urlparse(self.path)
+                if parsed.path in ('/', '/index.html', '/efb', '/phone', '/tablet'):
+                    web_html = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <title>GateFinder V2.0.4 - Live Web EFB</title>
+    <link rel="stylesheet" href="/GateFinderPanel.css?v=44" />
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            height: 100dvh;
+            background-color: #121418;
+            color: #ffffff;
+            font-family: 'Segoe UI', 'Open Sans', sans-serif;
+            overflow: hidden;
+            -webkit-tap-highlight-color: transparent;
+        }
+        gsx-gatefinder-panel {
+            border-radius: 0 !important;
+            padding: 10px 14px !important;
+            width: 100vw !important;
+            height: 100vh !important;
+            height: 100dvh !important;
+            background-color: #121418 !important;
+            box-sizing: border-box !important;
+        }
+        ingame-ui, #MainDisplay, #EFBContainer {
+            display: flex !important;
+            flex-direction: column !important;
+            width: 100% !important;
+            height: 100% !important;
+            min-height: 0 !important;
+            flex: 1 1 auto !important;
+        }
+        #EFBContainer.hidden, #StatusMessage.hidden, .hidden {
+            display: none !important;
+        }
+        .header-right-actions {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+        .env-switcher {
+            display: inline-flex;
+            align-items: center;
+            background-color: #12151B;
+            border: 1px solid #2B303B;
+            border-radius: 7px;
+            padding: 2px;
+            flex-shrink: 0;
+        }
+        .env-btn {
+            padding: 5px 10px;
+            font-size: 11.5px;
+            font-weight: 700;
+            color: #94A3B8;
+            border-radius: 5px;
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+        }
+        .env-btn.active {
+            background-color: #2B303B;
+            color: #FFFFFF;
+        }
+        #WebImportBtn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            height: 38px;
+            padding: 0 16px;
+            background-color: #0A86C2;
+            color: #ffffff;
+            font-weight: 700;
+            font-size: 13px;
+            border-radius: 8px;
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        #WebImportBtn:hover {
+            background-color: #0284C7;
+        }
+        #MobileHudBar {
+            display: none;
+        }
+        #MobileDrawerCloseBar {
+            display: none;
+        }
+
+        /* =========================================================
+           ENVIRONMENT 1: TABLET EFB MODE (iPad / Android Tablet)
+           ========================================================= */
+        body.env-tablet gsx-gatefinder-panel {
+            padding: 6px 8px !important;
+        }
+        body.env-tablet .top-bar {
+            margin-bottom: 6px !important;
+        }
+        body.env-tablet .header-row {
+            min-height: 46px !important;
+            padding: 6px 10px !important;
+            margin-bottom: 6px !important;
+        }
+        body.env-tablet #al_logo_wide {
+            width: 68px !important;
+            height: 30px !important;
+            margin-right: 6px !important;
+        }
+        body.env-tablet .pill-badge {
+            min-height: 30px !important;
+            height: 30px !important;
+            padding: 0 11px !important;
+            font-size: 12px !important;
+            margin-right: 6px !important;
+        }
+        body.env-tablet #WebImportBtn {
+            height: 30px !important;
+            padding: 0 12px !important;
+            font-size: 12px !important;
+        }
+        body.env-tablet .phase-card {
+            min-height: 42px !important;
+            padding: 6px 10px !important;
+        }
+        body.env-tablet .phase-card span {
+            min-height: 26px !important;
+            height: 26px !important;
+            min-width: 44px !important;
+            padding: 0 10px !important;
+            font-size: 12px !important;
+            margin-right: 5px !important;
+        }
+        body.env-tablet .phase-card span:first-child {
+            background: transparent !important;
+            padding: 0 !important;
+            min-width: 0 !important;
+            font-size: 12.5px !important;
+            margin-right: 8px !important;
+        }
+        body.env-tablet .left-sidebar {
+            width: 268px;
+            min-width: 222px;
+            max-width: 65%;
+            margin-right: 0 !important;
+            -webkit-overflow-scrolling: touch;
+        }
+        body.env-phone .sidebar-splitter {
+            display: none !important;
+        }
+        body.env-tablet .chart-top-bar {
+            min-height: 40px !important;
+            padding: 4px 8px !important;
+        }
+        body.env-tablet #sc_val {
+            height: 28px !important;
+            padding: 0 10px !important;
+            font-size: 11px !important;
+        }
+        body.env-tablet .chart-btn {
+            height: 30px !important;
+            padding: 0 10px !important;
+            font-size: 11.5px !important;
+        }
+
+        /* =========================================================
+           ENVIRONMENT 2: SMARTPHONE EFB MODE (iPhone / Android Phone)
+           ========================================================= */
+        body.env-phone gsx-gatefinder-panel {
+            padding: 4px 5px !important;
+        }
+        body.env-phone .top-bar {
+            margin-bottom: 4px !important;
+        }
+        body.env-phone .header-row {
+            min-height: 36px !important;
+            padding: 4px 7px !important;
+            margin-bottom: 4px !important;
+            border-radius: 8px !important;
+            flex-wrap: nowrap !important;
+        }
+        body.env-phone .flight-pills {
+            flex-wrap: nowrap !important;
+            overflow: hidden !important;
+            min-width: 0 !important;
+        }
+        body.env-phone #al_logo_wide {
+            width: 48px !important;
+            height: 22px !important;
+            margin-right: 5px !important;
+            border-radius: 4px !important;
+        }
+        body.env-phone #reg_val,
+        body.env-phone #ac_val {
+            display: none !important;
+        }
+        body.env-phone .pill-badge {
+            min-height: 24px !important;
+            height: 24px !important;
+            padding: 0 8px !important;
+            font-size: 11px !important;
+            margin-right: 4px !important;
+            border-radius: 5px !important;
+        }
+        body.env-phone .env-btn {
+            padding: 3px 7px !important;
+            font-size: 10.5px !important;
+        }
+        body.env-phone #WebImportBtn {
+            height: 24px !important;
+            padding: 0 8px !important;
+            font-size: 10.5px !important;
+            border-radius: 5px !important;
+        }
+        body.env-phone .phase-tabs-row {
+            gap: 4px !important;
+        }
+        body.env-phone #TabDep {
+            margin-right: 0 !important;
+        }
+        body.env-phone .phase-card {
+            min-height: 32px !important;
+            padding: 4px 6px !important;
+            border-radius: 8px !important;
+        }
+        body.env-phone .phase-card span {
+            min-height: 21px !important;
+            height: 21px !important;
+            min-width: 0 !important;
+            padding: 0 6px !important;
+            font-size: 10.5px !important;
+            margin-right: 3px !important;
+            border-radius: 5px !important;
+        }
+        body.env-phone .phase-card span:first-child {
+            display: none !important;
+        }
+        body.env-phone #MobileHudBar {
+            display: flex !important;
+            align-items: center;
+            justify-content: space-between;
+            background-color: #1B1E24;
+            border-radius: 8px;
+            padding: 5px 8px;
+            margin-bottom: 4px;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+        .mob-hud-route {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            overflow-x: auto;
+            white-space: nowrap;
+            flex: 1 1 auto;
+            min-width: 0;
+            scrollbar-width: none;
+        }
+        .mob-hud-route::-webkit-scrollbar {
+            display: none;
+        }
+        .mob-hud-pill {
+            display: inline-flex;
+            align-items: center;
+            height: 24px;
+            padding: 0 8px;
+            border-radius: 5px;
+            font-size: 11px;
+            font-weight: 700;
+            color: #ffffff;
+            background-color: #2B303B;
+            flex-shrink: 0;
+        }
+        #BtnMobileDrawerToggle {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            height: 26px;
+            padding: 0 10px;
+            border-radius: 6px;
+            background-color: #25343D;
+            border: 1px solid #38BDF8;
+            color: #38BDF8;
+            font-size: 11px;
+            font-weight: 700;
+            cursor: pointer;
+            user-select: none;
+            flex-shrink: 0;
+        }
+        body.env-phone .workspace-area {
+            position: relative !important;
+            flex-direction: column !important;
+        }
+        body.env-phone:not(.phone-drawer-open) .left-sidebar {
+            display: none !important;
+        }
+        body.env-phone.phone-drawer-open .left-sidebar {
+            display: flex !important;
+            width: 100% !important;
+            min-width: 100% !important;
+            max-width: 100% !important;
+            height: 100% !important;
+            margin-right: 0 !important;
+            z-index: 60 !important;
+            -webkit-overflow-scrolling: touch;
+        }
+        body.env-phone.phone-drawer-open .right-chart-pane {
+            display: none !important;
+        }
+        body.env-phone.phone-drawer-open #MobileDrawerCloseBar {
+            display: flex !important;
+            align-items: center;
+            justify-content: space-between;
+            background-color: #132235;
+            border: 1px solid #0284C7;
+            border-radius: 8px;
+            padding: 8px 12px;
+            margin-bottom: 6px;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+        body.env-phone .chart-top-bar {
+            min-height: 34px !important;
+            padding: 3px 6px !important;
+            justify-content: center !important;
+        }
+        body.env-phone .chart-top-left,
+        body.env-phone #sc_val {
+            display: none !important;
+        }
+        body.env-phone .chart-toolbar {
+            width: 100% !important;
+            justify-content: space-between !important;
+        }
+        body.env-phone .chart-btn {
+            height: 26px !important;
+            padding: 0 7px !important;
+            font-size: 11px !important;
+            margin-left: 3px !important;
+            flex: 1 1 auto !important;
+            text-align: center !important;
+        }
+        body.env-phone .chart-footer-hint {
+            display: none !important;
+        }
+    </style>
+    <script type="text/javascript" src="/GateFinderPanel.js?v=44"></script>
+</head>
+<body class="border-box color-white">
+    <gsx-gatefinder-panel>
+        <ingame-ui id="GSX_GateFinder" panel-id="PANEL_GATEFINDER" title="GATEFINDER V2.0.4">
+            <div id="MainDisplay">
+                <div id="StatusMessage" class="status-message-box">
+                    <h2 id="StatusTitle" class="status-title">Awaiting Flight Data</h2>
+                    <p id="StatusText" class="status-text">Click <strong>Import SimBrief</strong> or load a flight in the <strong>GateFinder</strong> desktop application on your MSFS PC.</p>
+                    <div style="margin-top:14px;">
+                        <span id="BtnStatusImport" style="display:inline-block;background:#0A86C2;color:#ffffff;font-weight:700;font-size:14px;padding:10px 24px;border-radius:8px;cursor:pointer;">Import SimBrief</span>
+                    </div>
+                </div>
+
+                <div id="EFBContainer" class="efb-container hidden">
+                    <div class="top-bar">
+                        <div id="HeaderCard" class="header-row">
+                            <div class="flight-pills">
+                                <img id="al_logo_wide" class="airline-wide-logo hidden" alt="" />
+                                <span id="al_val" class="pill-badge"></span>
+                                <span id="cs_val" class="pill-badge hidden"></span>
+                                <span id="reg_val" class="pill-badge hidden"></span>
+                                <span id="ac_val" class="pill-badge"></span>
+                            </div>
+                            <div class="header-right-actions">
+                                <div id="EnvSwitcher" class="env-switcher" title="Switch display environment (Phone / Tablet / PC)">
+                                    <span class="env-btn" data-env="phone">Phone</span>
+                                    <span class="env-btn" data-env="tablet">Tablet</span>
+                                    <span class="env-btn" data-env="pc">PC</span>
+                                </div>
+                                <div id="WebImportBtn" title="Import latest SimBrief OFP">SimBrief</div>
+                            </div>
+                        </div>
+                        <div class="phase-tabs-row">
+                            <div id="TabDep" class="phase-card active"></div>
+                            <div id="TabArr" class="phase-card"></div>
+                        </div>
+                    </div>
+
+                    <div id="MobileHudBar">
+                        <div id="MobileHudRoute" class="mob-hud-route"></div>
+                        <div id="BtnMobileDrawerToggle">Gates &amp; ATC</div>
+                    </div>
+
+                    <div id="MobileDrawerCloseBar">
+                        <span style="font-size:12px;font-weight:700;color:#38BDF8;">STAND, RUNWAY &amp; ATC SELECTION</span>
+                        <span style="font-size:12px;font-weight:700;color:#FFFFFF;background:#0284C7;padding:3px 10px;border-radius:5px;">Back to Map &#10005;</span>
+                    </div>
+
+                    <div id="WorkspaceArea" class="workspace-area">
+                        <div id="LeftSidebar" class="left-sidebar"></div>
+                        <div id="RightChartPane" class="right-chart-pane">
+                            <div id="MapTopBar" class="chart-top-bar">
+                                <div class="chart-top-left">
+                                    <span id="sc_val" class="sc-status-pill">SimConnect Standby</span>
+                                </div>
+                                <div class="chart-toolbar">
+                                    <div id="BtnZoomIn" class="chart-btn" title="Zoom In">+</div>
+                                    <div id="BtnZoomOut" class="chart-btn" title="Zoom Out">-</div>
+                                    <div id="BtnAPC" class="chart-btn" title="Zooms in on the assigned stand and terminal apron">Gate</div>
+                                    <div id="BtnAGC" class="chart-btn active" title="Zooms to fit the entire taxi route between stand and runway">Route</div>
+                                    <div id="BtnFollow" class="chart-btn" title="Follow live aircraft position with Heading-Up orientation">Follow + Hdg Up</div>
+                                    <div id="BtnTheme" class="chart-btn" title="Toggle Map Day / Map Night theme">Map Day</div>
+                                </div>
+                            </div>
+                            <div id="ChartWrapper" class="chart-wrapper">
+                                <canvas id="LidoCanvas"></canvas>
+                                <div id="DragHandBadge" class="drag-hand-badge hidden">
+                                    <svg width="24" height="24" viewBox="-12 -12 24 24">
+                                        <path d="M-6,2 L-8,-2 Q-8,-5 -5.5,-4 L-5,-1 L-5,-7 Q-5,-9.5 -2.5,-9.5 Q-1,-9.5 -1,-7 L-1,-1 L-1,-8 Q-1,-10.5 1.2,-10.5 Q3,-10.5 3,-8 L3,-1 L3,-7 Q3,-9.2 5,-9.2 Q6.8,-9.2 6.8,-7 L6.8,-1 L6.8,-5 Q6.8,-7 8.5,-7 Q10,-7 10,-4.5 L10,3 Q10,9 3,9 L-2,9 Q-6,9 -6,2 Z" fill="#f8fafc" stroke="#0f172a" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round"/>
+                                    </svg>
+                                </div>
+                                <div class="chart-footer-hint">Scroll/Pinch: Zoom  |  Drag: Pan  |  Lido Vector</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="AtcRunwayModal" class="atc-modal-overlay hidden">
+                        <div class="atc-modal-card">
+                            <div id="AtcModalHeader" class="atc-modal-header">ATC CLEARANCE ACTIVE</div>
+                            <div id="AtcModalText" class="atc-modal-text"></div>
+                            <div class="atc-modal-actions">
+                                <div id="BtnAtcModalKeep" class="atc-modal-btn keep">Keep ATC Runway</div>
+                                <div id="BtnAtcModalOverride" class="atc-modal-btn override">Override Runway</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="LiveStandModal" class="atc-modal-overlay hidden">
+                        <div class="atc-modal-card" style="border-color: #10b981;">
+                            <div id="LiveStandModalHeader" class="atc-modal-header" style="color: #10b981;">MSFS LIVE STAND DETECTED</div>
+                            <div id="LiveStandModalText" class="atc-modal-text"></div>
+                            <div class="atc-modal-actions">
+                                <div id="BtnLiveStandKeep" class="atc-modal-btn keep" style="background-color: #10b981;">Keep MSFS Stand</div>
+                                <div id="BtnLiveStandStay" class="atc-modal-btn override" style="background-color: #374151;">Stay on Stand</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </ingame-ui>
+    </gsx-gatefinder-panel>
+    <script>
+        (function() {
+            let manualEnv = null;
+            function detectBestEnv() {
+                if (window.location.pathname === "/phone") return "phone";
+                if (window.location.pathname === "/tablet") return "tablet";
+                let params = new URLSearchParams(window.location.search);
+                if (params.get("env")) return params.get("env").toLowerCase();
+                if (manualEnv) return manualEnv;
+                let w = window.innerWidth || document.documentElement.clientWidth || 1024;
+                let h = window.innerHeight || document.documentElement.clientHeight || 768;
+                let minDim = Math.min(w, h);
+                let maxDim = Math.max(w, h);
+                if (minDim < 540 || w < 660) return "phone";
+                if (maxDim <= 1366 && w <= 1220) return "tablet";
+                return "pc";
+            }
+
+            function applyEnvMode(mode) {
+                document.body.classList.remove("env-phone", "env-tablet", "env-pc");
+                if (mode !== "phone") {
+                    document.body.classList.remove("phone-drawer-open");
+                }
+                document.body.classList.add("env-" + mode);
+                let btns = document.querySelectorAll("#EnvSwitcher .env-btn");
+                btns.forEach(function(b) {
+                    if (b.getAttribute("data-env") === mode) b.classList.add("active");
+                    else b.classList.remove("active");
+                });
+                let btnFollow = document.getElementById("BtnFollow");
+                if (btnFollow) {
+                    btnFollow.innerText = (mode === "phone") ? "Follow" : "Follow + Hdg Up";
+                }
+                let btnTheme = document.getElementById("BtnTheme");
+                if (btnTheme && mode === "phone") {
+                    let p = document.querySelector("gsx-gatefinder-panel");
+                    btnTheme.innerText = (p && p.themeMode === "day") ? "Night" : "Day";
+                }
+                setTimeout(function() {
+                    let panel = document.querySelector("gsx-gatefinder-panel");
+                    if (panel && panel.updateCanvasMetrics) {
+                        panel.updateCanvasMetrics();
+                        panel.lastBaseKey = "";
+                        panel.drawChart();
+                    }
+                }, 60);
+            }
+
+            function syncMobileHud() {
+                let panel = document.querySelector("gsx-gatefinder-panel");
+                let hudRoute = document.getElementById("MobileHudRoute");
+                if (!panel || !panel.currentData || !hudRoute) return;
+                let d = panel.currentData;
+                let cam = panel.getCamaieu ? panel.getCamaieu(d) : { s1: "#578DA8", s2: "#517B90", s3: "#4A6C7D" };
+                let apt = d[panel.activePhase || "departure"] || {};
+                let tr = apt.taxi_route || {};
+                let standTxt = apt.gate ? ("STAND " + apt.gate) : "NO STAND";
+                let rwyTxt = apt.selected_runway ? ("RWY " + apt.selected_runway) : "RWY --";
+                let html = '<span class="mob-hud-pill" style="background:' + cam.s1 + ';">' + standTxt + '</span>';
+                html += '<span class="mob-hud-pill" style="background:' + cam.s2 + ';">' + rwyTxt + '</span>';
+                let twys = tr.taxiways || [];
+                if (twys.length > 0) {
+                    for (let i = 0; i < twys.length; i++) {
+                        html += '<span class="mob-hud-pill" style="background:#2B303B;">' + twys[i] + '</span>';
+                    }
+                } else if (apt.gate_source) {
+                    html += '<span class="mob-hud-pill" style="background:#2B303B;">' + apt.gate_source + '</span>';
+                }
+                if (hudRoute.getAttribute("data-last") !== html) {
+                    hudRoute.setAttribute("data-last", html);
+                    hudRoute.innerHTML = html;
+                }
+            }
+
+            function triggerImport(btn) {
+                if (!btn || btn.getAttribute("data-busy") === "1") return;
+                let orig = btn.innerText;
+                btn.setAttribute("data-busy", "1");
+                btn.innerText = "...";
+                fetch("/api/simbrief")
+                    .then(r => r.json())
+                    .then(() => {
+                        btn.removeAttribute("data-busy");
+                        btn.innerText = orig;
+                        let panel = document.querySelector("gsx-gatefinder-panel");
+                        if (panel && panel.fetchCurrentData) panel.fetchCurrentData();
+                    })
+                    .catch(() => {
+                        btn.removeAttribute("data-busy");
+                        btn.innerText = orig;
+                    });
+            }
+
+            window.addEventListener("DOMContentLoaded", function() {
+                applyEnvMode(detectBestEnv());
+                window.addEventListener("resize", function() {
+                    if (!manualEnv) applyEnvMode(detectBestEnv());
+                });
+                let btns = document.querySelectorAll("#EnvSwitcher .env-btn");
+                btns.forEach(function(b) {
+                    b.addEventListener("click", function() {
+                        manualEnv = b.getAttribute("data-env");
+                        applyEnvMode(manualEnv);
+                    });
+                });
+                let drawerBtn = document.getElementById("BtnMobileDrawerToggle");
+                let closeBar = document.getElementById("MobileDrawerCloseBar");
+                let hudRoute = document.getElementById("MobileHudRoute");
+                function toggleDrawer(forceState) {
+                    let isOpen = document.body.classList.contains("phone-drawer-open");
+                    let next = (forceState !== undefined) ? forceState : !isOpen;
+                    if (next) document.body.classList.add("phone-drawer-open");
+                    else document.body.classList.remove("phone-drawer-open");
+                    if (drawerBtn) drawerBtn.innerText = next ? "Show Map" : "Gates & ATC";
+                    if (!next) {
+                        setTimeout(function() {
+                            let panel = document.querySelector("gsx-gatefinder-panel");
+                            if (panel && panel.updateCanvasMetrics) {
+                                panel.updateCanvasMetrics();
+                                panel.lastBaseKey = "";
+                                panel.drawChart();
+                            }
+                        }, 50);
+                    }
+                }
+                if (drawerBtn) drawerBtn.addEventListener("click", function() { toggleDrawer(); });
+                if (closeBar) closeBar.addEventListener("click", function() { toggleDrawer(false); });
+                if (hudRoute) hudRoute.addEventListener("click", function() { toggleDrawer(true); });
+
+                let b1 = document.getElementById("WebImportBtn");
+                let b2 = document.getElementById("BtnStatusImport");
+                if (b1) b1.addEventListener("click", function() { triggerImport(b1); });
+                if (b2) b2.addEventListener("click", function() { triggerImport(b2); });
+
+                setInterval(syncMobileHud, 600);
+            });
+        })();
+    </script>
+</body>
+</html>"""
+                    self._custom_content_type = 'text/html; charset=utf-8'
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(web_html.encode('utf-8'))
+                    return
+
+                if parsed.path in ('/GateFinderPanel.js', '/GateFinderPanel.css', '/GateFinderEfbFrame.html', '/GateFinderFenixFrame.html', '/fenix_efb'):
+                    asset_dir = APIHandler.backend_instance._get_panel_asset_dir()
+                    fname = 'GateFinderEfbFrame.html' if parsed.path == '/fenix_efb' else parsed.path.lstrip('/')
+                    fpath = os.path.join(asset_dir, fname)
+                    if os.path.isfile(fpath):
+                        self._custom_content_type = (
+                            'application/javascript; charset=utf-8'
+                            if fname.endswith('.js')
+                            else ('text/html; charset=utf-8' if fname.endswith('.html') else 'text/css; charset=utf-8')
+                        )
+                        self.send_response(200)
+                        self.end_headers()
+                        with open(fpath, 'rb') as f:
+                            raw_bytes = f.read()
+                        if fname.endswith('.html'):
+                            ts_b = str(int(time.time())).encode('ascii')
+                            raw_bytes = raw_bytes.replace(b'?v=204', b'?v=' + ts_b).replace(b'?v=203', b'?v=' + ts_b)
+                        self.wfile.write(raw_bytes)
+                        return
+
                 if parsed.path == '/api/airline_logo':
                     query = parse_qs(parsed.query)
                     code = query.get('code', [''])[0].strip().upper()
@@ -6670,6 +8243,7 @@ class GateFinderBackend:
                         code, size=sz, allow_network=True, width=w_arg, corner_radius=rad_arg
                     )
                     self._custom_content_type = 'image/png'
+                    self._custom_cache_control = True
                     self.send_response(200)
                     self.send_header('Cache-Control', 'public, max-age=86400')
                     self.end_headers()
@@ -6693,6 +8267,13 @@ class GateFinderBackend:
                             arr_copy.pop("chart_data", None)
                             fd["arrival"] = arr_copy
                     self.wfile.write(json.dumps(fd).encode())
+                    return
+
+                if parsed.path == '/api/show_window':
+                    APIHandler.backend_instance.show_window_requested = True
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"ok": True}).encode())
                     return
 
                 if parsed.path == '/api/set_runway':
@@ -6826,9 +8407,13 @@ class GateFinderBackend:
 
         def run_server():
             class ThreadingSimpleServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
-                pass
-            with ThreadingSimpleServer(("127.0.0.1", 8420), APIHandler) as httpd:
-                httpd.serve_forever()
+                allow_reuse_address = True
+            try:
+                with ThreadingSimpleServer(("0.0.0.0", 8420), APIHandler) as httpd:
+                    httpd.serve_forever()
+            except Exception:
+                with ThreadingSimpleServer(("127.0.0.1", 8420), APIHandler) as httpd:
+                    httpd.serve_forever()
 
         self.server_thread = threading.Thread(target=run_server, daemon=True)
         self.server_thread.start()

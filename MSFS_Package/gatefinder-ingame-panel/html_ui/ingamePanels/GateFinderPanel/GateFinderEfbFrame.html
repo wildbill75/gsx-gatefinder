@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>GateFinder V2.0.4 - MSFS 2024 EFB</title>
+    <link rel="stylesheet" href="GateFinderPanel.css?v=204" />
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: #11151C;
+            color: #F8FAFC;
+            font-family: 'Open Sans', 'Segoe UI', sans-serif;
+            overflow: hidden;
+        }
+        body.efb-native gsx-gatefinder-panel {
+            border-radius: 0 !important;
+            padding: 6px 8px !important;
+            width: 100vw !important;
+            height: 100vh !important;
+            background-color: #11151C !important;
+            box-sizing: border-box !important;
+        }
+        body.efb-native ingame-ui,
+        body.efb-native #MainDisplay,
+        body.efb-native #EFBContainer {
+            display: flex !important;
+            flex-direction: column !important;
+            width: 100% !important;
+            height: 100% !important;
+            min-height: 0 !important;
+            flex: 1 1 auto !important;
+        }
+        body.efb-native #EFBContainer.hidden,
+        body.efb-native #StatusMessage.hidden,
+        body.efb-native .hidden {
+            display: none !important;
+        }
+
+        /* =========================================================
+           CLEAN TYPOGRAPHY HEADER & PHASE TABS (NO COLORED PILL BOXES)
+           ========================================================= */
+        body.efb-native gsx-gatefinder-panel .top-bar {
+            margin-bottom: 8px !important;
+            flex-shrink: 0 !important;
+        }
+        body.efb-native gsx-gatefinder-panel .header-row {
+            min-height: 48px !important;
+            height: 48px !important;
+            padding: 5px 14px !important;
+            margin-bottom: 6px !important;
+            border-radius: 7px !important;
+            background-color: #171C26 !important;
+            border: 1px solid rgba(255, 255, 255, 0.07) !important;
+            flex-wrap: nowrap !important;
+        }
+        body.efb-native gsx-gatefinder-panel .flight-pills {
+            flex-wrap: nowrap !important;
+            overflow: hidden !important;
+            min-width: 0 !important;
+            align-items: center !important;
+            gap: 0px;
+        }
+        body.efb-native gsx-gatefinder-panel #al_logo_wide {
+            width: 68px !important;
+            height: 30px !important;
+            margin-right: 12px !important;
+            padding: 2px 5px !important;
+            border-radius: 6px !important;
+            flex-shrink: 0 !important;
+        }
+        body.efb-native gsx-gatefinder-panel .pill-badge {
+            min-height: 0 !important;
+            height: auto !important;
+            padding: 0 14px 0 0 !important;
+            background: transparent !important;
+            border-top: none !important;
+            border-bottom: none !important;
+            border-left: none !important;
+            border-right: 1.5px solid rgba(148, 163, 184, 0.40) !important;
+            font-size: 17.5px !important;
+            font-weight: 800 !important;
+            margin-right: 14px !important;
+            border-radius: 0 !important;
+        }
+        body.efb-native gsx-gatefinder-panel #ac_val {
+            border-right: none !important;
+            padding-right: 0 !important;
+            margin-right: 0 !important;
+        }
+        .header-right-actions {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+        .efb-action-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            height: 30px;
+            padding: 0 13px;
+            background-color: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            color: #E2E8F0;
+            font-weight: 700;
+            font-size: 12.5px;
+            border-radius: 6px;
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .efb-action-btn.active {
+            background-color: rgba(56, 189, 248, 0.15);
+            border-color: #38BDF8;
+            color: #38BDF8;
+        }
+        #WebImportBtn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            height: 30px;
+            padding: 0 13px;
+            background-color: rgba(14, 165, 233, 0.18);
+            border: 1px solid #38BDF8;
+            color: #7DD3FC;
+            font-weight: 800;
+            font-size: 12.5px;
+            border-radius: 6px;
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        body.efb-native gsx-gatefinder-panel .phase-tabs-row {
+            margin-bottom: 0 !important;
+            display: flex !important;
+            justify-content: center !important;
+            align-items: center !important;
+            gap: 20px !important;
+        }
+        body.efb-native gsx-gatefinder-panel #TabDep {
+            margin-right: 0 !important;
+        }
+        body.efb-native gsx-gatefinder-panel .phase-card,
+        body.efb-native gsx-gatefinder-panel #TabDep,
+        body.efb-native gsx-gatefinder-panel #TabArr {
+            flex: 0 1 auto !important;
+            width: auto !important;
+            min-height: 40px !important;
+            height: 40px !important;
+            padding: 0 20px !important;
+            border-radius: 8px !important;
+            justify-content: center !important;
+            align-items: center !important;
+            text-align: center !important;
+            border: none !important;
+            border-bottom: none !important;
+            box-shadow: none !important;
+        }
+        body.efb-native gsx-gatefinder-panel .phase-card span,
+        body.efb-native gsx-gatefinder-panel .phase-card .efb-phase-val,
+        body.efb-native gsx-gatefinder-panel .phase-card .phase-mini-pill {
+            font-size: 17px !important;
+        }
+        body.efb-native gsx-gatefinder-panel .phase-card .efb-phase-title,
+        body.efb-native gsx-gatefinder-panel .phase-card .phase-title {
+            font-size: 15.5px !important;
+        }
+
+        /* =========================================================
+           RESIZABLE, SCROLLABLE & CENTERED LEFT SIDEBAR + SPLITTER
+           ========================================================= */
+        body.efb-native gsx-gatefinder-panel .workspace-area {
+            display: flex !important;
+            flex-direction: row !important;
+            flex: 1 1 auto !important;
+            min-height: 0 !important;
+            min-width: 0 !important;
+            overflow: hidden !important;
+        }
+        body.efb-native gsx-gatefinder-panel .left-sidebar {
+            display: flex !important;
+            flex-direction: column !important;
+            justify-content: space-evenly !important;
+            width: 215px;
+            min-width: 145px;
+            max-width: 58%;
+            margin-right: 0 !important;
+            padding: 10px 8px 24px 8px !important;
+            background-color: #151A23 !important;
+            border: 1px solid rgba(255, 255, 255, 0.06) !important;
+            border-radius: 7px !important;
+            overflow-y: auto !important;
+            overflow-x: visible !important;
+            flex-shrink: 0 !important;
+            min-height: 0 !important;
+            height: 100% !important;
+            max-height: 100% !important;
+            box-sizing: border-box !important;
+            text-align: center !important;
+        }
+        body.efb-native gsx-gatefinder-panel .left-sidebar::-webkit-scrollbar {
+            width: 6px;
+        }
+        body.efb-native gsx-gatefinder-panel .left-sidebar::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.45);
+            border-radius: 3px;
+        }
+        body.efb-native gsx-gatefinder-panel .left-sidebar::-webkit-scrollbar-thumb {
+            background: #475569;
+            border-radius: 3px;
+        }
+        body.efb-native gsx-gatefinder-panel .left-sidebar::-webkit-scrollbar-thumb:hover {
+            background: #38BDF8;
+        }
+
+        body.efb-native gsx-gatefinder-panel .sidebar-splitter {
+            width: 12px !important;
+            flex-shrink: 0 !important;
+            cursor: ew-resize !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            user-select: none !important;
+            z-index: 30 !important;
+        }
+        body.efb-native gsx-gatefinder-panel .sidebar-splitter-grip {
+            width: 4px !important;
+            height: 64px !important;
+            border-radius: 2px !important;
+            background-color: #334155 !important;
+            transition: background-color 0.15s ease !important;
+        }
+        body.efb-native gsx-gatefinder-panel .sidebar-splitter:hover .sidebar-splitter-grip,
+        body.efb-native gsx-gatefinder-panel .sidebar-splitter.dragging .sidebar-splitter-grip {
+            background-color: #38BDF8 !important;
+            box-shadow: 0 0 8px rgba(56, 189, 248, 0.6) !important;
+        }
+
+        body.efb-native.sidebar-collapsed gsx-gatefinder-panel .left-sidebar,
+        body.efb-native.sidebar-collapsed gsx-gatefinder-panel .sidebar-splitter {
+            display: none !important;
+        }
+
+        /* Center all sidebar items & keep compact RWY dropdown button */
+        body.efb-native gsx-gatefinder-panel .efb-card {
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: center !important;
+            text-align: center !important;
+            overflow: visible !important;
+            flex-shrink: 0 !important;
+        }
+        body.efb-native gsx-gatefinder-panel .apt-hero-title,
+        body.efb-native gsx-gatefinder-panel .apt-hero-city,
+        body.efb-native gsx-gatefinder-panel .section-header-white,
+        body.efb-native gsx-gatefinder-panel #LiveStatusBanner {
+            text-align: center !important;
+            justify-content: center !important;
+            width: 100% !important;
+        }
+        body.efb-native gsx-gatefinder-panel .gate-hero-pill-wrap {
+            justify-content: center !important;
+            width: 100% !important;
+            margin-top: 4px !important;
+            margin-bottom: 8px !important;
+        }
+        body.efb-native gsx-gatefinder-panel .gate-hero-pill {
+            font-size: 36px !important;
+            font-weight: 900 !important;
+            text-align: center !important;
+            padding: 2px 0 !important;
+            letter-spacing: 1px !important;
+        }
+        body.efb-native gsx-gatefinder-panel .info-grid-pill {
+            min-height: 0 !important;
+            height: auto !important;
+            padding: 3px 0 !important;
+            text-align: center !important;
+            justify-content: center !important;
+            width: 100% !important;
+        }
+        body.efb-native gsx-gatefinder-panel .pills-flow-wrap {
+            justify-content: center !important;
+            width: 100% !important;
+        }
+        body.efb-native gsx-gatefinder-panel .rwy-dropdown-wrap {
+            margin: 2px 0 !important;
+        }
+        body.efb-native gsx-gatefinder-panel .rwy-dropdown-pill {
+            min-height: 22px !important;
+            height: 22px !important;
+            padding: 0 9px !important;
+            font-size: 12px !important;
+            line-height: 1 !important;
+            border-radius: 4px !important;
+        }
+        body.efb-native gsx-gatefinder-panel .rwy-dropdown-menu {
+            height: auto !important;
+            min-height: 0 !important;
+            max-height: 210px !important;
+            overflow-y: auto !important;
+            z-index: 99999 !important;
+            left: 50% !important;
+            transform: translateX(-50%) !important;
+        }
+        body.efb-native gsx-gatefinder-panel .rwy-dropdown-menu::-webkit-scrollbar {
+            width: 5px;
+        }
+        body.efb-native gsx-gatefinder-panel .rwy-dropdown-menu::-webkit-scrollbar-thumb {
+            background: #38BDF8;
+            border-radius: 3px;
+        }
+        body.efb-native gsx-gatefinder-panel .rwy-dropdown-item {
+            height: auto !important;
+            min-height: 28px !important;
+        }
+
+        /* =========================================================
+           MAP TOP BAR & BUTTONS (THICKER & MORE LEGIBLE)
+           ========================================================= */
+        body.efb-native gsx-gatefinder-panel .right-chart-pane {
+            background-color: #151A23 !important;
+            border: 1px solid rgba(255, 255, 255, 0.06) !important;
+            border-radius: 7px !important;
+        }
+        body.efb-native gsx-gatefinder-panel .chart-top-bar {
+            min-height: 36px !important;
+            height: 36px !important;
+            padding: 4px 12px !important;
+            margin-bottom: 2px !important;
+            background-color: transparent !important;
+        }
+        body.efb-native gsx-gatefinder-panel #sc_val {
+            font-size: 13px !important;
+            font-weight: 800 !important;
+            height: auto !important;
+            letter-spacing: 0.3px !important;
+        }
+        body.efb-native gsx-gatefinder-panel .chart-btn {
+            min-width: 30px !important;
+            min-height: 25px !important;
+            height: 25px !important;
+            padding: 0 9px !important;
+            font-size: 11px !important;
+            margin-left: 5px !important;
+            border-radius: 5px !important;
+        }
+
+        /* =========================================================
+           VR / SMALL VIEWPORT SCALING (< 880px width or < 580px height)
+           ========================================================= */
+        body.efb-native.efb-vr gsx-gatefinder-panel {
+            padding: 4px 5px !important;
+        }
+        body.efb-native.efb-vr gsx-gatefinder-panel .header-row {
+            min-height: 32px !important;
+            height: 32px !important;
+            padding: 2px 8px !important;
+            margin-bottom: 4px !important;
+        }
+        body.efb-native.efb-vr gsx-gatefinder-panel #al_logo_wide {
+            width: 44px !important;
+            height: 20px !important;
+            margin-right: 8px !important;
+        }
+        body.efb-native.efb-vr gsx-gatefinder-panel #reg_val {
+            display: none !important;
+        }
+        body.efb-native.efb-vr gsx-gatefinder-panel .pill-badge {
+            font-size: 11.5px !important;
+            padding-right: 8px !important;
+            margin-right: 8px !important;
+        }
+        body.efb-native.efb-vr .efb-action-btn,
+        body.efb-native.efb-vr #WebImportBtn {
+            height: 21px !important;
+            padding: 0 8px !important;
+            font-size: 10px !important;
+        }
+        body.efb-native.efb-vr gsx-gatefinder-panel .phase-card {
+            min-height: 28px !important;
+            height: 28px !important;
+            padding: 2px 8px !important;
+        }
+        body.efb-native.efb-vr gsx-gatefinder-panel .phase-card span {
+            font-size: 11.5px !important;
+        }
+        body.efb-native.efb-vr gsx-gatefinder-panel .left-sidebar {
+            width: 180px;
+            min-width: 130px;
+        }
+        body.efb-native.efb-vr gsx-gatefinder-panel .apt-hero-title {
+            font-size: 13px !important;
+        }
+        body.efb-native.efb-vr gsx-gatefinder-panel .gate-hero-pill {
+            font-size: 28px !important;
+        }
+        body.efb-native.efb-vr gsx-gatefinder-panel .info-grid-pill {
+            font-size: 11px !important;
+        }
+        body.efb-native.efb-vr gsx-gatefinder-panel .chart-top-bar {
+            min-height: 30px !important;
+            height: 30px !important;
+        }
+        body.efb-native.efb-vr gsx-gatefinder-panel #sc_val {
+            font-size: 11.5px !important;
+        }
+        body.efb-native.efb-vr gsx-gatefinder-panel .chart-btn {
+            min-width: 24px !important;
+            min-height: 20px !important;
+            height: 20px !important;
+            padding: 0 7px !important;
+            font-size: 10px !important;
+            margin-left: 3px !important;
+        }
+
+        /* =========================================================
+           FENIX A320 3D COCKPIT TABLET (2048 x 1488 2K RETINA)
+           ========================================================= */
+        body.efb-native.efb-fenix gsx-gatefinder-panel {
+            padding: 12px 16px !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel .top-bar {
+            margin-bottom: 12px !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel .header-row {
+            min-height: 68px !important;
+            height: 68px !important;
+            padding: 8px 22px !important;
+            margin-bottom: 10px !important;
+            border-radius: 10px !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel #al_logo_wide {
+            width: 100px !important;
+            height: 44px !important;
+            margin-right: 18px !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel .pill-badge {
+            font-size: 25px !important;
+            padding-right: 18px !important;
+            margin-right: 18px !important;
+        }
+        body.efb-native.efb-fenix .efb-action-btn,
+        body.efb-native.efb-fenix #WebImportBtn {
+            height: 42px !important;
+            padding: 0 20px !important;
+            font-size: 19px !important;
+            border-radius: 8px !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel .phase-tabs-row {
+            gap: 36px !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel .phase-card,
+        body.efb-native.efb-fenix gsx-gatefinder-panel #TabDep,
+        body.efb-native.efb-fenix gsx-gatefinder-panel #TabArr {
+            flex: 0 1 auto !important;
+            width: auto !important;
+            min-height: 56px !important;
+            height: 56px !important;
+            padding: 0 28px !important;
+            border-radius: 10px !important;
+            justify-content: center !important;
+            align-items: center !important;
+            border: none !important;
+            border-bottom: none !important;
+            box-shadow: none !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel .phase-card span,
+        body.efb-native.efb-fenix gsx-gatefinder-panel .phase-card .efb-phase-val,
+        body.efb-native.efb-fenix gsx-gatefinder-panel .phase-card .phase-mini-pill {
+            font-size: 24px !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel .phase-card .efb-phase-title,
+        body.efb-native.efb-fenix gsx-gatefinder-panel .phase-card .phase-title {
+            font-size: 22px !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel .left-sidebar {
+            width: 380px;
+            min-width: 240px;
+            padding: 20px 16px 36px 16px !important;
+            border-radius: 10px !important;
+            justify-content: space-evenly !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel .efb-card {
+            padding: 38px 14px !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel .sidebar-splitter {
+            width: 18px !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel .sidebar-splitter-grip {
+            width: 6px !important;
+            height: 96px !important;
+            border-radius: 3px !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel .apt-hero-title {
+            font-size: 26px !important;
+            margin-bottom: 10px !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel .apt-hero-city {
+            font-size: 20px !important;
+            margin-bottom: 24px !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel .gate-hero-pill-wrap {
+            margin-top: 8px !important;
+            margin-bottom: 28px !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel .gate-hero-pill {
+            font-size: 68px !important;
+            font-weight: 900 !important;
+            letter-spacing: 2px !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel .info-pills-row {
+            gap: 12px !important;
+            margin-bottom: 12px !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel .info-grid-pill {
+            font-size: 21px !important;
+            padding: 8px 0 !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel #LiveStatusBanner {
+            font-size: 20px !important;
+            margin-bottom: 24px !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel .section-header-white {
+            font-size: 18px !important;
+            margin-bottom: 20px !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel #ClearancePillsContainer {
+            gap: 14px 10px !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel #ClearancePillsContainer .clearance-pill,
+        body.efb-native.efb-fenix gsx-gatefinder-panel #ClearancePillsContainer .clearance-sep {
+            font-size: 21px !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel .rwy-dropdown-pill {
+            min-height: 34px !important;
+            height: 34px !important;
+            padding: 0 14px !important;
+            font-size: 19px !important;
+            line-height: 1 !important;
+            border-radius: 6px !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel .rwy-dropdown-menu {
+            min-width: 220px !important;
+            max-height: 320px !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel .rwy-dropdown-item {
+            font-size: 20px !important;
+            padding: 10px 14px !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel #TrafficPillsContainer {
+            gap: 14px 12px !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel .traffic-pill {
+            font-size: 20px !important;
+            padding: 8px 0 !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel .chart-top-bar {
+            min-height: 56px !important;
+            height: 56px !important;
+            padding: 6px 16px !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel #sc_val {
+            font-size: 20px !important;
+            font-weight: 800 !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel .chart-btn {
+            min-width: 48px !important;
+            min-height: 38px !important;
+            height: 38px !important;
+            padding: 0 16px !important;
+            font-size: 18px !important;
+            margin-left: 8px !important;
+            border-radius: 7px !important;
+        }
+        body.efb-native.efb-fenix gsx-gatefinder-panel .chart-footer-hint {
+            font-size: 14px !important;
+            padding: 4px 10px !important;
+        }
+    </style>
+    <script>
+        window.IS_MSFS_EFB_APP = true;
+        if (window.location && window.location.search && window.location.search.indexOf("fenix=1") !== -1) {
+            window.IS_FENIX_EFB_APP = true;
+            window.GF_STAND_TAG_SCALE = 1.45;
+        }
+    </script>
+    <script type="text/javascript" src="GateFinderPanel.js?v=204"></script>
+</head>
+<body class="border-box color-white efb-native">
+    <gsx-gatefinder-panel>
+        <ingame-ui id="GSX_GateFinder" panel-id="PANEL_GATEFINDER" title="GATEFINDER V2.0.4">
+            <div id="MainDisplay">
+                <div id="StatusMessage" class="status-message-box">
+                    <h2 id="StatusTitle" class="status-title">GateFinder is not running</h2>
+                    <p id="StatusText" class="status-text">Please launch the <strong>GateFinder</strong> desktop application on your PC, or click <strong>Import SimBrief</strong> once running.</p>
+                    <div style="margin-top:14px;">
+                        <span id="BtnStatusImport" style="display:inline-block;background:#0A86C2;color:#ffffff;font-weight:700;font-size:13px;padding:9px 20px;border-radius:8px;cursor:pointer;">Import SimBrief</span>
+                    </div>
+                </div>
+
+                <div id="EFBContainer" class="efb-container hidden">
+                    <div class="top-bar">
+                        <div id="HeaderCard" class="header-row">
+                            <div class="flight-pills">
+                                <img id="al_logo_wide" class="airline-wide-logo hidden" alt="" />
+                                <span id="al_val" class="pill-badge"></span>
+                                <span id="cs_val" class="pill-badge hidden"></span>
+                                <span id="reg_val" class="pill-badge hidden"></span>
+                                <span id="ac_val" class="pill-badge"></span>
+                            </div>
+                            <div class="header-right-actions">
+                                <div id="BtnToggleSidebar" class="efb-action-btn" title="Show/Hide Left Info Panel for Fullscreen Map">Full Map</div>
+                                <div id="WebImportBtn" title="Import latest SimBrief OFP">SimBrief</div>
+                            </div>
+                        </div>
+                        <div class="phase-tabs-row">
+                            <div id="TabDep" class="phase-card active"></div>
+                            <div id="TabArr" class="phase-card"></div>
+                        </div>
+                    </div>
+
+                    <div id="WorkspaceArea" class="workspace-area">
+                        <div id="LeftSidebar" class="left-sidebar"></div>
+                        <div id="RightChartPane" class="right-chart-pane">
+                            <div id="MapTopBar" class="chart-top-bar">
+                                <div class="chart-top-left">
+                                    <span id="sc_val" class="sc-status-pill">SimConnect Standby</span>
+                                </div>
+                                <div class="chart-toolbar">
+                                    <div id="BtnZoomIn" class="chart-btn" title="Zoom In">+</div>
+                                    <div id="BtnZoomOut" class="chart-btn" title="Zoom Out">-</div>
+                                    <div id="BtnAPC" class="chart-btn" title="Zooms in on the assigned stand and terminal apron">Gate</div>
+                                    <div id="BtnAGC" class="chart-btn active" title="Zooms to fit the entire taxi route between stand and runway">Route</div>
+                                    <div id="BtnFollow" class="chart-btn" title="Follow live aircraft position with Heading-Up orientation">Follow + Hdg Up</div>
+                                    <div id="BtnTheme" class="chart-btn" title="Toggle Map Day / Map Night theme">Map Day</div>
+                                </div>
+                            </div>
+                            <div id="ChartWrapper" class="chart-wrapper">
+                                <canvas id="LidoCanvas"></canvas>
+                                <div id="DragHandBadge" class="drag-hand-badge hidden">
+                                    <svg width="24" height="24" viewBox="-12 -12 24 24">
+                                        <path d="M-6,2 L-8,-2 Q-8,-5 -5.5,-4 L-5,-1 L-5,-7 Q-5,-9.5 -2.5,-9.5 Q-1,-9.5 -1,-7 L-1,-1 L-1,-8 Q-1,-10.5 1.2,-10.5 Q3,-10.5 3,-8 L3,-1 L3,-7 Q3,-9.2 5,-9.2 Q6.8,-9.2 6.8,-7 L6.8,-1 L6.8,-5 Q6.8,-7 8.5,-7 Q10,-7 10,-4.5 L10,3 Q10,9 3,9 L-2,9 Q-6,9 -6,2 Z" fill="#f8fafc" stroke="#0f172a" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round"/>
+                                    </svg>
+                                </div>
+                                <div class="chart-footer-hint">Scroll: Zoom  |  Drag: Pan  |  Lido Vector</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="AtcRunwayModal" class="atc-modal-overlay hidden">
+                        <div class="atc-modal-card">
+                            <div id="AtcModalHeader" class="atc-modal-header">ATC CLEARANCE ACTIVE</div>
+                            <div id="AtcModalText" class="atc-modal-text"></div>
+                            <div class="atc-modal-actions">
+                                <div id="BtnAtcModalKeep" class="atc-modal-btn keep">Keep ATC Runway</div>
+                                <div id="BtnAtcModalOverride" class="atc-modal-btn override">Override Runway</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="LiveStandModal" class="atc-modal-overlay hidden">
+                        <div class="atc-modal-card" style="border-color: #10b981;">
+                            <div id="LiveStandModalHeader" class="atc-modal-header" style="color: #10b981;">MSFS LIVE STAND DETECTED</div>
+                            <div id="LiveStandModalText" class="atc-modal-text"></div>
+                            <div class="atc-modal-actions">
+                                <div id="BtnLiveStandKeep" class="atc-modal-btn keep" style="background-color: #10b981;">Keep MSFS Stand</div>
+                                <div id="BtnLiveStandStay" class="atc-modal-btn override" style="background-color: #374151;">Stay on Stand</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </ingame-ui>
+    </gsx-gatefinder-panel>
+    <script>
+        (function() {
+            function syncViewportScale() {
+                let isFenix = Boolean(window.IS_FENIX_EFB_APP);
+                document.body.classList.toggle("efb-fenix", isFenix);
+                let w = window.innerWidth || document.documentElement.clientWidth || 1024;
+                let h = window.innerHeight || document.documentElement.clientHeight || 768;
+                let isVrOrSmall = !isFenix && (w < 880 || h < 580);
+                document.body.classList.toggle("efb-vr", isVrOrSmall);
+                setTimeout(function() {
+                    let panel = document.querySelector("gsx-gatefinder-panel");
+                    if (panel && panel.updateCanvasMetrics) {
+                        panel.updateCanvasMetrics();
+                        panel.lastBaseKey = "";
+                        panel.drawChart();
+                    }
+                }, 60);
+            }
+
+            function triggerSimbriefImport(btnEl, defaultLabel) {
+                if (!btnEl) return;
+                btnEl.style.opacity = "0.6";
+                btnEl.innerText = "Importing...";
+                fetch("http://127.0.0.1:8420/api/simbrief")
+                    .then(function(r) { return r.json(); })
+                    .then(function(res) {
+                        btnEl.style.opacity = "1.0";
+                        btnEl.innerText = (res && !res.error) ? "Imported" : "No ID/OFP";
+                        let panel = document.querySelector("gsx-gatefinder-panel");
+                        if (panel && panel.fetchCurrentData) panel.fetchCurrentData();
+                        setTimeout(function() { btnEl.innerText = defaultLabel; }, 1600);
+                    })
+                    .catch(function() {
+                        btnEl.style.opacity = "1.0";
+                        btnEl.innerText = defaultLabel;
+                    });
+            }
+
+            window.addEventListener("DOMContentLoaded", function() {
+                syncViewportScale();
+
+                let toggleBtn = document.getElementById("BtnToggleSidebar");
+                if (toggleBtn) {
+                    toggleBtn.addEventListener("click", function() {
+                        let collapsed = document.body.classList.toggle("sidebar-collapsed");
+                        toggleBtn.classList.toggle("active", collapsed);
+                        toggleBtn.innerText = collapsed ? "Show Info" : "Full Map";
+                        setTimeout(function() {
+                            let panel = document.querySelector("gsx-gatefinder-panel");
+                            if (panel && panel.updateCanvasMetrics) {
+                                panel.updateCanvasMetrics();
+                                panel.lastBaseKey = "";
+                                panel.drawChart();
+                            }
+                        }, 60);
+                    });
+                }
+
+                let sbBtn = document.getElementById("WebImportBtn");
+                if (sbBtn) {
+                    sbBtn.addEventListener("click", function() {
+                        triggerSimbriefImport(sbBtn, "SimBrief");
+                    });
+                }
+                let stBtn = document.getElementById("BtnStatusImport");
+                if (stBtn) {
+                    stBtn.addEventListener("click", function() {
+                        triggerSimbriefImport(stBtn, "Import SimBrief");
+                    });
+                }
+
+                window.addEventListener("resize", syncViewportScale);
+            });
+        })();
+    </script>
+</body>
+</html>

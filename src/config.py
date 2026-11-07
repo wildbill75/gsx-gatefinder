@@ -106,13 +106,19 @@ class Config:
             
         c20_def, c24_def = find_msfs_community_folders()
             
+        self._default_gsx = default_gsx
+        self._default_c20 = c20_def
+        self._default_c24 = c24_def
+            
         self.settings = {
             "gsx_profile_path": default_gsx,
             "msfs_community_path": c20_def,
             "msfs_community2024_path": c24_def,
             "simbrief_username": "",
             "auto_start": False,
-            "auto_fetch": False,
+            "auto_quit_with_msfs": False,
+            "fenix_efb_enabled": True,
+            "auto_fetch": True,
             "map_style": "Satellite Imagery",
             "check_online_traffic": True,
             "auto_lock_turnaround": True,
@@ -123,11 +129,14 @@ class Config:
             "exclude_ga_ramp": False,
             "show_wingspan": True,
             "auto_clear_ai": True,
+            "mars_overlap_protection": True,
             "prioritize_ai_atc": True,
             "auto_inject_gsx": True,
             "gsx_request_follow_me": False,
             "vatsim_tod_refresh_nm": 180.0,
-            "sayintentions_api_key": ""
+            "sayintentions_api_key": "",
+            "send_crash_reports": True,
+            "share_flight_stats": True
         }
         self.load()
 
@@ -140,13 +149,48 @@ class Config:
                     if not data.get("_v2_hib_default_migrated"):
                         data["hibernate_map_in_flight"] = True
                         data["_v2_hib_default_migrated"] = True
+                    if not data.get("_v201_autofetch_migrated"):
+                        data["auto_fetch"] = True
+                        data["_v201_autofetch_migrated"] = True
+                        needs_resave_af = True
+                    else:
+                        needs_resave_af = False
                     # Always enforce V2.0 non-deprecated defaults for retired V1 toggles
                     data["show_maps"] = True
                     data["show_wingspan"] = True
                     data["exclude_cargo"] = False
                     data["exclude_ga_ramp"] = False
                     data["ignored_gates"] = ""
+
+                    # Sanitize foreign PC paths if settings.json was copied from another machine
+                    cur_win_user = os.environ.get("USERNAME", "").strip().lower()
+                    needs_resave = False
+                    if cur_win_user and cur_win_user != "bertrand":
+                        has_foreign_path = any(
+                            "\\users\\bertrand\\" in str(data.get(k, "")).lower()
+                            for k in ("gsx_profile_path", "msfs_community_path", "msfs_community2024_path")
+                        )
+                        if has_foreign_path:
+                            data["gsx_profile_path"] = self._default_gsx
+                            data["msfs_community_path"] = self._default_c20
+                            data["msfs_community2024_path"] = self._default_c24
+                            if str(data.get("simbrief_username", "")).strip().lower() == "wildbill75":
+                                data["simbrief_username"] = ""
+                            needs_resave = True
+
+                    for k, local_def in (
+                        ("gsx_profile_path", self._default_gsx),
+                        ("msfs_community_path", self._default_c20),
+                        ("msfs_community2024_path", self._default_c24),
+                    ):
+                        stored_p = str(data.get(k, "")).strip()
+                        if stored_p and not os.path.exists(stored_p) and local_def:
+                            data[k] = local_def
+                            needs_resave = True
+
                     self.settings.update(data)
+                    if needs_resave or needs_resave_af:
+                        self.save()
             except Exception as e:
                 print(f"Error loading settings: {e}")
 
