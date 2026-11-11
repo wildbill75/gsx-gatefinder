@@ -43,18 +43,14 @@ def setup_tray(app, backend):
         app.after(0, app.quit)
         sys.exit(0)
 
-    def open_sceneryx(icon, item):
-        import webbrowser
-        webbrowser.open("https://sidestickpriority.gumroad.com/l/zzlsus/SCENERYX-10")
-
     menu = pystray.Menu(
         pystray.MenuItem("Open GateFinder", show_main, default=True),
         pystray.MenuItem("Settings", show_settings),
-        pystray.MenuItem("BUY SCENERY X & GET 10% DISCOUNT", open_sceneryx),
         pystray.MenuItem("Quit", quit_app)
     )
 
     icon = pystray.Icon("GateFinder", create_icon_image(), "GateFinder", menu)
+    app._tray_icon = icon
     icon.run()
 
 def check_loopback_exemption():
@@ -118,28 +114,36 @@ if __name__ == "__main__":
     # Prevent multiple instances — if already running in background/System Tray, wake up the existing window
     mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "Global\\GateFinderMutex")
     if ctypes.windll.kernel32.GetLastError() == 183: # ERROR_ALREADY_EXISTS
-        if "--silent" not in sys.argv:
-            for p_port in (8420, 8125):
-                try:
-                    import urllib.request
-                    urllib.request.urlopen(f"http://127.0.0.1:{p_port}/api/show_window", timeout=0.6).read()
-                    break
-                except Exception:
-                    pass
+        already_alive = False
+        for p_port in (8125, 8420):
+            try:
+                import urllib.request
+                api_ep = "status" if "--silent" in sys.argv else "show_window"
+                urllib.request.urlopen(f"http://127.0.0.1:{p_port}/api/{api_ep}", timeout=0.5).read()
+                already_alive = True
+                break
+            except Exception:
+                pass
+        if not already_alive:
             try:
                 hwnd = (
-                    ctypes.windll.user32.FindWindowW(None, "MSFS 2024 - GateFinder V2.0.4")
+                    ctypes.windll.user32.FindWindowW(None, "MSFS 2024 - GateFinder V2.0.6")
+                    or ctypes.windll.user32.FindWindowW(None, "MSFS 2024 - GateFinder V2.0.5")
+                    or ctypes.windll.user32.FindWindowW(None, "MSFS 2024 - GateFinder V2.0.4")
                     or ctypes.windll.user32.FindWindowW(None, "MSFS 2024 - GateFinder V2.0.3")
                     or ctypes.windll.user32.FindWindowW(None, "MSFS 2024 - GateFinder V2.0.2")
                     or ctypes.windll.user32.FindWindowW(None, "MSFS 2024 - GateFinder V2.0.1")
                     or ctypes.windll.user32.FindWindowW(None, "MSFS 2024 - GateFinder V2.0")
                 )
                 if hwnd:
-                    ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-                    ctypes.windll.user32.SetForegroundWindow(hwnd)
+                    already_alive = True
+                    if "--silent" not in sys.argv:
+                        ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                        ctypes.windll.user32.SetForegroundWindow(hwnd)
             except Exception:
                 pass
-        sys.exit(0)
+        if already_alive:
+            sys.exit(0)
 
     config = Config()
     autostart = AutoStartManager()

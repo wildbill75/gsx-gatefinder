@@ -49,6 +49,7 @@ class GSXGateFinderPanel extends TemplateElement {
         this.initialSizeResetDone = false;
         this.standHitboxes = [];
         this.rwyHitboxes = [];
+        this.twyHitboxes = [];
     }
 
     sanitizeText(str) {
@@ -360,7 +361,7 @@ class GSXGateFinderPanel extends TemplateElement {
 
         function forceTitle() {
             self.classList.add("is-ingame-panel");
-            let verStr = (self.currentData && self.currentData.app_version) ? String(self.currentData.app_version) : "2.0.4";
+            let verStr = (self.currentData && self.currentData.app_version) ? String(self.currentData.app_version) : "2.0.6";
             let fullTitle = "GATEFINDER V" + verStr.replace(/^V/i, "");
             let ui = document.querySelector("ingame-ui");
             if (ui) {
@@ -448,12 +449,16 @@ class GSXGateFinderPanel extends TemplateElement {
             let now = Date.now();
             let uAc = (this.currentData && this.currentData.user_aircraft) || null;
             let isAirborne = Boolean(uAc && uAc.connected && uAc.on_ground === false);
-            let minInterval = (isAirborne || this._backendDisconnected) ? 3000 : 350;
+            let hzCfg = (this.currentData && this.currentData.map_follow_refresh_hz) ? parseInt(this.currentData.map_follow_refresh_hz, 10) : 10;
+            if (isNaN(hzCfg) || hzCfg < 2) hzCfg = 10;
+            if (hzCfg > 25) hzCfg = 25;
+            let groundInterval = Math.max(50, Math.round(1000 / hzCfg));
+            let minInterval = (isAirborne || this._backendDisconnected) ? 3000 : groundInterval;
             if ((now - (this._lastPollTs || 0)) >= minInterval) {
                 this._lastPollTs = now;
                 this.fetchCurrentData();
             }
-        }, 350);
+        }, 50);
     }
 
     scheduleDraw() {
@@ -596,35 +601,83 @@ class GSXGateFinderPanel extends TemplateElement {
     applySmartFollowCamera(snap) {
         let uAc = (this.currentData && this.currentData.user_aircraft) ? this.currentData.user_aircraft : null;
         let apt = (this.currentData && this.currentData[this.activePhase]) ? this.currentData[this.activePhase] : null;
+        let panLat = this.followPanLatOffset || 0.0;
+        let panLon = this.followPanLonOffset || 0.0;
+        let userZoom = this.followUserZoomMpp || null;
+
         if (!uAc || uAc.lat == null || uAc.lon == null) {
             if (apt && apt.lat != null && apt.lon != null) {
-                this.centerLat = parseFloat(apt.lat);
-                this.centerLon = parseFloat(apt.lon);
-                this.metersPerPixel = 0.85;
+                this.centerLat = parseFloat(apt.lat) + panLat;
+                this.centerLon = parseFloat(apt.lon) + panLon;
+                this.metersPerPixel = userZoom != null ? userZoom : 0.85;
             }
             return;
         }
         let acLat = parseFloat(uAc.lat);
         let acLon = parseFloat(uAc.lon);
-        let tgtLat = (apt && apt.lat != null) ? parseFloat(apt.lat) : null;
-        let tgtLon = (apt && apt.lon != null) ? parseFloat(apt.lon) : null;
 
-        if (this.activePhase === "departure" && apt && apt.taxi_route) {
-            let rPts = apt.taxi_route.route_points || [];
-            if (rPts.length >= 2) {
-                tgtLat = parseFloat(rPts[rPts.length - 1][0]);
-                tgtLon = parseFloat(rPts[rPts.length - 1][1]);
+        if (uAc.heading != null && !isNaN(parseFloat(uAc.heading))) {
+            let rawHdg = ((parseFloat(uAc.heading) % 360.0) + 360.0) % 360.0;
+            if (snap || this._followVisHdg == null || isNaN(this._followVisHdg)) {
+                this._followVisHdg = rawHdg;
+            } else {
+                let diff = ((rawHdg - this._followVisHdg + 540.0) % 360.0) - 180.0;
+                if (Math.abs(diff) > 45.0) {
+                    this._followVisHdg = rawHdg;
+                } else {
+                    this._followVisHdg = ((this._followVisHdg + 0.48 * diff) % 360.0 + 360.0) % 360.0;
+                }
             }
         }
 
-        let panLat = this.followPanLatOffset || 0.0;
-        let panLon = this.followPanLonOffset || 0.0;
-        let userZoom = this.followUserZoomMpp || null;
+        // Strictly anchor camera & Heading-Up rotation pivot on the live aircraft
+        this.centerLat = acLat + panLat;
+        this.centerLon = acLon + panLon;
+
+        if (userZoom != null) {
+            this.metersPerPixel = userZoom;
+            return;
+        }
+
+        let tgtLat = (apt && apt.lat != null) ? parseFloat(apt.lat) : null;
+        let tgtLon = (apt && apt.lon != null) ? parseFloat(apt.lon) : null;
+
+        if (apt) {
+            let tr = apt.taxi_route || {};
+            let rPts = tr.route_points || [];
+            let rollPts = tr.rollout_points || [];
+            let liveSt = tr.live_status || "";
+            if (this.activePhase === "departure") {
+                if (rPts.length >= 2) {
+                    tgtLat = parseFloat(rPts[rPts.length - 1][0]);
+                    tgtLon = parseFloat(rPts[rPts.length - 1][1]);
+                } else if (apt.chart_data && apt.chart_data.runways) {
+                    let selRwy = String(apt.selected_runway || "").trim().toUpperCase();
+                    if (selRwy) {
+                        let rwys = apt.chart_data.runways || [];
+                        for (let i = 0; i < rwys.length; i++) {
+                            let endsMap = rwys[i].ends || {};
+                            if (endsMap[selRwy] && endsMap[selRwy].lat != null && endsMap[selRwy].lon != null) {
+                                tgtLat = parseFloat(endsMap[selRwy].lat);
+                                tgtLon = parseFloat(endsMap[selRwy].lon);
+                                break;
+                            }
+                        }
+                    }
+                }
+            } else {
+                if (liveSt === "LANDING_ROLL" && rollPts.length >= 2) {
+                    tgtLat = parseFloat(rollPts[rollPts.length - 1][0]);
+                    tgtLon = parseFloat(rollPts[rollPts.length - 1][1]);
+                } else if (rPts.length >= 2) {
+                    tgtLat = parseFloat(rPts[rPts.length - 1][0]);
+                    tgtLon = parseFloat(rPts[rPts.length - 1][1]);
+                }
+            }
+        }
 
         if (tgtLat == null || tgtLon == null || isNaN(tgtLat) || isNaN(tgtLon)) {
-            this.centerLat = acLat + panLat;
-            this.centerLon = acLon + panLon;
-            this.metersPerPixel = userZoom != null ? userZoom : 0.85;
+            this.metersPerPixel = 0.85;
             return;
         }
 
@@ -634,39 +687,20 @@ class GSXGateFinderPanel extends TemplateElement {
         let distM = Math.hypot(dxM, dyM);
 
         if (distM > 12000.0) {
-            this.centerLat = acLat + panLat;
-            this.centerLon = acLon + panLon;
-            this.metersPerPixel = userZoom != null ? userZoom : 0.85;
+            this.metersPerPixel = 0.85;
             return;
-        }
-
-        this.centerLat = (acLat + tgtLat) * 0.5 + panLat;
-        this.centerLon = (acLon + tgtLon) * 0.5 + panLon;
-
-        if (userZoom != null) {
-            this.metersPerPixel = userZoom;
-            return;
-        }
-
-        let rxM = dxM;
-        let ryM = dyM;
-        if (this.headingUp && uAc.connected && uAc.heading != null) {
-            let ang = -(parseFloat(uAc.heading) * Math.PI) / 180.0;
-            rxM = dxM * Math.cos(ang) - dyM * Math.sin(ang);
-            ryM = dxM * Math.sin(ang) + dyM * Math.cos(ang);
         }
 
         let w = Math.max(this.canvasW || 520, 420);
         let h = Math.max(this.canvasH || 400, 320);
-        let spanXM = Math.max(95.0, Math.abs(rxM) * 1.48);
-        let spanYM = Math.max(95.0, Math.abs(ryM) * 1.48);
-        let targetMpp = Math.max(spanXM / Math.max(200.0, w - 90.0), spanYM / Math.max(180.0, h - 90.0), 0.45);
-        targetMpp = Math.min(12.0, targetMpp);
+        let effDistM = (distM <= 500.0) ? distM : (500.0 + (distM - 500.0) * 0.35);
+        let radiusPx = Math.max(140.0, Math.min(w, h) * 0.40);
+        let targetMpp = Math.max(0.50, Math.min(2.65, effDistM / radiusPx));
 
         if (snap || !this.metersPerPixel || this.metersPerPixel <= 0) {
             this.metersPerPixel = targetMpp;
         } else {
-            this.metersPerPixel = (0.68 * this.metersPerPixel) + (0.32 * targetMpp);
+            this.metersPerPixel = (0.76 * this.metersPerPixel) + (0.24 * targetMpp);
         }
     }
 
@@ -703,6 +737,30 @@ class GSXGateFinderPanel extends TemplateElement {
         } else {
             applySelection();
         }
+    }
+
+    requestTaxiViaChange(params) {
+        if (!this.currentData) return;
+        let qs = "phase=" + encodeURIComponent(this.activePhase);
+        if (params.action) qs += "&action=" + encodeURIComponent(params.action);
+        if (params.toggle) qs += "&toggle=" + encodeURIComponent(params.toggle);
+        if (params.remove) qs += "&remove=" + encodeURIComponent(params.remove);
+
+        fetch(this.getApiBase() + "/api/set_taxi_via?" + qs)
+            .then(r => r.json())
+            .then(d => {
+                ["departure", "arrival"].forEach(ph => {
+                    if (d[ph] && d[ph].icao && !d[ph].chart_data && this.rawCharts[d[ph].icao]) {
+                        d[ph].chart_data = this.rawCharts[d[ph].icao];
+                    }
+                });
+                this.currentData = d;
+                this.lastSidebarSig = "";
+                this.lastChartSig = "";
+                this.renderData(d, false);
+                this.scheduleDraw();
+            })
+            .catch(() => {});
     }
 
     requestStandChange(chosenGate) {
@@ -891,6 +949,18 @@ class GSXGateFinderPanel extends TemplateElement {
             }
         }
 
+        // 1b. Check Taxiway Badge Hitboxes (Interactive Taxi Route Builder)
+        if (this.twyHitboxes && this.twyHitboxes.length > 0) {
+            for (let i = this.twyHitboxes.length - 1; i >= 0; i--) {
+                let th = this.twyHitboxes[i];
+                if (mx >= th.x0 - 4 && mx <= th.x1 + 4 && my >= th.y0 - 4 && my <= th.y1 + 4) {
+                    this.closeStandContextModal();
+                    this.requestTaxiViaChange({ toggle: th.ref });
+                    return;
+                }
+            }
+        }
+
         // 2. Check Stand Tag Hitboxes
         let sh = this.pickStandHitboxAt(mx, my, 5);
         if (sh) {
@@ -1042,6 +1112,18 @@ class GSXGateFinderPanel extends TemplateElement {
         if (btnFollow) {
             btnFollow.addEventListener("click", () => {
                 if (this.isAirborneNow()) return;
+                let panLat = this.followPanLatOffset || 0.0;
+                let panLon = this.followPanLonOffset || 0.0;
+                if (this.followAircraft && (this.followUserZoomMpp != null || Math.abs(panLat) > 1e-7 || Math.abs(panLon) > 1e-7)) {
+                    this.followUserZoomMpp = null;
+                    this.followPanLatOffset = 0.0;
+                    this.followPanLonOffset = 0.0;
+                    this.applySmartFollowCamera(true);
+                    this.resetCanvasTransform();
+                    this.updateToolbarButtons();
+                    this.scheduleDraw();
+                    return;
+                }
                 this.followAircraft = !this.followAircraft;
                 this.headingUp = Boolean(this.followAircraft);
                 this.followUserZoomMpp = null;
@@ -1505,6 +1587,17 @@ class GSXGateFinderPanel extends TemplateElement {
             }
         }
 
+        if (this.twyHitboxes && this.twyHitboxes.length > 0) {
+            for (let i = this.twyHitboxes.length - 1; i >= 0; i--) {
+                let th = this.twyHitboxes[i];
+                if (mx >= th.x0 - 3 && mx <= th.x1 + 3 && my >= th.y0 - 3 && my <= th.y1 + 3) {
+                    if (canvas) canvas.style.cursor = "pointer";
+                    this.hideStandTooltip();
+                    return;
+                }
+            }
+        }
+
         if (!this.standHitboxes || this.standHitboxes.length === 0) {
             if (canvas) canvas.style.cursor = "default";
             this.hideStandTooltip();
@@ -1703,6 +1796,12 @@ class GSXGateFinderPanel extends TemplateElement {
                         }
                         if (text) text.innerHTML = "Please import a flight from SimBrief in the <strong>GateFinder</strong> desktop application first.";
                     }
+                    this.syncSimbriefMismatchModal(
+                        data ? data.pending_simbrief_mismatch : null,
+                        Boolean(data && data.is_airborne),
+                        (data && data.user_aircraft) || {},
+                        Boolean(data && data.suppress_popups_in_cockpit)
+                    );
                 }
             })
             .catch(err => {
@@ -1978,6 +2077,7 @@ class GSXGateFinderPanel extends TemplateElement {
         }
 
         this.syncLiveStandModal(data.pending_live_stand_prompt, isAirborne, uAc);
+        this.syncSimbriefMismatchModal(data.pending_simbrief_mismatch, isAirborne, uAc, Boolean(data.suppress_popups_in_cockpit));
 
         let rawHib = Boolean(data.map_hibernated);
         if (!rawHib) {
@@ -2088,12 +2188,13 @@ class GSXGateFinderPanel extends TemplateElement {
             return;
         }
 
-        let acLatGrid = (uAc && uAc.lat != null) ? Math.round(uAc.lat * 100000) : null;
-        let acLonGrid = (uAc && uAc.lon != null) ? Math.round(uAc.lon * 100000) : null;
-        let acHdgGrid = (uAc && uAc.heading != null) ? Math.round(uAc.heading * 1.0) : null;
+        let acLatGrid = (uAc && uAc.lat != null) ? Math.round(uAc.lat * 10000000) : null;
+        let acLonGrid = (uAc && uAc.lon != null) ? Math.round(uAc.lon * 10000000) : null;
+        let acHdgGrid = (uAc && uAc.heading != null) ? Math.round(uAc.heading * 100.0) : null;
         let chartSig = JSON.stringify([
             this.activePhase, aptData.icao, aptData.gate, aptData.selected_runway,
-            tr.clearance_text, uAc.connected, acLatGrid, acLonGrid, acHdgGrid, cam.s1
+            tr.clearance_text, aptData.custom_taxi_mode, aptData.atc_taxi_via,
+            uAc.connected, acLatGrid, acLonGrid, acHdgGrid, cam.s1
         ]);
 
         let prevSt = this.lastLiveStatus;
@@ -2290,7 +2391,7 @@ class GSXGateFinderPanel extends TemplateElement {
 
         let isEfbMode = Boolean(window.IS_MSFS_EFB_APP);
         let pool = [cam.s1, cam.s2, cam.s3, cam.s4, cam.s5 || cam.s2, cam.s6 || cam.s3];
-        let sig = JSON.stringify({ items: items, avail: availRwys, pool: pool, atc: aptData.atc_runway, efb: isEfbMode, v: 2 });
+        let sig = JSON.stringify({ items: items, avail: availRwys, pool: pool, atc: aptData.atc_runway, custom: aptData.custom_taxi_mode, via: aptData.atc_taxi_via, efb: isEfbMode, v: 3 });
         if (container.getAttribute("data-sig") === sig) return;
         container.setAttribute("data-sig", sig);
         container.innerHTML = "";
@@ -2392,6 +2493,22 @@ class GSXGateFinderPanel extends TemplateElement {
                     ? (pillBaseCss + "color:" + txtCol + ";")
                     : (pillBaseCss + "background-color:" + bg + ";");
                 p.innerText = item.text;
+                let pTxtU = String(item.text || "").trim().toUpperCase();
+                let isTwyPill = (
+                    item.kind === "NORMAL" &&
+                    pTxtU.indexOf("STAND ") !== 0 &&
+                    pTxtU.indexOf("RWY ") !== 0 &&
+                    pTxtU.indexOf("HOLD SHORT") !== 0 &&
+                    pTxtU.indexOf("CLICK TAXIWAYS") === -1
+                );
+                if (isTwyPill) {
+                    p.style.cursor = "pointer";
+                    p.title = "Click to remove " + item.text + " from route";
+                    p.addEventListener("click", (e) => {
+                        e.stopPropagation();
+                        this.requestTaxiViaChange({ remove: item.text });
+                    });
+                }
                 container.appendChild(p);
             }
         });
@@ -2480,8 +2597,19 @@ class GSXGateFinderPanel extends TemplateElement {
         let hasJetway = (aptData.has_jetway !== undefined && aptData.has_jetway !== null)
             ? Boolean(aptData.has_jetway)
             : (aptData.type === "GATE" || aptData.type === "DOCK");
-        let isCargo = termStr.indexOf("CARGO") !== -1 || Boolean(aptData.is_cargo);
-        let boardingTxt = (isCargo && hasJetway) ? "Cargo Jetway / Ramp" : (isCargo ? "Cargo Ramp" : (hasJetway ? "Jetway boarding" : "Walk / Bus boarding"));
+        let isMil = Boolean(aptData.is_military) || termStr.indexOf("MILITARY") !== -1 || Boolean(this.flightData && this.flightData.is_military_flight);
+        let isCargo = termStr.indexOf("CARGO") !== -1 || Boolean(aptData.is_cargo) || Boolean(this.flightData && this.flightData.is_cargo_flight);
+        let isGa = Boolean(aptData.is_ga) || termStr.indexOf("GENERAL AVIATION") !== -1 || termStr.indexOf("BUSINESS AVIATION") !== -1 || Boolean(this.flightData && this.flightData.is_ga_flight);
+        let boardingTxt;
+        if (isMil) {
+            boardingTxt = aptData.is_mil_stand_tagged ? "Military Stand (Mil)" : "Military Ramp";
+        } else if (isCargo) {
+            boardingTxt = hasJetway ? "Cargo Jetway / Ramp" : "Cargo / Freighter Ramp";
+        } else if (isGa && !hasJetway) {
+            boardingTxt = "GA / FBO Ramp";
+        } else {
+            boardingTxt = hasJetway ? "Jetway boarding" : "Walk / Bus boarding";
+        }
 
         let pBoarding = document.createElement("div");
         pBoarding.className = "info-grid-pill left-col";
@@ -2509,9 +2637,9 @@ class GSXGateFinderPanel extends TemplateElement {
         let rawSrc = String(aptData.gate_source || "GateFinder").toUpperCase();
         let rawRwySrc = String(aptData.atc_runway_source || aptData.runway_source || "").toUpperCase();
         let cleanSrc = "GateFinder";
-        if (rawSrc.indexOf("MANUAL") !== -1) cleanSrc = "Manual Selection";
-        else if (rawSrc.indexOf("BEYOND") !== -1 || rawRwySrc.indexOf("BEYOND") !== -1) cleanSrc = "BeyondATC";
+        if (rawSrc.indexOf("BEYOND") !== -1 || rawRwySrc.indexOf("BEYOND") !== -1) cleanSrc = "BeyondATC";
         else if (rawSrc.indexOf("SAYINTENTIONS") !== -1 || rawRwySrc.indexOf("SAYINTENTIONS") !== -1) cleanSrc = "SayIntentions.AI";
+        else if (rawSrc.indexOf("MANUAL") !== -1) cleanSrc = "Manual Selection";
         else if (rawSrc.indexOf("REASSIGNED") !== -1) cleanSrc = "VATSIM / IVAO";
         else if (rawSrc.indexOf("GSX") !== -1) cleanSrc = "GSX Pro";
 
@@ -2580,13 +2708,44 @@ class GSXGateFinderPanel extends TemplateElement {
             : "background-color:#2B303B;color:#ffffff;font-size:11.5px;font-weight:700;padding:8px 12px;border-radius:8px;text-align:center;margin-bottom:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
         routeCard.appendChild(stBanner);
 
+        let clearHdrRow = document.createElement("div");
+        clearHdrRow.style.cssText = isEfbMode
+            ? "display:flex;flex-direction:row;align-items:center;justify-content:center;gap:6px;width:100%;margin-bottom:12px;flex-wrap:wrap;"
+            : "display:flex;flex-direction:row;align-items:center;justify-content:space-between;width:100%;margin-bottom:9px;";
+
         let clearHdr = document.createElement("div");
         clearHdr.className = "section-header-white";
         clearHdr.style.cssText = isEfbMode
-            ? "font-size:11.5px;font-weight:800;color:#94A3B8;text-align:center;width:100%;margin-bottom:12px;letter-spacing:0.6px;white-space:nowrap;"
-            : "font-size:12.5px;font-weight:700;color:#ffffff;margin-bottom:9px;letter-spacing:0.35px;white-space:nowrap;";
+            ? "font-size:11.5px;font-weight:800;color:#94A3B8;letter-spacing:0.6px;white-space:nowrap;"
+            : "font-size:12.5px;font-weight:700;color:#ffffff;letter-spacing:0.35px;white-space:nowrap;";
         clearHdr.innerText = "ATC TAXI CLEARANCE";
-        routeCard.appendChild(clearHdr);
+        clearHdrRow.appendChild(clearHdr);
+
+        let twyBtnGroup = document.createElement("div");
+        twyBtnGroup.style.cssText = "display:inline-flex;align-items:center;gap:4px;";
+
+        let btnClearTwy = document.createElement("span");
+        btnClearTwy.id = "BtnClearTaxiVia";
+        btnClearTwy.innerText = "Clear";
+        btnClearTwy.title = "Clear taxi route to click taxiways on chart";
+        btnClearTwy.addEventListener("click", (e) => {
+            e.stopPropagation();
+            this.requestTaxiViaChange({ action: "clear" });
+        });
+
+        let btnAutoTwy = document.createElement("span");
+        btnAutoTwy.id = "BtnAutoTaxiVia";
+        btnAutoTwy.innerText = "Auto";
+        btnAutoTwy.title = "Restore automatic taxi route";
+        btnAutoTwy.addEventListener("click", (e) => {
+            e.stopPropagation();
+            this.requestTaxiViaChange({ action: "auto" });
+        });
+
+        twyBtnGroup.appendChild(btnClearTwy);
+        twyBtnGroup.appendChild(btnAutoTwy);
+        clearHdrRow.appendChild(twyBtnGroup);
+        routeCard.appendChild(clearHdrRow);
 
         let pillsWrap = document.createElement("div");
         pillsWrap.id = "ClearancePillsContainer";
@@ -2655,6 +2814,23 @@ class GSXGateFinderPanel extends TemplateElement {
             } else {
                 stBanner.style.display = "none";
             }
+        }
+
+        let isCustomTwy = Boolean(aptData.custom_taxi_mode);
+        let isClearedEmpty = isCustomTwy && (!aptData.atc_taxi_via || aptData.atc_taxi_via.length === 0);
+        let btnClearTwy = this.querySelector("#BtnClearTaxiVia");
+        let btnAutoTwy = this.querySelector("#BtnAutoTaxiVia");
+        if (btnClearTwy) {
+            btnClearTwy.style.cssText = "display:inline-flex;align-items:center;justify-content:center;height:18px;padding:0 6px;border-radius:4px;font-size:9.5px;font-weight:800;cursor:pointer;user-select:none;" +
+                (isClearedEmpty
+                    ? "background:#065F46;color:#A7F3D0;border:1px solid #10B981;"
+                    : "background:#2B303B;color:#CBD5E1;border:1px solid rgba(255,255,255,0.12);");
+        }
+        if (btnAutoTwy) {
+            btnAutoTwy.style.cssText = "display:inline-flex;align-items:center;justify-content:center;height:18px;padding:0 6px;border-radius:4px;font-size:9.5px;font-weight:800;cursor:pointer;user-select:none;" +
+                (!isCustomTwy
+                    ? ("background:" + cam.s1 + ";color:#FFFFFF;border:1px solid rgba(255,255,255,0.18);")
+                    : "background:#2B303B;color:#CBD5E1;border:1px solid rgba(255,255,255,0.12);");
         }
 
         let pillsWrap = this.querySelector("#ClearancePillsContainer");
@@ -2794,6 +2970,11 @@ class GSXGateFinderPanel extends TemplateElement {
         let liveStand = promptInfo.live_stand || "";
         let curGate = promptInfo.current_gate || "";
         let pKey = icao + ":" + liveStand + ":" + curGate;
+        let lsCard = modal.querySelector(".atc-modal-card");
+        if (lsCard) {
+            lsCard.style.border = "0";
+            lsCard.style.backgroundColor = "#111827";
+        }
         if (modal.getAttribute("data-prompt-key") !== pKey) {
             modal.setAttribute("data-prompt-key", pKey);
             hdr.innerText = "MSFS LIVE STAND  |  " + icao;
@@ -2835,6 +3016,222 @@ class GSXGateFinderPanel extends TemplateElement {
                 e.stopPropagation();
                 sendResolution(false);
             };
+        }
+        modal.classList.remove("hidden");
+    }
+
+    syncSimbriefMismatchModal(mmInfo, isAirborne, uAc, suppressCockpitPopups) {
+        let mainDisp = this.querySelector("#MainDisplay") || this;
+        let modal = this.querySelector("#SimbriefMismatchModal");
+        let gs = (uAc && uAc.gs != null) ? parseFloat(uAc.gs) : 0.0;
+
+        if (!mmInfo || isAirborne || gs > 10.0) {
+            if (this._sbMismatchWatchTimer) {
+                clearInterval(this._sbMismatchWatchTimer);
+                this._sbMismatchWatchTimer = null;
+            }
+            if (modal) modal.classList.add("hidden");
+            return;
+        }
+
+        if (!modal) {
+            if (mainDisp && mainDisp.style) {
+                mainDisp.style.position = "relative";
+            }
+            modal = document.createElement("div");
+            modal.id = "SimbriefMismatchModal";
+            modal.className = "atc-modal-overlay hidden";
+            modal.style.zIndex = "560";
+            modal.innerHTML =
+                '<div class="atc-modal-card" style="background-color:#111827;border:0;max-width:468px;padding:16px 18px;border-radius:10px;">' +
+                    '<div id="SbMismatchHeader" class="atc-modal-header" style="font-size:11.5px;margin-bottom:8px;">SIMBRIEF / MSFS MISMATCH</div>' +
+                    '<div id="SbMismatchSummary" style="font-size:12.5px;font-weight:700;color:#FFFFFF;line-height:1.5;margin-bottom:4px;white-space:pre-line;"></div>' +
+                    '<div id="SbMismatchSub" style="font-size:11.5px;color:#94A3B8;line-height:1.4;margin-bottom:11px;"></div>' +
+                    '<div style="display:flex;align-items:center;margin-bottom:13px;">' +
+                        '<span style="font-size:11.5px;font-weight:700;color:#94A3B8;margin-right:10px;white-space:nowrap;">Arrival ICAO (optional):</span>' +
+                        '<input id="SbMismatchDestInput" type="text" maxlength="4" style="flex:1;height:28px;background-color:#1E293B;border:0;border-radius:6px;padding:0 10px;color:#FFFFFF;font-family:Consolas,monospace;font-size:12px;font-weight:700;outline:none;text-transform:uppercase;" />' +
+                    '</div>' +
+                    '<div class="atc-modal-actions" style="gap:6px;">' +
+                        '<div id="BtnMismatchSimbrief" class="atc-modal-btn" style="background-color:#0A86C2;margin-right:6px;">Open SimBrief</div>' +
+                        '<div id="BtnMismatchUseMsfs" class="atc-modal-btn" style="background-color:#4E788E;margin-right:6px;">Use MSFS Aircraft</div>' +
+                        '<div id="BtnMismatchKeepSb" class="atc-modal-btn" style="background-color:#2B303B;">Keep SimBrief OFP</div>' +
+                    '</div>' +
+                '</div>';
+            modal.addEventListener("mousedown", (e) => { e.stopPropagation(); });
+            modal.addEventListener("click", (e) => { e.stopPropagation(); });
+            mainDisp.appendChild(modal);
+        }
+
+        let mKey = String(mmInfo.mismatch_key || "") + "|" + (suppressCockpitPopups ? "1" : "0");
+        if (modal.getAttribute("data-mm-key") !== mKey) {
+            modal.setAttribute("data-mm-key", mKey);
+            if (this._sbMismatchWatchTimer) {
+                clearInterval(this._sbMismatchWatchTimer);
+                this._sbMismatchWatchTimer = null;
+            }
+
+            let cam = this.getCamaieu();
+            let liveIcao = String(mmInfo.live_icao || "").toUpperCase();
+            let liveStand = String(mmInfo.live_stand || "").trim();
+            let mReason = String(mmInfo.mismatch_reason || "airport");
+            let origOfpId = String(mmInfo.ofp_id || "");
+            let sbOrig = String(mmInfo.simbrief_origin || "").toUpperCase();
+            let sbDest = String(mmInfo.simbrief_dest || "").toUpperCase();
+            let sbAc = this.sanitizeText(mmInfo.simbrief_aircraft || mmInfo.simbrief_aircraft_icao || "");
+            let acProf = mmInfo.live_aircraft || {};
+            let acLbl = this.sanitizeText(acProf.name || acProf.icao || "MSFS Aircraft");
+            let acAl = String(acProf.airline || "").toUpperCase();
+            let acDisp = (acAl && acAl !== "GA" && acAl !== "BIZ" && acAl !== "PAX") ? (acLbl + " (" + acAl + ")") : acLbl;
+
+            let hdrEl = modal.querySelector("#SbMismatchHeader");
+            let sumEl = modal.querySelector("#SbMismatchSummary");
+            let subEl = modal.querySelector("#SbMismatchSub");
+            let destIn = modal.querySelector("#SbMismatchDestInput");
+            let btnSb = modal.querySelector("#BtnMismatchSimbrief");
+            let btnMsfs = modal.querySelector("#BtnMismatchUseMsfs");
+            let btnKeep = modal.querySelector("#BtnMismatchKeepSb");
+
+            if (hdrEl) {
+                hdrEl.innerText = sbOrig ? "SIMBRIEF / MSFS MISMATCH" : "MSFS LIVE FLIGHT";
+                hdrEl.style.color = cam.accent || "#38BDF8";
+            }
+            let standNote = liveStand ? (" (Stand " + liveStand + ")") : "";
+            if (sumEl) {
+                if (sbOrig) {
+                    sumEl.innerText =
+                        "MSFS :  " + liveIcao + standNote + "  |  " + acDisp + "\n" +
+                        "SimBrief :  " + sbOrig + " -> " + sbDest + "  |  " + (sbAc || "Unknown");
+                } else {
+                    sumEl.innerText = "MSFS :  " + liveIcao + standNote + "  |  " + acDisp;
+                }
+            }
+            if (subEl) {
+                if (!sbOrig) {
+                    subEl.innerText = "No matching SimBrief OFP found.";
+                } else if (mReason === "both") {
+                    subEl.innerText = "Aircraft and departure airport do not match your SimBrief OFP.";
+                } else if (mReason === "aircraft") {
+                    subEl.innerText = "Spawned aircraft does not match your SimBrief OFP.";
+                } else {
+                    subEl.innerText = "Departure airport does not match your SimBrief OFP.";
+                }
+            }
+            if (destIn) {
+                destIn.value = "";
+                destIn.placeholder = "e.g. LFPG (blank = " + liveIcao + ")";
+            }
+            let isInSimPanel = (typeof window.Include !== "undefined" || typeof Coherent !== "undefined");
+            let avoidDesktopBrowser = Boolean(suppressCockpitPopups && isInSimPanel);
+            if (btnSb) {
+                btnSb.innerText = avoidDesktopBrowser ? "Import SimBrief" : "Open SimBrief";
+                btnSb.style.backgroundColor = "#0A86C2";
+            }
+            if (btnMsfs) {
+                btnMsfs.innerText = "Use MSFS Aircraft";
+                btnMsfs.style.backgroundColor = cam.s2 || "#4E788E";
+            }
+            if (btnKeep) {
+                btnKeep.innerText = sbOrig ? "Keep SimBrief OFP" : "Dismiss";
+                btnKeep.style.backgroundColor = "#2B303B";
+            }
+
+            let sbOpened = false;
+            let applyFlightResponse = (d) => {
+                if (this._sbMismatchWatchTimer) {
+                    clearInterval(this._sbMismatchWatchTimer);
+                    this._sbMismatchWatchTimer = null;
+                }
+                modal.classList.add("hidden");
+                if (d && (d.departure || d.arrival)) {
+                    let statusBox = this.querySelector("#StatusMessage");
+                    let efbContainer = this.querySelector("#EFBContainer");
+                    if (statusBox) statusBox.classList.add("hidden");
+                    if (efbContainer) efbContainer.classList.remove("hidden");
+                    ["departure", "arrival"].forEach(ph => {
+                        let apt = d[ph];
+                        if (apt && apt.icao) {
+                            if (apt.chart_data) {
+                                this.rawCharts[apt.icao] = apt.chart_data;
+                                this.fastCharts[apt.icao] = this.compileFastChart(apt.chart_data);
+                            } else if (this.rawCharts[apt.icao]) {
+                                apt.chart_data = this.rawCharts[apt.icao];
+                            }
+                        }
+                    });
+                    this.currentData = d;
+                    this.initialFitDone = false;
+                    this.lastSidebarSig = "";
+                    this.lastChartSig = "";
+                    requestAnimationFrame(() => {
+                        this.updateCanvasMetrics();
+                        this.renderData(d, true);
+                    });
+                }
+            };
+
+            let triggerResolve = (act) => {
+                let destVal = destIn ? String(destIn.value || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 4) : "";
+                if (subEl) subEl.innerText = "Loading flight data...";
+                let qs = "action=" + encodeURIComponent(act) +
+                    "&live_icao=" + encodeURIComponent(liveIcao) +
+                    "&dest=" + encodeURIComponent(destVal) +
+                    "&key=" + encodeURIComponent(String(mmInfo.mismatch_key || ""));
+                fetch(this.getApiBase() + "/api/resolve_mismatch?" + qs)
+                    .then(r => r.json())
+                    .then(d => applyFlightResponse(d))
+                    .catch(() => { modal.classList.add("hidden"); });
+            };
+
+            if (btnSb) {
+                btnSb.onclick = (e) => {
+                    e.stopPropagation();
+                    if (avoidDesktopBrowser) {
+                        triggerResolve("import_simbrief");
+                        return;
+                    }
+                    if (!sbOpened) {
+                        sbOpened = true;
+                        btnSb.innerText = "Import New OFP";
+                        if (subEl) subEl.innerText = "SimBrief opened in browser. Generate OFP or click Import New OFP.";
+                        fetch(this.getApiBase() + "/api/open_simbrief_dispatch").catch(() => {});
+                        if (this._sbMismatchWatchTimer) clearInterval(this._sbMismatchWatchTimer);
+                        this._sbMismatchWatchTimer = setInterval(() => {
+                            fetch(this.getApiBase() + "/api/peek_simbrief")
+                                .then(r => r.json())
+                                .then(pk => {
+                                    if (pk && pk.ofp_id && String(pk.ofp_id) !== origOfpId) {
+                                        clearInterval(this._sbMismatchWatchTimer);
+                                        this._sbMismatchWatchTimer = null;
+                                        triggerResolve("import_simbrief");
+                                    }
+                                })
+                                .catch(() => {});
+                        }, 3500);
+                    } else {
+                        triggerResolve("import_simbrief");
+                    }
+                };
+            }
+            if (btnMsfs) {
+                btnMsfs.onclick = (e) => {
+                    e.stopPropagation();
+                    triggerResolve("use_msfs");
+                };
+            }
+            if (btnKeep) {
+                btnKeep.onclick = (e) => {
+                    e.stopPropagation();
+                    triggerResolve("keep_simbrief");
+                };
+            }
+            if (destIn) {
+                destIn.onkeydown = (e) => {
+                    e.stopPropagation();
+                    if (e.key === "Enter") {
+                        triggerResolve("use_msfs");
+                    }
+                };
+            }
         }
         modal.classList.remove("hidden");
     }
@@ -2992,7 +3389,7 @@ class GSXGateFinderPanel extends TemplateElement {
 
         // 5. Airline icon(s) displayed right in front of the triangular tip
         //    Applies a progressive scale multiplier (up to 1.45x) when the user zooms in to maximum zoom
-        if (logoCodes && logoCodes.length > 0 && this.metersPerPixel <= 2.6) {
+        if (logoCodes && logoCodes.length > 0 && (scMult > 1.05 || this.metersPerPixel <= 3.2)) {
             let logoZoomMult = 1.0 + 0.45 * Math.max(0.0, Math.min(1.0, (0.85 - this.metersPerPixel) / 0.65));
             let rawLh = (scMult > 1.05 ? 18.0 : 13.5) * sc * logoZoomMult;
             let maxLhCap = (scMult > 1.05) ? 34 : 28;
@@ -3104,7 +3501,7 @@ class GSXGateFinderPanel extends TemplateElement {
         let uAc = this.currentData ? this.currentData.user_aircraft : null;
         let isAirborne = this.isAirborneNow();
         let useHdgUp = Boolean(this.followAircraft && this.headingUp && !isAirborne && uAc && uAc.connected && uAc.heading != null);
-        let acHdgS = (useHdgUp && uAc && uAc.heading != null) ? parseFloat(uAc.heading) : 0.0;
+        let acHdgS = useHdgUp ? ((this._followVisHdg != null && !isNaN(this._followVisHdg)) ? this._followVisHdg : parseFloat(uAc.heading)) : 0.0;
         let rotRad = useHdgUp ? (-acHdgS * Math.PI / 180.0) : 0.0;
         let cosR = useHdgUp ? Math.cos(rotRad) : 1.0;
         let sinR = useHdgUp ? Math.sin(rotRad) : 0.0;
@@ -3126,14 +3523,16 @@ class GSXGateFinderPanel extends TemplateElement {
             (lat - fast.refLat) * fast.mPerDegLat
         );
 
-        // 1. Batched Aprons with Frustum Culling + Apron Label Candidates
+        // 1. Aprons with Frustum Culling + Apron Label Candidates
+        // Filled per-polygon so overlapping OSM/hull rings with opposite CW/CCW winding never cancel out
         let apronLabelCandidates = [];
         if (fast.aprons.length > 0) {
-            ctx.beginPath();
+            ctx.fillStyle = pal.apronFill;
             for (let i = 0; i < fast.aprons.length; i++) {
                 let item = fast.aprons[i];
                 if (item.maxX < minXm || item.minX > maxXm || item.maxY < minYm || item.minY > maxYm) continue;
                 let pts = item.pts;
+                ctx.beginPath();
                 let [sx0, sy0] = mToXY(pts[0][0], pts[0][1]);
                 ctx.moveTo(sx0, sy0);
                 for (let j = 1; j < pts.length; j++) {
@@ -3141,6 +3540,7 @@ class GSXGateFinderPanel extends TemplateElement {
                     ctx.lineTo(sx, sy);
                 }
                 ctx.closePath();
+                ctx.fill();
                 if (item.name && ((item.maxX - item.minX) * invMpp >= 55 || (item.maxY - item.minY) * invMpp >= 55)) {
                     let apU = item.name.toUpperCase();
                     if (apU.indexOf("APRON") !== -1 || apU.indexOf("AIRE") !== -1 || apU.indexOf("PARKING") !== -1 || apU.indexOf("RAMP") !== -1) {
@@ -3149,8 +3549,6 @@ class GSXGateFinderPanel extends TemplateElement {
                     }
                 }
             }
-            ctx.fillStyle = pal.apronFill;
-            ctx.fill();
         }
 
         // 2A. Batched Taxilanes
@@ -3384,7 +3782,7 @@ class GSXGateFinderPanel extends TemplateElement {
         // Dynamic LOD: Hide individual neighboring stands when zoomed out in global view (> 1.55 m/px)
         // so only terminal names, main taxiways, runways, and the assigned stand remain visible.
         let drawnStandBoxes = [];
-        if (this.metersPerPixel <= 1.55) {
+        if (this.metersPerPixel <= 3.2) {
             let latThr = (this.metersPerPixel < 1.2) ? 11.5 : ((this.metersPerPixel <= 2.0) ? 14.5 : 20.0);
             let lonThr = (this.metersPerPixel < 1.2) ? 22.0 : 28.0;
 
@@ -3532,8 +3930,8 @@ class GSXGateFinderPanel extends TemplateElement {
         }
 
         let routePts = tr.route_points || [];
+        let xyPts = [];
         if (routePts.length >= 2) {
-            let xyPts = [];
             ctx.beginPath();
             for (let i = 0; i < routePts.length; i++) {
                 let [x, y] = toXY(routePts[i][0], routePts[i][1]);
@@ -3575,21 +3973,92 @@ class GSXGateFinderPanel extends TemplateElement {
             ctx.fill();
         }
 
-        // 7. Taxiway Labels (Lido AMM bold white designators with dark halo)
-        if (this.metersPerPixel < 5.2) {
+        // 7. Taxiway Labels (Lido AMM bold white designators with dark halo + Route-Directional Selection Highlight)
+        if (this.metersPerPixel < 8.5) {
             ctx.font = "bold " + Math.round(8.5 * uiSc) + "px sans-serif";
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
             let hBox = Math.round(6 * uiSc);
+            let customViaList = Array.isArray(apt.atc_taxi_via)
+                ? apt.atc_taxi_via.map(x => String(x).replace(/[\s_\-]+/g, "").toUpperCase())
+                : [];
+            let isCustomTwyMode = Boolean(apt.custom_taxi_mode);
+            let visTwyBadges = [];
             for (let i = 0; i < fast.twyLabels.length; i++) {
                 let lbl = fast.twyLabels[i];
                 let [mx, my] = mToXY(lbl.xM, lbl.yM);
                 if (mx < 16 || mx > bw - 16 || my < 16 || my > bh - 16) continue;
+                let refNorm = String(lbl.ref || "").replace(/[\s_\-]+/g, "").toUpperCase();
+                visTwyBadges.push({ lbl: lbl, mx: mx, my: my, refNorm: refNorm });
+            }
+
+            let distToRoutePx = (px, py) => {
+                if (xyPts.length < 2) return 0.0;
+                let bestD = Infinity;
+                for (let s = 0; s < xyPts.length - 1; s++) {
+                    let [x1, y1] = xyPts[s];
+                    let [x2, y2] = xyPts[s + 1];
+                    let dx = x2 - x1, dy = y2 - y1;
+                    let lSq = dx * dx + dy * dy;
+                    let dS;
+                    if (lSq <= 1e-6) {
+                        dS = Math.hypot(px - x1, py - y1);
+                    } else {
+                        let tProj = Math.max(0.0, Math.min(1.0, ((px - x1) * dx + (py - y1) * dy) / lSq));
+                        dS = Math.hypot(px - (x1 + tProj * dx), py - (y1 + tProj * dy));
+                    }
+                    if (dS < bestD) bestD = dS;
+                }
+                return bestD;
+            };
+
+            let selectedBadgeSet = {};
+            if (isCustomTwyMode && customViaList.length > 0) {
+                let uniqReq = Array.from(new Set(customViaList));
+                for (let rIdx = 0; rIdx < uniqReq.length; rIdx++) {
+                    let reqN = uniqReq[rIdx];
+                    let cands = [];
+                    for (let bIdx = 0; bIdx < visTwyBadges.length; bIdx++) {
+                        let bItem = visTwyBadges[bIdx];
+                        if (bItem.refNorm === reqN) {
+                            cands.push({ idx: bIdx, d: distToRoutePx(bItem.mx, bItem.my) });
+                        }
+                    }
+                    if (cands.length === 0) continue;
+                    let onRoute = cands.filter(c => c.d <= 13.0 * uiSc);
+                    if (onRoute.length > 0) {
+                        onRoute.forEach(c => { selectedBadgeSet[c.idx] = true; });
+                    } else {
+                        cands.sort((a, b) => a.d - b.d);
+                        selectedBadgeSet[cands[0].idx] = true;
+                    }
+                }
+            }
+
+            for (let bIdx = 0; bIdx < visTwyBadges.length; bIdx++) {
+                let bItem = visTwyBadges[bIdx];
+                let lbl = bItem.lbl;
+                let mx = bItem.mx, my = bItem.my;
                 let rw = Math.round(lbl.halfW * uiSc);
-                ctx.fillStyle = pal.twyLabelBg;
-                ctx.fillRect(mx - rw, my - hBox, rw * 2, hBox * 2);
-                ctx.fillStyle = pal.twyLabelFg;
+                let isSelTwy = Boolean(selectedBadgeSet[bIdx]);
+                if (isSelTwy) {
+                    ctx.fillStyle = "#10B981";
+                    ctx.fillRect(mx - rw - 1, my - hBox - 1, (rw + 1) * 2, (hBox + 1) * 2);
+                    ctx.strokeStyle = "#A7F3D0";
+                    ctx.lineWidth = 1.3;
+                    ctx.strokeRect(mx - rw - 1, my - hBox - 1, (rw + 1) * 2, (hBox + 1) * 2);
+                    ctx.fillStyle = "#FFFFFF";
+                } else {
+                    ctx.fillStyle = pal.twyLabelBg;
+                    ctx.fillRect(mx - rw, my - hBox, rw * 2, hBox * 2);
+                    ctx.fillStyle = pal.twyLabelFg;
+                }
                 ctx.fillText(lbl.ref, mx, my);
+                this.twyHitboxes.push({
+                    x0: mx - rw - pad, y0: my - hBox - pad,
+                    x1: mx + rw - pad, y1: my + hBox - pad,
+                    ref: lbl.ref
+                });
             }
         }
 

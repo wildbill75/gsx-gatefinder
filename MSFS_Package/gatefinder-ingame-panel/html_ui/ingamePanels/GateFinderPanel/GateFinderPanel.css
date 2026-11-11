@@ -12,7 +12,7 @@ gsx-gatefinder-panel {
     overflow: hidden;
 }
 
-/* Keep native MSFS in-game panel header title "GATEFINDER V2.0.4" visible */
+/* Keep native MSFS in-game panel header title "GATEFINDER V2.0.6" visible */
 gsx-gatefinder-panel.is-ingame-panel ingame-ui-header .title,
 gsx-gatefinder-panel.is-ingame-panel .ingameUiHeaderTitle {
     display: inline-block !important;

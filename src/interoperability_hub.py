@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import json
 import time
 import threading
@@ -8,6 +9,65 @@ import urllib.parse
 from enum import Enum, auto
 from dataclasses import dataclass, asdict
 from typing import Optional, Callable, Dict, Any, Tuple, List
+
+_WIN32_PROC_CACHE_TS: float = 0.0
+_WIN32_PROC_CACHE_SET: set = set()
+_WIN32_PROC_LOCK = threading.Lock()
+
+
+def is_process_running_win32(exe_names) -> bool:
+    """
+    Fast, non-blocking Win32 CreateToolhelp32Snapshot check (cached for 1.5s, zero subprocesses)
+    to verify whether an external ATC / pilot client process is actually running in memory.
+    """
+    global _WIN32_PROC_CACHE_TS, _WIN32_PROC_CACHE_SET
+    if sys.platform != "win32":
+        return False
+    target_set = {str(n).lower() for n in exe_names if n}
+    if not target_set:
+        return False
+    now_t = time.time()
+    with _WIN32_PROC_LOCK:
+        if now_t - _WIN32_PROC_CACHE_TS > 1.5:
+            running = set()
+            try:
+                import ctypes
+                from ctypes import wintypes
+                TH32CS_SNAPPROCESS = 0x00000002
+
+                class PROCESSENTRY32W(ctypes.Structure):
+                    _fields_ = [
+                        ("dwSize", wintypes.DWORD),
+                        ("cntUsage", wintypes.DWORD),
+                        ("th32ProcessID", wintypes.DWORD),
+                        ("th32DefaultHeapID", ctypes.c_size_t),
+                        ("th32ModuleID", wintypes.DWORD),
+                        ("cntThreads", wintypes.DWORD),
+                        ("th32ParentProcessID", wintypes.DWORD),
+                        ("pcPriClassBase", wintypes.LONG),
+                        ("dwFlags", wintypes.DWORD),
+                        ("szExeFile", wintypes.WCHAR * 260),
+                    ]
+
+                kernel32 = ctypes.windll.kernel32
+                h_snap = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+                if h_snap != wintypes.HANDLE(-1).value and h_snap is not None:
+                    try:
+                        pe = PROCESSENTRY32W()
+                        pe.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+                        if kernel32.Process32FirstW(h_snap, ctypes.byref(pe)):
+                            while True:
+                                running.add(pe.szExeFile.lower())
+                                if not kernel32.Process32NextW(h_snap, ctypes.byref(pe)):
+                                    break
+                    finally:
+                        kernel32.CloseHandle(h_snap)
+            except Exception:
+                pass
+            _WIN32_PROC_CACHE_SET = running
+            _WIN32_PROC_CACHE_TS = now_t
+        return bool(target_set & _WIN32_PROC_CACHE_SET)
+
 
 
 class GateSource(Enum):
@@ -56,8 +116,8 @@ class GateDecision:
 
 def clean_gate_token(raw_gate: str) -> str:
     """
-    Normalizes any raw gate string ('Gate F 37', 'STAND_D92_NONE', 'Parking 10', 'F37', 'A01')
-    into a canonical comparison token (e.g., 'F37', 'D92', '10', 'A1').
+    Normalizes any raw gate string ('Gate F 37', 'STAND_D92_NONE', 'Apron 1 North Gate 142', 'Parking 10', 'F37', 'A01')
+    into a canonical comparison token (e.g., 'F37', 'D92', '142', '10', 'A1').
     """
     if not raw_gate:
         return ""
@@ -68,10 +128,16 @@ def clean_gate_token(raw_gate: str) -> str:
     # Strip parenthetical or hyphenated annotations
     s = re.sub(r'\s*\(.*$', '', s).strip()
     s = re.sub(r'\s+-\s+.*$', '', s).strip()
-    # Strip common prefixes
-    s = re.sub(r'^(GATE|STAND|PARKING|RAMP|DOCK|SPOT|BAY)[\s_\-]*', '', s)
     # Strip trailing NONE suffix from BATC/BGL identifiers
-    s = re.sub(r'[\s_\-]+NONE$', '', s)
+    s = re.sub(r'[\s_\-]+NONE$', '', s).strip()
+    # Strip leading apron/terminal folder when followed by explicit GATE/STAND/PARKING/RAMP/DOCK/SPOT/BAY + stand token
+    # e.g. 'APRON 1 NORTH GATE 142' -> '142', 'TERMINAL 2 GATE A 41' -> 'A 41'
+    m_comp = re.search(r'\b(?:GATE|STAND|PARKING|RAMP|DOCK|SPOT|BAY)[\s_\-]+([A-Z]{0,4}[\s_\-]*\d+[A-Z]?)\s*$', s)
+    if m_comp:
+        s = m_comp.group(1).strip()
+    else:
+        # Strip common leading prefixes
+        s = re.sub(r'^(GATE|STAND|PARKING|RAMP|DOCK|SPOT|BAY)[\s_\-]*', '', s)
     # Collapse all spaces, underscores, and hyphens
     s = re.sub(r'[\s_\-]+', '', s)
     m = re.match(r'^([A-Z]{0,3})0+(\d+[A-Z]?)$', s)
@@ -111,7 +177,7 @@ def gate_tokens_match(raw_a: Optional[str], raw_b: Optional[str]) -> bool:
 
 def parse_gsx_gate_tokens(gate_str: str) -> Dict[str, str]:
     """
-    Splits a gate label (e.g. 'F 37', 'Gate D 92L', '42', 'F33R') into
+    Splits a gate label (e.g. 'F 37', 'Gate D 92L', 'Apron 1 North Gate 142', '42', 'F33R') into
     prefix ('F'), number ('37'), and suffix ('', 'L', 'R') for GSX menu matching.
     """
     if not gate_str:
@@ -120,8 +186,12 @@ def parse_gsx_gate_tokens(gate_str: str) -> Dict[str, str]:
     if "|" in s:
         s = s.split("|")[-1].strip()
     s = re.sub(r'[\(\[].*?[\)\]]', '', s).strip()
-    s = re.sub(r'^(GATE|STAND|PARKING|RAMP|DOCK|SPOT)[\s_\-]*', '', s)
     s = re.sub(r'[\s_\-]+NONE$', '', s).strip()
+    m_comp = re.search(r'\b(?:GATE|STAND|PARKING|RAMP|DOCK|SPOT|BAY)[\s_\-]+([A-Z]{0,4}[\s_\-]*\d+[A-Z]?)\s*$', s)
+    if m_comp:
+        s = m_comp.group(1).strip()
+    else:
+        s = re.sub(r'^(GATE|STAND|PARKING|RAMP|DOCK|SPOT|BAY)[\s_\-]*', '', s).strip()
 
     m = re.match(r'^([A-Z]{0,3})[\s_\-]*(\d+)[\s_\-]*([A-Z]?)$', s)
     if m:
@@ -1187,6 +1257,7 @@ class GSXArrivalAutomator:
         hop_done = False
         handler_answered = False
         followme_answered = False
+        first_menu_opened = False
         visited_groups = set()
         pending_group_lbl: Optional[str] = None
         pending_group_sig: Any = None
@@ -1241,6 +1312,15 @@ class GSXArrivalAutomator:
             # IMPORTANT: Never send -1.0 before choice_idx! In GSX Pro (FSDT_GSX_Panel.js),
             # -1 is CHOICE_CANCEL which immediately dismisses the active menu in Couatl!
             sc.set_lvar("L:FSDT_GSX_MENU_CHOICE", float(choice_idx))
+            # Couatl writes `./menu` ~80-130ms before setting `menuWaiting = True` in `emulateMenu_MSFS`.
+            # Send a confirmation write 140ms later if `./menu` has not yet transitioned to a newer mtime.
+            time.sleep(0.14)
+            with self._lock:
+                if run_id != self._active_run_id:
+                    return
+            st_chk = self._read_menu_state(panel_dir)
+            if st_chk["menu_mtime"] <= cur_mtime:
+                sc.set_lvar("L:FSDT_GSX_MENU_CHOICE", float(choice_idx))
             last_action_ts = time.time()
             last_clicked_sig = sig
             wait_for_mtime_after = cur_mtime
@@ -1325,6 +1405,11 @@ class GSXArrivalAutomator:
                 if is_open and non_empty_opts and menu_mtime > wait_for_mtime_after:
                     # Couatl just wrote a fresh `./menu` page!
                     wait_for_mtime_after = None
+                    if not first_menu_opened:
+                        first_menu_opened = True
+                        # Refresh timeout budget once Couatl finishes loading the airport profile
+                        # (e.g. `[GSX] onEnteredAirport EHAM` on distant runways like 18R).
+                        start_ts = max(start_ts, time.time() - 2.0)
                 else:
                     if warp and warp_clicked:
                         if now - last_action_ts >= 0.35:
@@ -1336,7 +1421,7 @@ class GSXArrivalAutomator:
                         # We already clicked the target gate (and any handler / follow-me prompt).
                         # If Couatl hasn't written a new `./menu` page within `closed_wait`, the menu
                         # closed because the arrival stand activation sequence is complete!
-                        closed_wait = 0.38 if followme_answered else (0.75 if handler_answered else 1.2)
+                        closed_wait = 0.55 if followme_answered else (0.85 if handler_answered else 1.25)
                         if now - last_action_ts >= closed_wait:
                             close_gsx_menu_window(cancel_choice=False, post_warp=False)
                             self._log(
@@ -1367,7 +1452,7 @@ class GSXArrivalAutomator:
                         self._finish(run_id, True, f"GSX PRO: REPOSITIONED TO {target_gate} ✓", "#10B981")
                         return
                 elif gate_clicked and not warp:
-                    closed_wait = 0.38 if followme_answered else (0.75 if handler_answered else 1.2)
+                    closed_wait = 0.55 if followme_answered else (0.85 if handler_answered else 1.25)
                     if now - last_action_ts >= closed_wait:
                         close_gsx_menu_window(cancel_choice=False, post_warp=False)
                         self._log(
@@ -1381,6 +1466,10 @@ class GSXArrivalAutomator:
                         open_gsx_menu(menu_mtime)
                 time.sleep(0.04)
                 continue
+
+            if not first_menu_opened:
+                first_menu_opened = True
+                start_ts = max(start_ts, time.time() - 2.0)
 
             cur_sig = (title, tuple(options))
             if cur_sig != last_observed_sig:
@@ -1396,7 +1485,9 @@ class GSXArrivalAutomator:
                     pending_group_sig = None
                     pending_group_tries = 0
                 last_observed_sig = cur_sig
-                time.sleep(0.03)
+                # Wait 160ms after `./menu` is written on disk so Couatl has finished entering
+                # `emulateMenu_MSFS` and set `menuWaiting = True` (~80-120ms after file write).
+                time.sleep(0.16)
                 now = time.time()
 
             # --------------------------------------------------------------
@@ -1850,7 +1941,7 @@ class BeyondATCWatcher:
             re.IGNORECASE
         )
         self._re_instruction_rwy = re.compile(
-            r'\[Instruction\].*?\brunway\s+(\d{2}[LRC]?)\b',
+            r'\[Instruction\].*?(?<!\bcross\s)(?<!\bcrossing\s)\brunway\s+(\d{2}[LRC]?)\b',
             re.IGNORECASE
         )
         self._re_taxi_via = re.compile(
@@ -1858,19 +1949,46 @@ class BeyondATCWatcher:
             re.IGNORECASE
         )
         self._re_twy_token = re.compile(
-            r'^(?:INNER|OUTER|NORTH|SOUTH|EAST|WEST|MAIN|LOOP|LINK\s*[A-Z0-9]+|[A-Z]{1,3}\d{0,2}[A-Z]?)$',
+            r'^(?:(?:INNER|OUTER|NORTH|SOUTH|EAST|WEST|MAIN|LOOP|INN|OUT)(?:[\s\-]*\d+)?|LINK[\s\-]*[A-Z0-9]+|[A-Z]{1,4}(?:[\s\-]*\d{1,3}[A-Z]?)?)$',
+            re.IGNORECASE
+        )
+        self._re_gate_evict_player = re.compile(
+            r'\[GateEvict\].*?\bremoved\s+from\s+([A-Z0-9_\-]+)\s+by\s+PLAYER\b',
+            re.IGNORECASE
+        )
+        self._re_player_req_arr_gate = re.compile(
+            r'\[Instruction\].*?\brequest\s+(?:progressive\s+)?taxi\s+to\s+(?!allocated\b)(?:(?:Gate|Stand|Ramp|Parking|Dock)\s+)+([A-Z]{0,4}[\s_\-]*\d+[A-Z]?)\b',
             re.IGNORECASE
         )
 
+    def is_process_running(self) -> bool:
+        return is_process_running_win32(("BeyondATC.exe",))
+
     def poll(self):
-        if not os.path.exists(self.log_path):
-            self.is_active = False
+        if not self.is_process_running() or not os.path.exists(self.log_path):
+            if self.is_active or self._last_size != -1 or self.batc_dep_icao or self.batc_arr_icao:
+                self.is_active = False
+                self._last_size = -1
+                self._file_offset = 0
+                self._pending_gsx_block.clear()
+                self.player_callsign = ""
+                self.batc_dep_icao = ""
+                self.batc_arr_icao = ""
+                self.batc_dep_rwy = ""
+                self.batc_arr_rwy = ""
+                self.batc_dep_gate = ""
+                self.batc_arr_gate = ""
+                self.batc_dep_via = []
+                self.batc_arr_via = []
+                self.hub.clear_inactive_atc_source(GateSource.BEYOND_ATC)
+            else:
+                self.is_active = False
             return
 
         try:
             st = os.stat(self.log_path)
             age_sec = time.time() - st.st_mtime
-            # Consider BATC active if Player.log was modified within the last 3 hours
+            # Consider BATC active if BeyondATC.exe is running and Player.log was modified within the last 3 hours
             self.is_active = (age_sec < 10800)
 
             # Handle initial attach or file truncation (new BATC launch)
@@ -1978,8 +2096,8 @@ class BeyondATCWatcher:
         return tokens
 
     def resync_current_flight(self):
-        """Re-applies cached BATC runway and gate ONLY if BATC's active flight matches the loaded flight plan."""
-        if not self._is_matching_active_flight():
+        """Re-applies cached BATC runway and gate ONLY if BeyondATC.exe is running and its active flight matches the loaded flight plan."""
+        if not self.is_process_running() or not self._is_matching_active_flight():
             return
         dep_icao = self.hub.get_phase_icao("departure")
         arr_icao = self.hub.get_phase_icao("arrival")
@@ -2118,6 +2236,24 @@ class BeyondATCWatcher:
             else:
                 self._pending_gsx_block.clear()
 
+        # 2b. Detect BeyondATC pre-allocation of player's arrival stand on approach ([GateEvict] ... removed from GATE_140_NONE by PLAYER ...)
+        m_evict = self._re_gate_evict_player.search(line)
+        if m_evict:
+            raw_token = m_evict.group(1).strip()
+            t_parts = parse_gsx_gate_tokens(raw_token)
+            gate_str = t_parts.get("search_query") or clean_gate_token(raw_token)
+            if gate_str:
+                self.batc_arr_gate = gate_str
+                if self._is_matching_active_flight() and self.batc_arr_icao:
+                    self.hub.on_external_atc_gate_detected(
+                        phase="arrival",
+                        icao=self.batc_arr_icao,
+                        raw_gate=gate_str,
+                        source=GateSource.BEYOND_ATC,
+                        force_override=True
+                    )
+            return
+
         # 3. Detect arrival or departure taxi clearance script trigger
         if "AICommunicationSystem.IFR.TaxiToGateInstructionFinal" in line:
             self._expecting_taxi_instruction = True
@@ -2139,11 +2275,31 @@ class BeyondATCWatcher:
                         phase="departure",
                         icao=self.batc_dep_icao,
                         raw_gate=gate_raw,
-                        source=GateSource.BEYOND_ATC
+                        source=GateSource.BEYOND_ATC,
+                        force_override=True
                     )
 
+            # 3a-bis. Check if player selected a specific arrival gate from BeyondATC's dropdown menu
+            # ('[Instruction] Beeline 3033, request taxi to Gate 142.')
+            m_req_arr = self._re_player_req_arr_gate.search(line)
+            if m_req_arr:
+                gate_raw = m_req_arr.group(1).strip()
+                if gate_raw and self.batc_arr_icao:
+                    self.batc_arr_gate = gate_raw
+                    self._expecting_taxi_instruction = True
+                    if self._is_matching_active_flight():
+                        self.hub.on_external_atc_gate_detected(
+                            phase="arrival",
+                            icao=self.batc_arr_icao,
+                            raw_gate=gate_raw,
+                            source=GateSource.BEYOND_ATC,
+                            force_override=True
+                        )
+                    return
+
             # 3b. Check if ATC is giving a Runway instruction (Clearance, Taxi to Runway, Approach, Landing)
-            m_rwy = self._re_instruction_rwy.search(line)
+            m_taxi_to_gate = self._re_taxi_to_gate.search(line)
+            m_rwy = None if m_taxi_to_gate else self._re_instruction_rwy.search(line)
             if m_rwy:
                 rwy = m_rwy.group(1).strip().upper()
                 line_low = line.lower()
@@ -2164,7 +2320,7 @@ class BeyondATCWatcher:
 
             # 3c. Check if ATC is giving a Taxi instruction with explicit 'via ...' routing or Gate assignment
             via_tokens = self._extract_taxi_via_tokens(line)
-            m_taxi = self._re_taxi_to_gate.search(line) or self._re_instruction_gate.search(line) or self._re_gate_approved.search(line)
+            m_taxi = m_taxi_to_gate or self._re_instruction_gate.search(line) or self._re_gate_approved.search(line)
             if via_tokens and not m_taxi:
                 line_low = line.lower()
                 if any(k in line_low for k in ("holding point", "hold short", "runway", "line up", "backtrack")) or getattr(self, "_expecting_dep_taxi_instruction", False):
@@ -2184,8 +2340,11 @@ class BeyondATCWatcher:
 
             if m_taxi:
                 gate_raw = m_taxi.group(1).strip()
-                # If preceded by TaxiToGateInstructionFinal or aircraft is near arrival, treat as arrival
-                phase = "arrival" if self._expecting_taxi_instruction else self.hub.infer_active_phase()
+                # If preceded by TaxiToGateInstructionFinal, or matches 'taxi to Stand/Gate', or aircraft is near arrival, treat as arrival
+                if self._expecting_taxi_instruction or m_taxi_to_gate:
+                    phase = "arrival"
+                else:
+                    phase = self.hub.infer_active_phase()
                 self._expecting_taxi_instruction = False
                 if phase == "arrival":
                     self.batc_arr_gate = gate_raw
@@ -2213,7 +2372,8 @@ class BeyondATCWatcher:
                             phase=phase,
                             icao=icao,
                             raw_gate=gate_raw,
-                            source=GateSource.BEYOND_ATC
+                            source=GateSource.BEYOND_ATC,
+                            force_override=True
                         )
                 return
 
@@ -2227,7 +2387,8 @@ class BeyondATCWatcher:
                     phase="departure",
                     icao=self.batc_dep_icao,
                     raw_gate=gate_raw,
-                    source=GateSource.BEYOND_ATC
+                    source=GateSource.BEYOND_ATC,
+                    force_override=True
                 )
 
     def _finalize_gsx_block(self):
@@ -2254,16 +2415,21 @@ class BeyondATCWatcher:
                     phase="arrival",
                     icao=self.batc_arr_icao,
                     raw_gate=gate_str,
-                    source=GateSource.BEYOND_ATC
+                    source=GateSource.BEYOND_ATC,
+                    force_override=True
                 )
 
 
 class SayIntentionsWatcher:
     """
-    Watches %LOCALAPPDATA%\\SayIntentionsAI\\flight.json for:
-      - `flight_details.api_key` (used for outbound SAPI `assignGate` calls)
-      - `flight_details.current_flight.assigned_gate` (+ lat/lon)
-      - `flight_details.current_flight.flight_plan_arriving_runway` / `flight_plan_departing_runway`
+    Watches %LOCALAPPDATA%\\SayIntentionsAI\\flight.json (and SAPI getCommsHistory) for:
+      - `flight_details.api_key` (used for outbound SAPI `assignGate` calls & comms polling)
+      - `flight_details.runway` / `user_locked_runway` / `departure_wx` / `arrival_wx`
+      - `flight_details.current_flight.flight_plan_departing_runway` / `flight_plan_arriving_runway`
+      - `flight_details.current_flight.flight_plan_origin_runway_entry_lat/lon` & `hold_point_lat/lon`
+      - `flight_details.current_flight.taxi_path` (exact GPS polyline of cleared taxi route -> `via_tokens`)
+      - `flight_details.current_flight.assigned_gate` (+ `assigned_gate_lat` / `assigned_gate_lon`)
+      - SAPI `getCommsHistory` radio transcript for live clearance & taxi instructions
     """
     def __init__(self, hub: "InteroperabilityHub"):
         self.hub = hub
@@ -2274,9 +2440,24 @@ class SayIntentionsWatcher:
         self._last_mtime = 0.0
         self.api_key: str = ""
         self.is_active: bool = False
+        self._cached_flight_json: Optional[Dict[str, Any]] = None
         self._last_observed_gate: Dict[str, str] = {"departure": "", "arrival": ""}
         self._last_observed_rwy: Dict[str, str] = {"departure": "", "arrival": ""}
+        self._last_observed_via: Dict[str, List[str]] = {"departure": [], "arrival": []}
+        self._last_taxi_path_sig: Any = None
         self._last_sapi_pushed: Dict[str, str] = {"departure": "", "arrival": ""}
+        self._sapi_confirmed_gate: Dict[str, str] = {"departure": "", "arrival": ""}
+        self._sapi_push_attempts: Dict[str, int] = {"departure": 0, "arrival": 0}
+        self._last_sapi_retry_ts: float = 0.0
+        self._last_cf_flight_id: str = ""
+        self._last_comm_id: int = 0
+        self._last_comms_poll_ts: float = 0.0
+        self._comms_poll_busy: bool = False
+        self._active_flight_id: str = ""
+        self._re_twy_token = re.compile(
+            r'^(?:(?:INNER|OUTER|NORTH|SOUTH|EAST|WEST|MAIN|LOOP|INN|OUT)(?:[\s\-]*\d+)?|LINK[\s\-]*[A-Z0-9]+|[A-Z]{1,4}(?:[\s\-]*\d{1,3}[A-Z]?)?)$',
+            re.IGNORECASE
+        )
 
     def record_outbound_sapi_gate(self, phase: str, icao: str, raw_gate: str):
         if phase in ("departure", "arrival") and icao and raw_gate:
@@ -2297,6 +2478,12 @@ class SayIntentionsWatcher:
                     data = json.load(f)
                 fd = data.get("flight_details") or {}
                 self.api_key = str(fd.get("api_key") or "").strip()
+                if self.api_key and not str(self.hub.config.settings.get("sayintentions_api_key") or "").strip():
+                    self.hub.config.settings["sayintentions_api_key"] = self.api_key
+                    try:
+                        self.hub.config.save()
+                    except Exception:
+                        pass
             except Exception:
                 pass
         return self.api_key
@@ -2304,8 +2491,14 @@ class SayIntentionsWatcher:
     def resync_current_flight(self):
         """Force re-read of flight.json when a new flight is loaded in GateFinder."""
         self._last_mtime = 0.0
+        self._cached_flight_json = None
         self._last_observed_gate = {"departure": "", "arrival": ""}
         self._last_observed_rwy = {"departure": "", "arrival": ""}
+        self._last_observed_via = {"departure": [], "arrival": []}
+        self._sapi_confirmed_gate = {"departure": "", "arrival": ""}
+        self._sapi_push_attempts = {"departure": 0, "arrival": 0}
+        self._last_sapi_retry_ts = 0.0
+        self._last_taxi_path_sig = None
         self._in_resync = True
         try:
             self.poll()
@@ -2336,12 +2529,22 @@ class SayIntentionsWatcher:
                 d_lon = dep_c.get("center_lon") if dep_c.get("center_lon") is not None else dep_d.get("lon")
                 a_lat = arr_c.get("center_lat") if arr_c.get("center_lat") is not None else arr_d.get("lat")
                 a_lon = arr_c.get("center_lon") if arr_c.get("center_lon") is not None else arr_d.get("lon")
-                if d_lat is not None and d_lon is not None and dep_icao:
-                    if haversine(gate_lat, gate_lon, float(d_lat), float(d_lon)) < 25000.0:
-                        return "departure", dep_icao
-                if a_lat is not None and a_lon is not None and arr_icao:
-                    if haversine(gate_lat, gate_lon, float(a_lat), float(a_lon)) < 25000.0:
-                        return "arrival", arr_icao
+                matched_dep = (
+                    d_lat is not None and d_lon is not None and dep_icao
+                    and haversine(gate_lat, gate_lon, float(d_lat), float(d_lon)) < 25000.0
+                )
+                matched_arr = (
+                    a_lat is not None and a_lon is not None and arr_icao
+                    and haversine(gate_lat, gate_lon, float(a_lat), float(a_lon)) < 25000.0
+                )
+                if matched_dep and matched_arr and dep_icao == arr_icao:
+                    return self.hub.infer_active_phase(), dep_icao
+                if matched_arr:
+                    return "arrival", arr_icao
+                if matched_dep:
+                    return "departure", dep_icao
+                # Coordinates are >25km away from both loaded airports -> stale gate from another airport!
+                return "", ""
             except Exception:
                 pass
 
@@ -2362,21 +2565,491 @@ class SayIntentionsWatcher:
 
         return "arrival", (arr_icao or dest_icao)
 
+    def _clean_rwy_token(self, raw_rwy: Any) -> str:
+        if not raw_rwy:
+            return ""
+        s = str(raw_rwy).strip().upper()
+        if "," in s:
+            parts = [p.strip() for p in s.split(",") if p.strip()]
+            s = parts[0] if parts else ""
+        s = re.sub(r'^RWY\s*', '', s).strip()
+        m = re.match(r'^(\d{1,2}[LRC]?)$', s)
+        if m:
+            tok = m.group(1)
+            if len(tok) == 1 or (len(tok) == 2 and tok[-1] in "LRC"):
+                tok = "0" + tok
+            return tok
+        return ""
+
+    def _pick_rwy_from_wx_list(self, raw_list: Any, phase: str) -> str:
+        if not raw_list:
+            return ""
+        parts = [self._clean_rwy_token(p) for p in str(raw_list).split(",") if p.strip()]
+        valid = [p for p in parts if p]
+        if not valid:
+            return ""
+        fd = self.hub.backend.current_flight_data or {}
+        apt = fd.get(phase) or {}
+        cur_rwy = self._clean_rwy_token(apt.get("selected_runway"))
+        if cur_rwy and cur_rwy in valid:
+            return cur_rwy
+        return valid[0]
+
+    def _match_runway_from_coords(self, phase: str, icao: str, lat: float, lon: float, entry_hdg: Optional[float] = None) -> str:
+        """
+        Matches a threshold/entry/hold-short GPS coordinate (`flight_plan_origin_runway_entry_lat/lon`
+        or `taxi_path[-1]`) to the specific runway end (e.g. '25R' vs '19' at EBBR) at `icao`,
+        incorporating `entry_hdg` when available to disambiguate adjacent thresholds.
+        """
+        try:
+            from taxi_router import haversine_m, bearing_deg
+            fd = self.hub.backend.current_flight_data or {}
+            apt = fd.get(phase) or {}
+            if str(apt.get("icao") or "").strip().upper() != icao:
+                return ""
+            chart = apt.get("chart_data") or {}
+            runways = chart.get("runways") or []
+            best_rwy = ""
+            best_score = 320.0
+            for r in runways:
+                ref = str(r.get("ref") or "").strip().upper()
+                pts = r.get("points") or []
+                if not ref or len(pts) < 2:
+                    continue
+                p0, p1 = pts[0], pts[-1]
+                d0 = haversine_m(lat, lon, float(p0[0]), float(p0[1]))
+                d1 = haversine_m(lat, lon, float(p1[0]), float(p1[1]))
+                parts = [p.strip() for p in re.split(r'[/\-]', ref) if p.strip()]
+                if len(parts) == 2:
+                    # Determine which end is p0->p1 vs p1->p0 via runway bearing
+                    brg_01 = bearing_deg(float(p0[0]), float(p0[1]), float(p1[0]), float(p1[1]))
+                    brg_10 = (brg_01 + 180.0) % 360.0
+                    m0 = re.match(r'^(\d{1,2})', parts[0])
+                    if m0:
+                        hdg0 = int(m0.group(1)) * 10.0
+                        diff0 = abs((brg_01 - hdg0 + 180.0) % 360.0 - 180.0)
+                        if diff0 <= 90.0:
+                            end0_tok, end0_brg = parts[0], brg_01
+                            end1_tok, end1_brg = parts[1], brg_10
+                        else:
+                            end0_tok, end0_brg = parts[1], brg_01
+                            end1_tok, end1_brg = parts[0], brg_10
+                        pen0 = 0.0
+                        pen1 = 0.0
+                        if entry_hdg is not None:
+                            hd0 = abs((float(entry_hdg) - end0_brg + 180.0) % 360.0 - 180.0)
+                            hd1 = abs((float(entry_hdg) - end1_brg + 180.0) % 360.0 - 180.0)
+                            pen0 = hd0 * 4.0 if hd0 <= 75.0 else 500.0
+                            pen1 = hd1 * 4.0 if hd1 <= 75.0 else 500.0
+                        if d0 <= 280.0 and (d0 + pen0) < best_score:
+                            best_score = d0 + pen0
+                            best_rwy = self._clean_rwy_token(end0_tok)
+                        if d1 <= 280.0 and (d1 + pen1) < best_score:
+                            best_score = d1 + pen1
+                            best_rwy = self._clean_rwy_token(end1_tok)
+                elif len(parts) == 1:
+                    if min(d0, d1) < best_score:
+                        best_score = min(d0, d1)
+                        best_rwy = self._clean_rwy_token(parts[0])
+            return best_rwy
+        except Exception:
+            return ""
+
+    def _process_si_taxi_path(self, cf: Dict[str, Any], dep_icao: str, arr_icao: str, cur_apt: str, fd: Optional[Dict[str, Any]] = None):
+        """
+        Converts SayIntentions's `current_flight.taxi_path` GPS breadcrumb array into:
+          1. Clean ordered `via_tokens` (e.g. ['W2', 'LJS', 'W22', 'W21']) using heading-aligned
+             projection onto the airport's taxiway graph + sandwich crossing collapse.
+          2. Automatic target runway detection (on departure) or target stand detection (on arrival).
+        """
+        tp = cf.get("taxi_path")
+        if not isinstance(tp, list) or len(tp) < 2:
+            return
+        try:
+            p0 = (tp[0] or {}).get("point") or {}
+            pn = (tp[-1] or {}).get("point") or {}
+            lat0, lon0 = float(p0["lat"]), float(p0["lon"])
+            latn, lonn = float(pn["lat"]), float(pn["lon"])
+            hdgn = float(tp[-1]["heading"]) if (tp[-1] or {}).get("heading") is not None else None
+        except (KeyError, ValueError, TypeError):
+            return
+
+        pn_prev = (tp[-2] or {}).get("point") if len(tp) >= 2 else None
+        tail_sig = (
+            round(latn, 5),
+            round(lonn, 5),
+            round(float(pn_prev["lat"]), 5) if isinstance(pn_prev, dict) and pn_prev.get("lat") is not None else None,
+            round(float(pn_prev["lon"]), 5) if isinstance(pn_prev, dict) and pn_prev.get("lon") is not None else None,
+        )
+        sig = (len(tp), round(lat0, 5), round(lon0, 5), round(latn, 5), round(lonn, 5))
+        if not getattr(self, "_in_resync", False):
+            if sig == self._last_taxi_path_sig:
+                return
+            # When SayIntentions merely trims passed breadcrumbs from the front of the active taxi_path during taxiing,
+            # ignore the prefix-only shrink so we don't stall on O(P*T) projection or reset `atc_taxi_via` mid-taxi.
+            prev_tail = getattr(self, "_last_taxi_path_tail_sig", None)
+            prev_len = getattr(self, "_last_taxi_path_len", 0)
+            if prev_tail is not None and tail_sig == prev_tail and 0 < len(tp) < prev_len:
+                self._last_taxi_path_sig = sig
+                self._last_taxi_path_len = len(tp)
+                return
+        self._last_taxi_path_sig = sig
+        self._last_taxi_path_tail_sig = tail_sig
+        self._last_taxi_path_len = len(tp)
+
+        try:
+            from taxi_router import haversine_m, bearing_deg
+            fd_gf = self.hub.backend.current_flight_data or {}
+            dep_d = fd_gf.get("departure") or {}
+            arr_d = fd_gf.get("arrival") or {}
+            dep_c = dep_d.get("chart_data") or {}
+            arr_c = arr_d.get("chart_data") or {}
+
+            d_lat = dep_c.get("center_lat") if dep_c.get("center_lat") is not None else dep_d.get("lat")
+            d_lon = dep_c.get("center_lon") if dep_c.get("center_lon") is not None else dep_d.get("lon")
+            a_lat = arr_c.get("center_lat") if arr_c.get("center_lat") is not None else arr_d.get("lat")
+            a_lon = arr_c.get("center_lon") if arr_c.get("center_lon") is not None else arr_d.get("lon")
+
+            near_dep = (
+                d_lat is not None and d_lon is not None and dep_icao
+                and haversine_m(lat0, lon0, float(d_lat), float(d_lon)) < 18000.0
+            )
+            near_arr = (
+                a_lat is not None and a_lon is not None and arr_icao
+                and haversine_m(lat0, lon0, float(a_lat), float(a_lon)) < 18000.0
+            )
+            if not near_dep and not near_arr:
+                return
+
+            if near_dep and near_arr and dep_icao == arr_icao:
+                # Same-airport VFR/local flight: check if path ends at a runway (departure) or at a stand (arrival)
+                rwy_end = self._match_runway_from_coords("departure", dep_icao, latn, lonn, entry_hdg=hdgn)
+                rwy_start = self._match_runway_from_coords("arrival", arr_icao, lat0, lon0)
+                if rwy_end and not rwy_start:
+                    phase, target_icao, chart = "departure", dep_icao, dep_c
+                elif rwy_start and not rwy_end:
+                    phase, target_icao, chart = "arrival", arr_icao, arr_c
+                else:
+                    phase = self.hub.infer_active_phase()
+                    target_icao = dep_icao if phase == "departure" else arr_icao
+                    chart = dep_c if phase == "departure" else arr_c
+            elif near_dep and (not near_arr or self.hub.infer_active_phase() == "departure"):
+                phase, target_icao, chart = "departure", dep_icao, dep_c
+            else:
+                phase, target_icao, chart = "arrival", arr_icao, arr_c
+
+            # 1. If departure taxi_path ends at a runway threshold, ensure that runway is selected
+            if phase == "departure":
+                explicit_rwy = (
+                    self._clean_rwy_token(cf.get("flight_plan_departing_runway"))
+                    or self._clean_rwy_token((fd or {}).get("user_locked_runway"))
+                    or self._clean_rwy_token((fd or {}).get("runway"))
+                )
+                rwy_from_tp = explicit_rwy or self._match_runway_from_coords("departure", target_icao, latn, lonn, entry_hdg=hdgn)
+                if rwy_from_tp:
+                    rwy_key = f"{target_icao}:{rwy_from_tp}"
+                    if self._last_observed_rwy.get("departure") != rwy_key:
+                        self._last_observed_rwy["departure"] = rwy_key
+                        self.hub.on_external_atc_runway_detected("departure", target_icao, rwy_from_tp, GateSource.SAY_INTENTIONS)
+
+            # 2. If arrival taxi_path ends at a stand and no gate was explicitly assigned yet, detect that stand
+            elif phase == "arrival" and not str(cf.get("assigned_gate") or "").strip():
+                best_st_ref = ""
+                best_st_d = 32.0
+                for st in (chart.get("stands") or []):
+                    if st.get("lat") is not None and st.get("lon") is not None:
+                        d_st = haversine_m(latn, lonn, float(st["lat"]), float(st["lon"]))
+                        if d_st < best_st_d:
+                            best_st_d = d_st
+                            best_st_ref = str(st.get("ref") or "").strip()
+                if best_st_ref:
+                    self.hub.on_external_atc_gate_detected(
+                        phase="arrival",
+                        icao=target_icao,
+                        raw_gate=best_st_ref,
+                        source=GateSource.SAY_INTENTIONS,
+                        lat=latn,
+                        lon=lonn,
+                        force_override=True
+                    )
+
+            # 3. Project taxi_path points onto named taxiways in `chart`
+            twys = [t for t in (chart.get("taxiways") or []) if str(t.get("ref") or "").strip()]
+            if not twys:
+                return
+
+            import math
+            cos_ref = max(0.15, math.cos(math.radians(lat0)))
+            lon_pad = 0.00032 / cos_ref
+            seg_candidates = []
+            for t in twys:
+                ref = str(t["ref"]).strip().upper()
+                pts = t.get("points") or []
+                for i in range(len(pts) - 1):
+                    la0_s, lo0_s = float(pts[i][0]), float(pts[i][1])
+                    la1_s, lo1_s = float(pts[i + 1][0]), float(pts[i + 1][1])
+                    seg_brg = bearing_deg(la0_s, lo0_s, la1_s, lo1_s)
+                    seg_candidates.append((
+                        ref, la0_s, lo0_s, la1_s, lo1_s, seg_brg,
+                        min(la0_s, la1_s) - 0.00032, max(la0_s, la1_s) + 0.00032,
+                        min(lo0_s, lo1_s) - lon_pad, max(lo0_s, lo1_s) + lon_pad,
+                    ))
+
+            raw_hits: List[str] = []
+            for idx, pt_obj in enumerate(tp):
+                pt = (pt_obj or {}).get("point") or {}
+                if pt.get("lat") is None or pt.get("lon") is None:
+                    continue
+                plat, plon = float(pt["lat"]), float(pt["lon"])
+                hdg = pt_obj.get("heading")
+                if hdg is not None:
+                    hdg = float(hdg)
+                elif idx + 1 < len(tp):
+                    nxt = (tp[idx + 1] or {}).get("point") or {}
+                    if nxt.get("lat") is not None and nxt.get("lon") is not None:
+                        hdg = bearing_deg(plat, plon, float(nxt["lat"]), float(nxt["lon"]))
+
+                best_ref = None
+                best_score = 22.0
+                for ref, la0_s, lo0_s, la1_s, lo1_s, seg_brg, min_la, max_la, min_lo, max_lo in seg_candidates:
+                    if plat < min_la or plat > max_la or plon < min_lo or plon > max_lo:
+                        continue
+                    axial_diff = 0.0
+                    if hdg is not None:
+                        diff = abs((hdg - seg_brg + 180.0) % 360.0 - 180.0)
+                        axial_diff = min(diff, 180.0 - diff)
+                        if axial_diff > 55.0:
+                            continue
+                    for f in (0.0, 0.25, 0.5, 0.75, 1.0):
+                        slat = la0_s + f * (la1_s - la0_s)
+                        slon = lo0_s + f * (lo1_s - lo0_s)
+                        d = haversine_m(plat, plon, slat, slon)
+                        sc = d + axial_diff * 0.15
+                        if sc < best_score:
+                            best_score = sc
+                            best_ref = ref
+                if best_ref:
+                    raw_hits.append(best_ref)
+
+            seq: List[str] = []
+            for r in raw_hits:
+                if not seq or seq[-1] != r:
+                    seq.append(r)
+
+            # Collapse perpendicular crossing sandwiches (A -> ... -> A => A)
+            via_tokens: List[str] = []
+            i = 0
+            while i < len(seq):
+                r = seq[i]
+                via_tokens.append(r)
+                last_idx = max(j for j in range(i, len(seq)) if seq[j] == r)
+                i = last_idx + 1
+
+            if via_tokens and self._last_observed_via.get(phase) != via_tokens:
+                self._last_observed_via[phase] = list(via_tokens)
+                self.hub.on_external_atc_taxi_via_detected(phase, target_icao, via_tokens, GateSource.SAY_INTENTIONS)
+        except Exception as exc:
+            print(f"[SayIntentionsWatcher] taxi_path parse warning: {exc}")
+
+    def _poll_comms_history_async(self, dep_icao: str, arr_icao: str):
+        """
+        Polls SayIntentions SAPI `getCommsHistory` in the background (at most once every 3.0s)
+        to intercept spoken ATC runway clearances, taxiway `via ...` clearances, and gate assignments.
+        """
+        now = time.time()
+        if self._comms_poll_busy or (now - self._last_comms_poll_ts) < 3.0:
+            return
+        api_key = self.api_key
+        if not api_key:
+            return
+        self._comms_poll_busy = True
+        self._last_comms_poll_ts = now
+
+        def _worker():
+            try:
+                url = (
+                    f"https://apipri.sayintentions.ai/sapi/getCommsHistory?"
+                    f"api_key={urllib.parse.quote(api_key)}&client_version=SiComLink_3.0.0"
+                )
+                req = urllib.request.Request(url, headers={"User-Agent": "GateFinder/2.0"})
+                with urllib.request.urlopen(req, timeout=3.5) as resp:
+                    payload = json.loads(resp.read().decode("utf-8", errors="ignore"))
+                history = payload.get("comm_history") or []
+                if not isinstance(history, list) or not history:
+                    return
+
+                flight_id = str(payload.get("flight_id") or "")
+                if flight_id and flight_id != self._active_flight_id:
+                    self._active_flight_id = flight_id
+                    # On initial attach to an active flight, process the last 5 ATC messages
+                    min_id = 0
+                    recent = sorted(history, key=lambda x: int(x.get("id") or 0))[-5:]
+                else:
+                    min_id = self._last_comm_id
+                    recent = [
+                        e for e in sorted(history, key=lambda x: int(x.get("id") or 0))
+                        if int(e.get("id") or 0) > min_id
+                    ]
+
+                for entry in recent:
+                    cid = int(entry.get("id") or 0)
+                    if cid > self._last_comm_id:
+                        self._last_comm_id = cid
+                    chan = str(entry.get("channel") or "").strip().upper()
+                    station = str(entry.get("station_name") or "").strip()
+                    # Ignore cabin crew / co-pilot intercom checklist chatter
+                    if chan.startswith("INTERCOM") or station.lower() in ("co-pilot", "cabin crew", "ramp crew", "guide", "tour guide"):
+                        continue
+
+                    ident = str(entry.get("ident") or "").strip().upper()
+                    in_msg = re.sub(r'<[^>]+>', ' ', str(entry.get("incoming_message_english") or entry.get("incoming_message") or "")).strip()
+                    out_msg = re.sub(r'<[^>]+>', ' ', str(entry.get("outgoing_message_english") or entry.get("outgoing_message") or "")).strip()
+
+                    # Determine phase from ident or active phase
+                    if ident and ident == dep_icao and ident != arr_icao:
+                        msg_phase, msg_icao = "departure", dep_icao
+                    elif ident and ident == arr_icao and ident != dep_icao:
+                        msg_phase, msg_icao = "arrival", arr_icao
+                    else:
+                        msg_phase = self.hub.infer_active_phase()
+                        msg_icao = dep_icao if msg_phase == "departure" else arr_icao
+
+                    if not msg_icao:
+                        continue
+
+                    # 1. Check pilot request for a specific gate (e.g. "request taxi to gate 142")
+                    if in_msg:
+                        m_pil_gate = re.search(
+                            r'\brequest\s+(?:progressive\s+)?taxi\s+to\s+(?:(?:gate|stand|ramp|parking|dock)\s+)+([A-Z]{0,4}[\s_\-]*\d+[A-Z]?)\b',
+                            in_msg,
+                            re.IGNORECASE
+                        )
+                        if m_pil_gate:
+                            g_req = m_pil_gate.group(1).strip()
+                            g_req_key = f"{msg_icao}:{clean_gate_token(g_req)}"
+                            self._sapi_confirmed_gate[msg_phase] = g_req_key
+                            self._last_observed_gate[msg_phase] = g_req_key
+                            self.hub.on_external_atc_gate_detected(
+                                phase=msg_phase,
+                                icao=msg_icao,
+                                raw_gate=g_req,
+                                source=GateSource.SAY_INTENTIONS,
+                                force_override=True
+                            )
+
+                    if not out_msg:
+                        continue
+
+                    # 2. Check ATC runway assignment in outgoing_message
+                    m_rwy = re.search(r'\brunway\s+(\d{1,2}\s*(?:left|right|center|[LRC])?)\b', out_msg, re.IGNORECASE)
+                    if m_rwy and not re.search(r'\bcross\s+runway\s+' + re.escape(m_rwy.group(1)), out_msg, re.IGNORECASE):
+                        raw_r = m_rwy.group(1).strip().upper()
+                        raw_r = re.sub(r'\s+LEFT$', 'L', raw_r)
+                        raw_r = re.sub(r'\s+RIGHT$', 'R', raw_r)
+                        raw_r = re.sub(r'\s+CENTER$', 'C', raw_r)
+                        r_clean = self._clean_rwy_token(raw_r)
+                        if r_clean:
+                            out_low = out_msg.lower()
+                            if any(k in out_low for k in ("departure", "holding point", "hold short", "line up", "takeoff", "cleared for takeoff", "initial climb", "squawk")):
+                                r_phase = "departure"
+                            elif any(k in out_low for k in ("approach", "cleared to land", "expect", "landing", "vacate")):
+                                r_phase = "arrival"
+                            else:
+                                r_phase = msg_phase
+                            r_icao = dep_icao if r_phase == "departure" else arr_icao
+                            if r_icao:
+                                rwy_key = f"{r_icao}:{r_clean}"
+                                if self._last_observed_rwy.get(r_phase) != rwy_key:
+                                    self._last_observed_rwy[r_phase] = rwy_key
+                                    self.hub.on_external_atc_runway_detected(r_phase, r_icao, r_clean, GateSource.SAY_INTENTIONS)
+
+                    # 3. Check ATC gate assignment in outgoing_message ("taxi to Gate 142 via ...")
+                    m_gate = re.search(
+                        r'\b(?:taxi|proceed|continue|assigned|expect|approved)\s+(?:to\s+|for\s+)?(?:(?:gate|stand|ramp|parking|dock)\s+)+([A-Z]{0,4}[\s_\-]*\d+[A-Z]?)\b',
+                        out_msg,
+                        re.IGNORECASE
+                    )
+                    if m_gate:
+                        g_raw = m_gate.group(1).strip()
+                        g_raw_key = f"{msg_icao}:{clean_gate_token(g_raw)}"
+                        self._sapi_confirmed_gate[msg_phase] = g_raw_key
+                        self._last_observed_gate[msg_phase] = g_raw_key
+                        self.hub.on_external_atc_gate_detected(
+                            phase=msg_phase,
+                            icao=msg_icao,
+                            raw_gate=g_raw,
+                            source=GateSource.SAY_INTENTIONS,
+                            force_override=True
+                        )
+
+                    # 4. If `taxi_path` has not already populated via_tokens, check explicit 'via ...' in outgoing_message
+                    if "taxi" in out_msg.lower() and "via " in out_msg.lower():
+                        via_toks = self.hub.batc_watcher._extract_taxi_via_tokens(out_msg)
+                        if via_toks and not self._last_observed_via.get(msg_phase):
+                            self._last_observed_via[msg_phase] = list(via_toks)
+                            self.hub.on_external_atc_taxi_via_detected(msg_phase, msg_icao, via_toks, GateSource.SAY_INTENTIONS)
+            except Exception:
+                pass
+            finally:
+                self._comms_poll_busy = False
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def is_process_running(self) -> bool:
+        return is_process_running_win32((
+            "SayIntentionsAI.exe",
+            "SayIntentions.exe",
+            "SayIntentionsPilot.exe",
+            "si_dispatcher.exe",
+            "si_sidecar.exe"
+        ))
+
     def poll(self):
-        if not os.path.exists(self.json_path):
-            self.is_active = False
+        if not self.is_process_running() or not os.path.exists(self.json_path):
+            if self.is_active or any(self._last_observed_gate.values()) or any(self._last_observed_rwy.values()):
+                self.is_active = False
+                self._last_mtime = 0.0
+                self._cached_flight_json = None
+                self._last_observed_gate = {"departure": "", "arrival": ""}
+                self._last_observed_rwy = {"departure": "", "arrival": ""}
+                self._last_observed_via = {"departure": [], "arrival": []}
+                self._last_taxi_path_sig = None
+                self.hub.clear_inactive_atc_source(GateSource.SAY_INTENTIONS)
+            else:
+                self.is_active = False
             return
 
         try:
+            was_active = self.is_active
             st = os.stat(self.json_path)
             age_sec = time.time() - st.st_mtime
             self.is_active = (age_sec < 10800)
-            if st.st_mtime <= self._last_mtime:
-                return
-            self._last_mtime = st.st_mtime
 
-            with open(self.json_path, "r", encoding="utf-8", errors="ignore") as f:
-                data = json.load(f)
+            if self.is_active and not was_active:
+                self._last_mtime = 0.0
+                self._cached_flight_json = None
+                self._last_observed_rwy = {"departure": "", "arrival": ""}
+                self._last_observed_via = {"departure": [], "arrival": []}
+                self._last_taxi_path_sig = None
+                self.hub._user_overridden_rwy = {"departure": None, "arrival": None}
+
+            arr_icao = self.hub.get_phase_icao("arrival")
+            dep_icao = self.hub.get_phase_icao("departure")
+
+            # Poll SAPI getCommsHistory periodically even between flight.json writes
+            if self.is_active and self.api_key and (dep_icao or arr_icao):
+                self._poll_comms_history_async(dep_icao, arr_icao)
+
+            if st.st_mtime > self._last_mtime or self._cached_flight_json is None:
+                with open(self.json_path, "r", encoding="utf-8", errors="ignore") as f:
+                    data = json.load(f)
+                self._last_mtime = st.st_mtime
+                self._cached_flight_json = data
+            else:
+                data = self._cached_flight_json
+
+            if not isinstance(data, dict):
+                return
 
             fd = data.get("flight_details") or {}
             ak = str(fd.get("api_key") or "").strip()
@@ -2384,79 +3057,178 @@ class SayIntentionsWatcher:
                 self.api_key = ak
 
             cf = fd.get("current_flight") or {}
+            cf_flight_id = str(cf.get("flight_id") or "").strip()
+            if cf_flight_id and cf_flight_id != self._last_cf_flight_id:
+                self._last_cf_flight_id = cf_flight_id
+                # A new flight just started in SayIntentions (`flight.json`); reset confirmation
+                # state so GateFinder pushes its smart arrival stand via `sapi/assignGate` instead
+                # of letting SayIntentions' un-synced initial default stand overwrite GateFinder!
+                self._sapi_confirmed_gate["arrival"] = ""
+                self._sapi_push_attempts["arrival"] = 0
+                self._last_sapi_retry_ts = 0.0
+
             dest_icao = str(cf.get("flight_destination") or "").strip().upper()
             orig_icao = str(cf.get("flight_origin") or cf.get("flight_plan_origin") or "").strip().upper()
             cur_apt = str(fd.get("current_airport") or "").strip().upper()
 
-            arr_icao = self.hub.get_phase_icao("arrival")
-            dep_icao = self.hub.get_phase_icao("departure")
+            # Check whether flight.json's origin/destination match our loaded flight,
+            # OR if the aircraft in SayIntentions (`cur_apt`) is currently at our departure/arrival airport (VFR / local flight)
+            orig_matches_dep = bool(dep_icao and (orig_icao == dep_icao or (not orig_icao and cur_apt == dep_icao) or cur_apt == dep_icao))
+            dest_matches_arr = bool(
+                arr_icao and (
+                    dest_icao == arr_icao
+                    or (not dest_icao and (cur_apt == arr_icao or orig_matches_dep))
+                    or cur_apt == arr_icao
+                )
+            )
 
-            # Ignore SayIntentions flight.json if it still belongs to a different flight plan
-            if orig_icao and dep_icao and orig_icao != dep_icao:
+            if not orig_matches_dep and not dest_matches_arr:
                 return
-            if dest_icao and arr_icao and dest_icao != arr_icao:
-                return
 
-            # 1. Check SayIntentions Runways (Departure & Arrival)
-            si_dep_rwy = str(cf.get("flight_plan_departing_runway") or "").strip().upper()
-            if si_dep_rwy and dep_icao and (not orig_icao or orig_icao == dep_icao):
-                rwy_key = f"{dep_icao}:{si_dep_rwy}"
-                if self._last_observed_rwy.get("departure") != rwy_key:
-                    self._last_observed_rwy["departure"] = rwy_key
-                    self.hub.on_external_atc_runway_detected("departure", dep_icao, si_dep_rwy, GateSource.SAY_INTENTIONS)
+            # 1. Check SayIntentions Runways (Departure & Arrival — IFR + VFR)
+            if dep_icao and orig_matches_dep:
+                si_dep_rwy = self._clean_rwy_token(cf.get("flight_plan_departing_runway")) if orig_icao == dep_icao else ""
+                if not si_dep_rwy and cur_apt == dep_icao and self.hub.infer_active_phase() == "departure":
+                    si_dep_rwy = self._clean_rwy_token(fd.get("user_locked_runway")) or self._clean_rwy_token(fd.get("runway"))
+                if not si_dep_rwy and orig_icao == dep_icao:
+                    try:
+                        elat = cf.get("flight_plan_origin_runway_entry_lat") or cf.get("flight_plan_origin_hold_point_lat")
+                        elon = cf.get("flight_plan_origin_runway_entry_lon") or cf.get("flight_plan_origin_hold_point_lon")
+                        ehdg_raw = cf.get("flight_plan_origin_runway_entry_heading") or cf.get("flight_plan_origin_hold_point_heading")
+                        ehdg = float(ehdg_raw) if ehdg_raw not in (None, "") else None
+                        if elat and elon:
+                            si_dep_rwy = self._match_runway_from_coords("departure", dep_icao, float(elat), float(elon), entry_hdg=ehdg)
+                    except (ValueError, TypeError):
+                        pass
+                if not si_dep_rwy:
+                    dep_wx = fd.get("departure_wx") or {}
+                    if str(dep_wx.get("airport") or "").strip().upper() == dep_icao:
+                        si_dep_rwy = (
+                            self._pick_rwy_from_wx_list(dep_wx.get("active_runways_departing"), "departure")
+                            or self._clean_rwy_token(dep_wx.get("preferred_runway_ga_departing"))
+                        )
+                if si_dep_rwy:
+                    rwy_key = f"{dep_icao}:{si_dep_rwy}"
+                    if self._last_observed_rwy.get("departure") != rwy_key:
+                        self._last_observed_rwy["departure"] = rwy_key
+                        self.hub.on_external_atc_runway_detected("departure", dep_icao, si_dep_rwy, GateSource.SAY_INTENTIONS)
 
-            si_arr_rwy = str(cf.get("flight_plan_arriving_runway") or "").strip().upper()
-            if si_arr_rwy and arr_icao and (not dest_icao or dest_icao == arr_icao) and self.hub.infer_active_phase() == "arrival":
-                rwy_key = f"{arr_icao}:{si_arr_rwy}"
-                if self._last_observed_rwy.get("arrival") != rwy_key:
-                    self._last_observed_rwy["arrival"] = rwy_key
-                    self.hub.on_external_atc_runway_detected("arrival", arr_icao, si_arr_rwy, GateSource.SAY_INTENTIONS)
+            if arr_icao and dest_matches_arr:
+                si_arr_rwy = self._clean_rwy_token(cf.get("flight_plan_arriving_runway")) if dest_icao == arr_icao else ""
+                if not si_arr_rwy and cur_apt == arr_icao and self.hub.infer_active_phase() == "arrival":
+                    si_arr_rwy = self._clean_rwy_token(fd.get("user_locked_runway")) or self._clean_rwy_token(fd.get("runway"))
+                if not si_arr_rwy:
+                    arr_wx = fd.get("arrival_wx") or {}
+                    if str(arr_wx.get("airport") or "").strip().upper() == arr_icao:
+                        si_arr_rwy = (
+                            self._pick_rwy_from_wx_list(arr_wx.get("active_runways_arriving"), "arrival")
+                            or self._clean_rwy_token(arr_wx.get("preferred_runway_ga_arriving"))
+                        )
+                if si_arr_rwy and (self.hub.infer_active_phase() == "arrival" or dest_icao == arr_icao):
+                    rwy_key = f"{arr_icao}:{si_arr_rwy}"
+                    if self._last_observed_rwy.get("arrival") != rwy_key:
+                        self._last_observed_rwy["arrival"] = rwy_key
+                        self.hub.on_external_atc_runway_detected("arrival", arr_icao, si_arr_rwy, GateSource.SAY_INTENTIONS)
 
-            # 2. Check SayIntentions Assigned Gate
+            # 2. Check SayIntentions Taxi Clearance Path (`current_flight.taxi_path`)
+            self._process_si_taxi_path(cf, dep_icao, arr_icao, cur_apt, fd=fd)
+
+            # 3. Trigger Comms History check for spoken clearances
+            if self.api_key:
+                self._poll_comms_history_async(dep_icao, arr_icao)
+
+            # 4. Outbound SAPI sync FIRST for matched phases (and retry pushing arrival stand until
+            # SayIntentions confirms it via SAPI when an active flight starts in SayIntentions)
+            now_poll = time.time()
+            if not self.hub.batc_watcher.is_active:
+                for ph, matched in (("departure", orig_matches_dep), ("arrival", dest_matches_arr)):
+                    if not matched:
+                        continue
+                    c_dec = self.hub.active_decision.get(ph)
+                    if not c_dec or not c_dec.gate_id or c_dec.gate_id in ("N/A", "No Gate Found", "No Suitable Stand"):
+                        continue
+                    if c_dec.source in (
+                        GateSource.STANDALONE_GF,
+                        GateSource.VATSIM_CLEAN,
+                        GateSource.USER_MANUAL,
+                        GateSource.GSX_LIVE
+                    ):
+                        self.hub._sync_gate_to_sayintentions_on_change(c_dec, previous_gate=None, force_sapi=True)
+                        self._last_sapi_retry_ts = now_poll
+                    elif ph == "arrival":
+                        want_arr_key = f"{c_dec.icao.strip().upper()}:{clean_gate_token(c_dec.gate_id)}"
+                        if (
+                            self._sapi_confirmed_gate.get("arrival") != want_arr_key
+                            and (now_poll - self._last_sapi_retry_ts) >= 8.0
+                        ):
+                            self._last_sapi_retry_ts = now_poll
+                            self.hub._sync_gate_to_sayintentions_on_change(c_dec, previous_gate=None, force_sapi=True)
+
+            # 5. Check SayIntentions Assigned Gate (`assigned_gate` + `assigned_gate_lat`/`lon`)
             assigned_gate = str(cf.get("assigned_gate") or "").strip()
-            if not assigned_gate:
-                return
-
-            # Parse optional GPS coordinates provided by SayIntentions
-            gate_lat, gate_lon = None, None
-            try:
-                if cf.get("assigned_gate_lat"):
-                    gate_lat = float(cf["assigned_gate_lat"])
-                if cf.get("assigned_gate_lon"):
-                    gate_lon = float(cf["assigned_gate_lon"])
-            except (ValueError, TypeError):
+            if assigned_gate:
                 gate_lat, gate_lon = None, None
+                try:
+                    if cf.get("assigned_gate_lat"):
+                        gate_lat = float(cf["assigned_gate_lat"])
+                    if cf.get("assigned_gate_lon"):
+                        gate_lon = float(cf["assigned_gate_lon"])
+                except (ValueError, TypeError):
+                    gate_lat, gate_lon = None, None
 
-            target_phase, target_icao = self._resolve_gate_phase_and_icao(
-                assigned_gate=assigned_gate,
-                gate_lat=gate_lat,
-                gate_lon=gate_lon,
-                cur_apt=cur_apt,
-                dep_icao=dep_icao,
-                arr_icao=arr_icao,
-                dest_icao=dest_icao
-            )
+                target_phase, target_icao = self._resolve_gate_phase_and_icao(
+                    assigned_gate=assigned_gate,
+                    gate_lat=gate_lat,
+                    gate_lon=gate_lon,
+                    cur_apt=cur_apt,
+                    dep_icao=dep_icao,
+                    arr_icao=arr_icao,
+                    dest_icao=dest_icao
+                )
 
-            if not target_icao:
-                return
-
-            cur_dec = self.hub.active_decision.get(target_phase)
-            if getattr(self, "_in_resync", False) and cur_dec and cur_dec.source == GateSource.USER_MANUAL:
-                return
-
-            obs_key = f"{target_icao}:{clean_gate_token(assigned_gate)}"
-            if self._last_observed_gate.get(target_phase) == obs_key:
-                return
-            self._last_observed_gate[target_phase] = obs_key
-
-            self.hub.on_external_atc_gate_detected(
-                phase=target_phase,
-                icao=target_icao,
-                raw_gate=assigned_gate,
-                source=GateSource.SAY_INTENTIONS,
-                lat=gate_lat,
-                lon=gate_lon
-            )
+                if target_icao and not (target_phase == "departure" and dep_icao and arr_icao and dep_icao != arr_icao):
+                    cur_dec = self.hub.active_decision.get(target_phase)
+                    obs_key = f"{target_icao}:{clean_gate_token(assigned_gate)}"
+                    if cur_dec and clean_gate_token(cur_dec.gate_id) == clean_gate_token(assigned_gate):
+                        # `flight.json` already matches our current gate decision -> mark confirmed!
+                        self._sapi_confirmed_gate[target_phase] = obs_key
+                        self._last_observed_gate[target_phase] = obs_key
+                    else:
+                        # Do NOT let SayIntentions' un-synced initial default `assigned_gate` in `flight.json`
+                        # (e.g. random remote/cargo-adjacent stand `Gate A51` at EHAM) overwrite GateFinder's
+                        # airline/GSX gate (`B35`) before our outbound `sapi/assignGate` push has been confirmed!
+                        cur_has_valid_gate = bool(
+                            cur_dec
+                            and cur_dec.gate_id
+                            and cur_dec.gate_id not in ("N/A", "No Gate Found", "No Suitable Stand")
+                        )
+                        cur_want_key = f"{target_icao}:{clean_gate_token(cur_dec.gate_id)}" if cur_has_valid_gate else ""
+                        awaiting_sapi_sync = bool(
+                            target_phase == "arrival"
+                            and cur_has_valid_gate
+                            and self._sapi_confirmed_gate.get("arrival") != cur_want_key
+                            and (
+                                self._sapi_push_attempts.get("arrival", 0) < 2
+                                or (cur_apt != target_icao and self.hub.infer_active_phase() == "departure")
+                            )
+                        )
+                        if awaiting_sapi_sync:
+                            if (now_poll - self._last_sapi_retry_ts) >= 3.0:
+                                self._last_sapi_retry_ts = now_poll
+                                self.hub._sync_gate_to_sayintentions_on_change(cur_dec, previous_gate=None, force_sapi=True)
+                        elif not (getattr(self, "_in_resync", False) and cur_dec and cur_dec.source == GateSource.USER_MANUAL):
+                            if self._last_observed_gate.get(target_phase) != obs_key:
+                                self._last_observed_gate[target_phase] = obs_key
+                                self._sapi_confirmed_gate[target_phase] = obs_key
+                                self.hub.on_external_atc_gate_detected(
+                                    phase=target_phase,
+                                    icao=target_icao,
+                                    raw_gate=assigned_gate,
+                                    source=GateSource.SAY_INTENTIONS,
+                                    lat=gate_lat,
+                                    lon=gate_lon,
+                                    force_override=True
+                                )
 
         except Exception as exc:
             print(f"[SayIntentionsWatcher] Poll warning: {exc}")
@@ -2740,14 +3512,44 @@ class InteroperabilityHub:
     # ------------------------------------------------------------------
     # EDGE CASE 2: SAYINTENTIONS SAPI HOOKED TO GLOBAL ON_GATE_CHANGED
     # ------------------------------------------------------------------
-    def _sync_gate_to_sayintentions_on_change(self, decision: GateDecision, previous_gate: Optional[str]):
+    def _sync_gate_to_sayintentions_on_change(
+        self,
+        decision: GateDecision,
+        previous_gate: Optional[str],
+        force_sapi: bool = False
+    ):
         """
         Whenever a gate changes in GateFinder (initial load, manual gate change,
         Pre-TOD VATSIM reassignment, or conflict resolution keeping GateFinder's gate),
         push the gate to SayIntentions via SAPI (`assignGate`) if an API key is available.
+        Also tags pre-assigned stands with the SayIntentions.AI badge when SayIntentions is active.
         """
-        if decision.source == GateSource.SAY_INTENTIONS:
+        if decision.source == GateSource.SAY_INTENTIONS and not force_sapi:
             # Avoid echoing back a gate that came from SayIntentions itself
+            return
+
+        if (
+            self.si_watcher.is_active
+            and not self.batc_watcher.is_active
+            and decision.source in (
+                GateSource.STANDALONE_GF,
+                GateSource.VATSIM_CLEAN,
+                GateSource.USER_MANUAL,
+                GateSource.GSX_LIVE
+            )
+        ):
+            decision.source = GateSource.SAY_INTENTIONS
+            fd = self.backend.current_flight_data
+            if fd and isinstance(fd.get(decision.phase), dict):
+                fd[decision.phase]["gate_source"] = GateSource.SAY_INTENTIONS.value
+                fd[decision.phase]["gate_source_key"] = GateSource.SAY_INTENTIONS.name
+
+        # SayIntentions only stores a single `assigned_gate` for the destination/arrival airport;
+        # never push departure stands to `sapi/assignGate` (which would overwrite the arrival gate).
+        if decision.phase != "arrival":
+            return
+
+        if not self.si_watcher.is_process_running():
             return
 
         api_key = self.si_watcher.get_api_key()
@@ -2756,6 +3558,9 @@ class InteroperabilityHub:
 
         # Clean gate identifier for SayIntentions SAPI (e.g. "D 92" -> "D92" or "42")
         gate_param = re.sub(r'^(GATE|STAND|PARKING|RAMP)\s*', '', str(decision.gate_id), flags=re.IGNORECASE).strip()
+        want_key = f"{decision.icao.strip().upper()}:{clean_gate_token(gate_param)}"
+        if self.si_watcher._sapi_confirmed_gate.get("arrival") != want_key:
+            self.si_watcher._sapi_confirmed_gate["arrival"] = ""
         self.si_watcher.record_outbound_sapi_gate(decision.phase, decision.icao, gate_param)
 
         def _sapi_push():
@@ -2774,13 +3579,39 @@ class InteroperabilityHub:
                     with urllib.request.urlopen(req, timeout=5.0) as resp:
                         body = resp.read().decode("utf-8", errors="ignore")
                     self._last_sapi_call_ts = time.time()
+                    sapi_ok = True
+                    sapi_err = ""
+                    try:
+                        resp_json = json.loads(body)
+                        if isinstance(resp_json, dict):
+                            if resp_json.get("error"):
+                                sapi_ok = False
+                                sapi_err = str(resp_json.get("error"))
+                                if "no active flight" not in sapi_err.lower():
+                                    self.si_watcher._sapi_push_attempts["arrival"] = (
+                                        self.si_watcher._sapi_push_attempts.get("arrival", 0) + 1
+                                    )
+                            else:
+                                self.si_watcher._sapi_confirmed_gate["arrival"] = want_key
+                                self.si_watcher._last_observed_gate["arrival"] = want_key
+                                self.si_watcher._sapi_push_attempts["arrival"] = 0
+                                if resp_json.get("assigned_gate_name"):
+                                    assigned_nm = str(resp_json["assigned_gate_name"])
+                                    self.si_watcher.record_outbound_sapi_gate(
+                                        decision.phase, decision.icao, assigned_nm
+                                    )
+                                    conf_k = f"{decision.icao.strip().upper()}:{clean_gate_token(assigned_nm)}"
+                                    self.si_watcher._last_observed_gate["arrival"] = conf_k
+                    except Exception:
+                        pass
                     with self.lock:
                         self.last_sapi_sync_status = {
                             "timestamp": int(time.time()),
                             "phase": decision.phase,
                             "icao": decision.icao,
                             "gate": decision.gate_id,
-                            "ok": True,
+                            "ok": sapi_ok,
+                            "error": sapi_err,
                             "response": body[:120]
                         }
                 except Exception as exc:
@@ -3357,6 +4188,38 @@ class InteroperabilityHub:
                 self._user_overridden_rwy[phase] = None
                 apt["runway_manual_override"] = False
 
+    def clear_inactive_atc_source(self, source: GateSource):
+        """
+        Clears stale AI ATC source labels / taxiway overrides when the external AI ATC
+        process (BeyondATC or SayIntentions) is not running.
+        """
+        with self.lock:
+            fd = self.backend.current_flight_data
+            if not fd:
+                return
+            src_val_u = source.value.upper()
+            for phase in ("departure", "arrival"):
+                apt = fd.get(phase)
+                if not isinstance(apt, dict):
+                    continue
+                changed_route = False
+                if str(apt.get("atc_runway_source") or "").upper() == src_val_u:
+                    apt["atc_runway_source"] = None
+                    apt["atc_runway"] = None
+                if str(apt.get("runway_source") or "").upper() == src_val_u:
+                    apt["runway_source"] = None
+                if src_val_u in str(apt.get("gate_source") or "").upper():
+                    apt["gate_source"] = "GateFinder"
+                    apt["gate_source_key"] = GateSource.STANDALONE_GF.name
+                cur_dec = self.active_decision.get(phase)
+                if cur_dec and cur_dec.source == source:
+                    cur_dec.source = GateSource.STANDALONE_GF
+                if not apt.get("custom_taxi_mode") and apt.get("atc_taxi_via") and source in (GateSource.BEYOND_ATC, GateSource.SAY_INTENTIONS):
+                    apt["atc_taxi_via"] = None
+                    changed_route = True
+                if changed_route:
+                    self.backend.set_active_runway(phase, apt.get("selected_runway"), manual=False)
+
     def on_external_atc_runway_detected(self, phase: str, icao: str, raw_rwy: str, source: GateSource):
         """
         Invoked when BeyondATC or SayIntentions assigns or changes the active runway
@@ -3384,11 +4247,10 @@ class InteroperabilityHub:
             apt["atc_runway_source"] = source.value
             apt["runway_source"] = source.value
             cur_dec = self.active_decision.get(phase)
-            if not (cur_dec and cur_dec.source == GateSource.USER_MANUAL):
-                apt["gate_source"] = source.value
-                apt["gate_source_key"] = source.name
-                if cur_dec:
-                    cur_dec.source = source
+            apt["gate_source"] = source.value
+            apt["gate_source_key"] = source.name
+            if cur_dec:
+                cur_dec.source = source
 
             # If user explicitly overrode this exact ATC runway, keep atc_runway metadata but don't revert their choice
             if self._user_overridden_rwy.get(phase) == f"{icao_u}:{rwy_clean}":
@@ -3418,20 +4280,21 @@ class InteroperabilityHub:
             apt["atc_runway_source"] = source.value
             apt["runway_source"] = source.value
             cur_dec = self.active_decision.get(phase)
-            if not (cur_dec and cur_dec.source == GateSource.USER_MANUAL):
-                apt["gate_source"] = source.value
-                apt["gate_source_key"] = source.name
-                if cur_dec:
-                    cur_dec.source = source
-            if apt.get("atc_taxi_via") == via_tokens:
+            apt["gate_source"] = source.value
+            apt["gate_source_key"] = source.name
+            if cur_dec:
+                cur_dec.source = source
+            if apt.get("atc_taxi_via") == via_tokens and not apt.get("custom_taxi_mode"):
                 return
+            apt["custom_taxi_mode"] = False
             apt["atc_taxi_via"] = list(via_tokens)
             self.backend.set_active_runway(phase, apt.get("selected_runway"), manual=False)
 
     def on_external_atc_gate_detected(self, phase: str, icao: str, raw_gate: str,
                                       source: GateSource,
                                       lat: Optional[float] = None,
-                                      lon: Optional[float] = None):
+                                      lon: Optional[float] = None,
+                                      force_override: bool = False):
         """
         Invoked when BeyondATC or SayIntentions assigns a gate.
         """
@@ -3488,7 +4351,7 @@ class InteroperabilityHub:
 
             prioritize_atc = bool(self.config.settings.get("prioritize_ai_atc", True))
 
-            if prioritize_atc or current is None:
+            if force_override or prioritize_atc or current is None:
                 self._apply_gate_decision(
                     phase=phase,
                     icao=icao,

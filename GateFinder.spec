@@ -13,6 +13,7 @@ a = Analysis(
         ('src\\icon.png', '.'),
         ('src\\icon.ico', '.'),
         ('default_airports_db.bin', '.'),
+        ('SimConnect_MSFS.dll', '.'),
         ('airlines_terminals.json', '.'),
         ('MSFS_Package\\gatefinder-ingame-panel', 'MSFS_Package\\gatefinder-ingame-panel'),
         (simconnect_dll, 'SimConnect'),

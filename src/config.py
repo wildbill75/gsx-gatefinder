@@ -93,6 +93,23 @@ def find_msfs_community_folder():
     c20, c24 = find_msfs_community_folders()
     return c20 or c24
 
+def find_sayintentions_api_key():
+    local_appdata = os.environ.get("LOCALAPPDATA", "")
+    if not local_appdata:
+        return ""
+    fj_path = os.path.join(local_appdata, "SayIntentionsAI", "flight.json")
+    if os.path.exists(fj_path):
+        try:
+            with open(fj_path, "r", encoding="utf-8", errors="ignore") as f:
+                data = json.load(f)
+            fd = data.get("flight_details") or {}
+            key = str(fd.get("api_key") or "").strip()
+            if key:
+                return key
+        except Exception:
+            pass
+    return ""
+
 class Config:
     def __init__(self):
         if getattr(sys, 'frozen', False):
@@ -105,10 +122,12 @@ class Config:
             default_gsx = ""
             
         c20_def, c24_def = find_msfs_community_folders()
+        si_key_def = find_sayintentions_api_key()
             
         self._default_gsx = default_gsx
         self._default_c20 = c20_def
         self._default_c24 = c24_def
+        self._default_si_key = si_key_def
             
         self.settings = {
             "gsx_profile_path": default_gsx,
@@ -116,7 +135,7 @@ class Config:
             "msfs_community2024_path": c24_def,
             "simbrief_username": "",
             "auto_start": False,
-            "auto_quit_with_msfs": False,
+            "auto_quit_with_msfs": True,
             "fenix_efb_enabled": True,
             "auto_fetch": True,
             "map_style": "Satellite Imagery",
@@ -134,7 +153,9 @@ class Config:
             "auto_inject_gsx": True,
             "gsx_request_follow_me": False,
             "vatsim_tod_refresh_nm": 180.0,
-            "sayintentions_api_key": "",
+            "sayintentions_api_key": si_key_def,
+            "map_follow_refresh_hz": 10,
+            "suppress_popups_in_cockpit": False,
             "send_crash_reports": True,
             "share_flight_stats": True
         }
@@ -155,6 +176,10 @@ class Config:
                         needs_resave_af = True
                     else:
                         needs_resave_af = False
+                    if not data.get("_v204_autoquit_migrated"):
+                        data["auto_quit_with_msfs"] = True
+                        data["_v204_autoquit_migrated"] = True
+                        needs_resave_af = True
                     # Always enforce V2.0 non-deprecated defaults for retired V1 toggles
                     data["show_maps"] = True
                     data["show_wingspan"] = True
@@ -174,6 +199,7 @@ class Config:
                             data["gsx_profile_path"] = self._default_gsx
                             data["msfs_community_path"] = self._default_c20
                             data["msfs_community2024_path"] = self._default_c24
+                            data["sayintentions_api_key"] = self._default_si_key
                             if str(data.get("simbrief_username", "")).strip().lower() == "wildbill75":
                                 data["simbrief_username"] = ""
                             needs_resave = True
@@ -187,6 +213,11 @@ class Config:
                         if stored_p and not os.path.exists(stored_p) and local_def:
                             data[k] = local_def
                             needs_resave = True
+
+                    # Auto-populate SayIntentions SAPI key from local SayIntentionsAI installation if blank
+                    if not str(data.get("sayintentions_api_key") or "").strip() and self._default_si_key:
+                        data["sayintentions_api_key"] = self._default_si_key
+                        needs_resave = True
 
                     self.settings.update(data)
                     if needs_resave or needs_resave_af:

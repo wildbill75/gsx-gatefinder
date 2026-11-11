@@ -11,6 +11,7 @@ import threading
 import random
 import configparser
 import time
+import ctypes
 from network import OnlineNetworkChecker, haversine
 from taxi_router import TaxiRouter
 from interoperability_hub import (
@@ -24,10 +25,13 @@ from SimConnect import SimConnect as SC, RECV_SIMOBJECT_DATA_BYTYPE, OBJECT_ID_U
 from SimConnect.datadef import DataDefinition
 from SimConnect.scdefs import (
     RECV_SIMOBJECT_DATA,
+    RECV_QUIT,
     SIMOBJECT_TYPE_AIRCRAFT,
     PERIOD_SIM_FRAME,
+    PERIOD_SECOND,
     DATATYPE_FLOAT64,
     DATATYPE_INT32,
+    DATATYPE_STRING256,
     DATA_REQUEST_FLAG_CHANGED,
     DATA_REQUEST_FLAG_TAGGED,
 )
@@ -54,11 +58,58 @@ AIRCRAFT_WINGSPANS = {
     'DH8A': 25.9, 'DH8B': 25.9, 'DH8C': 27.4, 'DH8D': 28.4,
     'SF34': 21.4, 'SB20': 24.7, 'F70': 28.1, 'F100': 28.1, 'BA46': 26.3, 'RJ85': 26.3, 'RJ1H': 26.3,
     # Freighters & Heavy Cargo
-    'B77F': 64.8, 'A332F': 60.3, 'B748F': 68.4, 'B744F': 64.4, 'B742F': 64.4,
-    'B738F': 34.3, 'B738BCF': 34.3, 'B733F': 34.3, 'B734F': 34.3,
+    'B77F': 64.8, 'A332F': 60.3, 'A333F': 60.3, 'B748F': 68.4, 'B744F': 64.4, 'B742F': 64.4, 'B74F': 64.4,
+    'B738F': 34.3, 'B738BCF': 34.3, 'B737F': 34.3, 'B733F': 34.3, 'B734F': 34.3, 'B722F': 32.9, 'B722': 32.9,
     'B752F': 38.0, 'B763F': 47.6, 'B762F': 47.6, 'B76F': 47.6, 'MD11': 51.7, 'MD11F': 51.7,
     'A306': 44.8, 'A306F': 44.8, 'A310': 43.9, 'A310F': 43.9, 'A321F': 35.8, 'A320F': 35.8, 'A330F': 60.3,
-    'AN124': 73.3, 'AN225': 88.4, 'AN12': 38.0, 'AN26': 29.2, 'C17': 51.7, 'C130': 40.4
+    'AN124': 73.3, 'AN225': 88.4, 'AN22': 64.4, 'AN12': 38.0, 'AN26': 29.2, 'IL76': 50.5,
+    'AT7F': 27.0, 'AT4F': 24.6, 'C208F': 15.9,
+    # Military Transports, Tankers, AWACS & Maritime Patrol
+    'A400': 42.4, 'A40M': 42.4, 'C17': 51.7, 'C130': 40.4, 'C30J': 40.4,
+    'C5M': 67.9, 'C5': 67.9, 'C160': 40.0, 'C27J': 28.7, 'C295': 25.8, 'CN35': 25.8,
+    'K35R': 39.9, 'KC46': 47.5, 'KC10': 50.4, 'MRTT': 60.3,
+    'E3CF': 44.4, 'E3TF': 44.4, 'P8': 37.6, 'P3': 30.4, 'ATL2': 37.4, 'C2': 24.6, 'V22': 25.8,
+    'B1': 41.8, 'B2': 52.4, 'B52': 56.4, 'VULC': 33.8, 'U2': 31.4, 'SR71': 16.9,
+    # Military Fighters, Attack & Trainers
+    'RFAL': 10.9, 'MIR2': 9.1, 'M2000': 9.1, 'F1': 8.4,
+    'EUFI': 11.0, 'EF2K': 11.0, 'GRIP': 8.4, 'JAS39': 8.4, 'TOR': 13.9,
+    'F14': 19.5, 'F15': 13.1, 'F16': 10.0, 'F18': 13.6, 'FA18': 13.6, 'F18H': 12.3, 'F18S': 13.6,
+    'F22': 13.6, 'F35': 10.7, 'F4': 11.7, 'F5': 8.1, 'F86': 11.3, 'F104': 6.6, 'F117': 13.2,
+    'A10': 17.5, 'AV8B': 9.2, 'HAWK': 9.9, 'T45': 9.4, 'T38': 7.7, 'T6': 10.2,
+    'PC21': 9.1, 'PC9': 10.2, 'PC7': 10.4, 'M346': 9.7, 'L39': 9.5, 'AJET': 9.1,
+    'SU27': 14.7, 'MIG29': 11.4,
+    # General Aviation (Piston, Single/Twin Props & Turboprops)
+    'C150': 10.2, 'C152': 10.2, 'C172': 11.0, 'C177': 10.8, 'C182': 11.0, 'C206': 10.9, 'C210': 11.2,
+    'C208': 15.9, 'C310': 11.3, 'C337': 11.6, 'C340': 11.6, 'C400': 11.0, 'COL3': 11.0, 'COL4': 11.0,
+    'C402': 13.5, 'C404': 14.1, 'C408': 17.3, 'C414': 13.5, 'C421': 12.5, 'C441': 15.1,
+    'SR20': 11.7, 'SR22': 11.7, 'S22T': 11.7, 'T22T': 11.7, 'SF50': 11.8,
+    'DA20': 10.9, 'DA40': 11.9, 'DA42': 13.4, 'DA50': 13.4, 'DA62': 14.6,
+    'PA18': 10.7, 'P28A': 10.7, 'P28B': 10.7, 'P28R': 10.8, 'P28T': 10.8, 'P28U': 10.8,
+    'PA24': 11.0, 'PA27': 11.3, 'PA30': 11.3, 'PA31': 12.4, 'PA32': 11.0, 'PA34': 11.9,
+    'PA38': 10.4, 'PA44': 11.8, 'PA46': 13.1, 'P46T': 13.1,
+    'M20P': 11.0, 'M20T': 11.0,
+    'BE33': 10.2, 'BE35': 10.2, 'BE36': 10.2, 'B36T': 10.2, 'BE55': 11.5, 'BE58': 11.5,
+    'BE60': 12.0, 'BE76': 11.6, 'BE9L': 15.3, 'BE9T': 14.0, 'BE10': 14.0, 'BE20': 16.6, 'B350': 17.7,
+    'TBM7': 12.7, 'TBM8': 12.7, 'TBM9': 12.8,
+    'PC6': 15.9, 'PC12': 16.3, 'KODI': 13.7, 'BN2P': 14.9,
+    'DHC2': 14.6, 'DHC3': 17.7, 'DHC6': 19.8,
+    'DR40': 8.7, 'TB20': 9.8, 'TB21': 9.8, 'VL3': 8.4, 'RV10': 9.7, 'RV14': 8.2,
+    'P06T': 11.4, 'P212': 14.0, 'G21': 14.9, 'G44': 12.2,
+    # Business Jets (Very Light, Light, Midsize, Super-Midsize, Ultra-Long-Range)
+    'EA50': 11.6, 'C510': 13.2, 'HDJT': 12.1, 'PRM1': 13.6,
+    'E50P': 12.3, 'E55P': 15.9,
+    'C500': 14.4, 'C501': 14.4, 'C525': 14.3, 'C25A': 15.2, 'C25B': 16.3, 'C25C': 15.5, 'C25M': 14.4,
+    'C550': 15.9, 'C560': 15.9, 'C56X': 17.0, 'C650': 16.3, 'C680': 19.3, 'C68A': 22.1, 'C700': 21.0, 'C750': 21.1,
+    'PC24': 17.0,
+    'LJ24': 10.9, 'LJ25': 10.9, 'LJ31': 13.4, 'LJ35': 12.0, 'LJ40': 14.6, 'LJ45': 14.6, 'LJ60': 13.3, 'LJ70': 15.5, 'LJ75': 15.5,
+    'H25B': 15.7, 'HA4T': 18.8, 'GALX': 17.7, 'ASTR': 16.1, 'G150': 16.9, 'G280': 19.2,
+    'CL30': 19.5, 'CL35': 21.0, 'CL60': 19.6, 'CRJ1': 21.2,
+    'E545': 20.2, 'E550': 21.5, 'E35L': 21.2,
+    'FA10': 13.1, 'FA20': 16.3, 'FA50': 18.9, 'F900': 19.3, 'F2TH': 21.4, 'FA6X': 25.9, 'FA7X': 26.2, 'FA8X': 26.3,
+    'GL5T': 28.7, 'GLEX': 28.7, 'BD70': 28.7, 'GL7T': 31.7,
+    'GLF2': 21.0, 'GLF3': 23.7, 'GLF4': 23.7, 'GLF5': 28.5, 'GLF6': 30.4,
+    'GA5C': 26.3, 'GA6C': 28.7, 'GA7C': 30.4, 'GA8C': 30.4,
+    'BBJ': 35.8, 'BBJ2': 35.8, 'ACJ': 35.8
 }
 
 VIRTUAL_TO_REAL_AIRLINE_MAP = {
@@ -160,11 +211,347 @@ STRETCHED_NARROWBODY_TYPES = {
 AIRCRAFT_EQUIVALENT_FAMILIES = {
     "BCS1": {"BCS1", "A221"}, "A221": {"BCS1", "A221"},
     "BCS3": {"BCS3", "A223"}, "A223": {"BCS3", "A223"},
-    "A19N": {"A19N", "A319"}, "A20N": {"A20N", "A320"},
+    "A19N": {"A19N", "A319"}, "A319": {"A19N", "A319"},
+    "A20N": {"A20N", "A320"}, "A320": {"A20N", "A320"},
     "A21N": {"A21N", "A321"}, "A321": {"A321", "A21N"},
     "B38M": {"B38M", "B738"}, "B738": {"B738", "B38M"},
     "B39M": {"B39M", "B739"}, "B739": {"B739", "B39M"},
 }
+
+GA_LIGHT_AIRCRAFT_TYPES = {
+    "C150", "C152", "C172", "C177", "C182", "C206", "C210", "C208",
+    "C310", "C337", "C340", "C400", "COL3", "COL4", "C402", "C404", "C408", "C414", "C421", "C441",
+    "SR20", "SR22", "S22T", "T22T", "SF50",
+    "DA20", "DA40", "DA42", "DA50", "DA62",
+    "PA18", "P28A", "P28B", "P28R", "P28T", "P28U", "PA24", "PA27", "PA30",
+    "PA31", "PA32", "PA34", "PA38", "PA44", "PA46", "P46T",
+    "M20P", "M20T",
+    "BE33", "BE35", "BE36", "B36T", "BE55", "BE58", "BE60", "BE76",
+    "BE9L", "BE9T", "BE10", "BE20", "B350",
+    "TBM7", "TBM8", "TBM9",
+    "PC6", "PC12", "KODI", "BN2P", "DHC2", "DHC3", "DHC6",
+    "DR40", "TB20", "TB21", "VL3", "RV10", "RV14", "P06T", "P212", "G21", "G44",
+}
+
+BUSINESS_JET_AIRCRAFT_TYPES = {
+    "EA50", "C510", "HDJT", "PRM1", "E50P", "E55P",
+    "C500", "C501", "C525", "C25A", "C25B", "C25C", "C25M", "C550", "C560",
+    "C56X", "C650", "C680", "C68A", "C700", "C750",
+    "PC24",
+    "LJ24", "LJ25", "LJ31", "LJ35", "LJ40", "LJ45", "LJ60", "LJ70", "LJ75",
+    "H25B", "HA4T", "GALX", "ASTR", "G150", "G280",
+    "CL30", "CL35", "CL60", "CRJ1",
+    "E545", "E550", "E35L",
+    "FA10", "FA20", "FA50", "F900", "F2TH", "FA6X", "FA7X", "FA8X",
+    "GL5T", "GLEX", "BD70", "GL7T",
+    "GLF2", "GLF3", "GLF4", "GLF5", "GLF6",
+    "GA5C", "GA6C", "GA7C", "GA8C",
+    "BBJ", "BBJ2", "ACJ",
+}
+
+BUSINESS_AVIATION_OPERATORS = {
+    "NJE", "EJA", "VJT", "FLX", "LXJ", "FJO", "AHO", "GJE", "XRO", "JFA",
+    "VVG", "ARL", "OJT", "WUP", "TWY", "PEG", "XJC", "EJM", "SJE",
+    "GA", "BIZ",
+}
+
+CARGO_AIRLINE_OPERATORS = {
+    "FDX", "UPS", "DHL", "DHK", "BCS", "DHA", "DAE", "DHX",
+    "CLX", "ICV", "GEC", "BOX", "GTI", "PAC", "CKS", "NCA",
+    "ABX", "AJK", "SQC", "CCG", "CKK", "MPH", "CMA", "FPO",
+    "ABR", "TAY", "CJT", "SWT", "SWN", "NPT", "AZG", "AZQ",
+    "ICL", "CHG", "SRR", "RUN", "MNB", "WGN", "NCR", "AJT",
+    "CSS", "HYT", "YZR", "UTP", "ACP", "BBD", "SRN", "IMX",
+    "CFS", "MTN", "MAL", "NAC", "KFS", "LYC", "TUP", "VDA",
+    "ADB", "CSG", "CAO", "SHQ", "CAR",
+}
+
+MILITARY_FIGHTER_TRAINER_TYPES = {
+    "RFAL", "MIR2", "M2000", "F1", "EUFI", "EF2K", "GRIP", "JAS39", "TOR",
+    "F14", "F15", "F16", "F18", "FA18", "F18H", "F18S", "F22", "F35",
+    "F4", "F5", "F86", "F104", "F117", "A10", "AV8B", "HAWK", "T45",
+    "T38", "T6", "PC21", "PC9", "PC7", "M346", "L39", "AJET", "SU27", "MIG29",
+}
+
+MILITARY_TRANSPORT_HEAVY_TYPES = {
+    "A400", "A40M", "C17", "C130", "C30J", "C5M", "C5", "C160",
+    "C27J", "C295", "CN35", "K35R", "KC46", "KC10", "MRTT",
+    "E3CF", "E3TF", "P8", "P3", "ATL2", "C2", "V22",
+    "B1", "B2", "B52", "VULC", "U2", "SR71",
+}
+
+MILITARY_OPERATORS = {
+    "CTM", "FAF", "FNY", "FMN", "RCH", "RRR", "ASC", "GAF", "BAF",
+    "NAF", "IAM", "AME", "SUI", "CFC", "ASY", "KIW", "PLF", "HAF",
+    "CNV", "OAN", "MIL",
+}
+
+ATC_CALLSIGN_TO_ICAO_MAP = {
+    # Cargo Telephony Callsigns -> ICAO
+    "FEDEX": "FDX", "FEDERAL EXPRESS": "FDX",
+    "UPS": "UPS", "UNITED PARCEL": "UPS",
+    "DHL": "DHK", "WORLD EXPRESS": "DHK", "EUROTRANS": "BCS", "POSTMAN": "BCS",
+    "CARGOLUX": "CLX", "CARGOLUX ITALIA": "ICV",
+    "GERMAN CARGO": "GEC", "LUFTHANSA CARGO": "GEC",
+    "AERO LOGIC": "BOX", "AEROLOGIC": "BOX", "BOX KAR": "BOX",
+    "GIANT": "GTI", "ATLAS AIR": "GTI",
+    "POLAR": "PAC", "POLAR AIR": "PAC",
+    "CONNIE": "CKS", "KALITTA": "CKS",
+    "NIPPON CARGO": "NCA",
+    "ABEX": "ABX",
+    "SINGCARGO": "SQC", "SINGAPORE CARGO": "SQC",
+    "CHINA CARGO": "CKK",
+    "MARTINAIR": "MPH",
+    "CMA CGM": "CMA", "FRENCH CARGO": "CMA",
+    "FRENCH POST": "FPO", "ASL FRANCE": "FPO",
+    "CONTRACT": "ABR", "QUALITY": "TAY",
+    "CARGOJET": "CJT",
+    "SWIFTAIR": "SWT", "SWIFT": "SWT",
+    "AIR SWEDEN": "SWN", "ATLANTIC": "NPT",
+    "SILK WEST": "AZG", "SILK LINE": "AZQ",
+    "CHALLENGE CARGO": "ICL", "CHALLENGE": "ICL",
+    "WHITESTAR": "SRR", "STAR AIR": "SRR", "MAERSK CARGO": "SRR",
+    "CARGO TURK": "RUN", "BLACK SEA": "MNB",
+    "WESTERN GLOBAL": "WGN", "NATIONAL CARGO": "NCR", "AMERIJET": "AJT",
+    "SHUN FENG": "CSS", "ANTONOV BUREAU": "ADB", "VOLGA": "VDA",
+    # Military Telephony Callsigns -> ICAO
+    "COTAM": "CTM", "FRENCH AIR FORCE": "FAF", "ARMEE DE L AIR": "FAF",
+    "FRENCH NAVY": "FNY", "AERONAVALE": "FNY",
+    "REACH": "RCH", "AIR MOBILITY": "RCH", "USAF": "RCH",
+    "ASCOT": "RRR", "RAFAIR": "RRR", "ROYAL AIR FORCE": "RRR",
+    "GERMAN AIR FORCE": "GAF", "LUFTWAFFE": "GAF",
+    "BELGIAN AIR FORCE": "BAF", "NETHERLANDS AIR FORCE": "NAF",
+    "ITALIAN AIR FORCE": "IAM", "AIR MIL": "AME", "SWISS AIR FORCE": "SUI",
+    "CANFORCE": "CFC", "AUSSIE": "ASY", "KIWI": "KIW", "POLISH AIRFORCE": "PLF",
+    "HELLENIC AIR FORCE": "HAF", "CONVOY": "CNV", "NAVY": "CNV", "NATO": "OAN",
+    # Major Passenger Telephony Callsigns -> ICAO (Live MSFS fallback)
+    "AIRFRANS": "AFR", "AIR FRANCE": "AFR",
+    "SPEEDBIRD": "BAW", "BRITISH": "BAW",
+    "LUFTHANSA": "DLH",
+    "KLM": "KLM",
+    "SWISS": "SWR",
+    "AUSTRIAN": "AUA",
+    "BEE LINE": "BEL", "BEELINE": "BEL", "BRUSSELS": "BEL",
+    "EUROWINGS": "EWG",
+    "EASY": "EZY", "EASYJET": "EZY", "ALPINE": "EJU", "TOPSWISS": "EZS",
+    "RYANAIR": "RYR", "MAGIC SUN": "RYS",
+    "TRANSAVIA": "TRA", "FRANCE SOLEIL": "TVF",
+    "VUELING": "VLG", "VOLOTEA": "VOE",
+    "IBERIA": "IBE", "AIR PORTUGAL": "TAP",
+    "SCANDINAVIAN": "SAS", "FINNAIR": "FIN", "SHAMROCK": "EIN",
+    "TURKISH": "THY", "SUNTURK": "PGT",
+    "EMIRATES": "UAE", "QATARI": "QTR", "ETIHAD": "ETD",
+    "AMERICAN": "AAL", "DELTA": "DAL", "UNITED": "UAL", "SOUTHWEST": "SWA",
+    "JETBLUE": "JBU", "AIR CANADA": "ACA",
+    "SINGAPORE": "SIA", "CATHAY": "CPA", "QANTAS": "QFA",
+    "ALL NIPPON": "ANA", "JAPANAIR": "JAL", "KOREANAIR": "KAL",
+    "CORSAIR": "CRL", "FRENCH BEE": "FBU", "FRENCH WEST": "FWI",
+}
+
+
+def resolve_airline_or_callsign_to_icao(raw_val):
+    if not raw_val:
+        return ""
+    s = re.sub(r"\s+", " ", str(raw_val).strip().upper())
+    if not s:
+        return ""
+    if s in ATC_CALLSIGN_TO_ICAO_MAP:
+        return ATC_CALLSIGN_TO_ICAO_MAP[s]
+    for k, v in ATC_CALLSIGN_TO_ICAO_MAP.items():
+        if len(k) >= 5 and k in s:
+            return v
+    if len(s) in (3, 4) and s.isalpha():
+        return normalize_airline_icao(s)
+    return ""
+
+
+def is_military_aircraft_or_flight(ac_icao, ac_name="", base_type="", airline_code="", callsign="", reg="", wingspan=36.0, sim_title=""):
+    """
+    Detects whether an aircraft or flight is Military (Fighter/Trainer or Heavy Military Transport/Tanker)
+    based on aircraft ICAO, base type, name, operator, callsign, and MSFS livery title.
+    """
+    icao_u = str(ac_icao or "").strip().upper()
+    base_u = str(base_type or "").strip().upper()
+    name_u = str(ac_name or "").strip().upper()
+    title_u = str(sim_title or "").strip().upper()
+    al_u = normalize_airline_icao(airline_code)
+    cs_u = str(callsign or "").strip().upper()
+    try:
+        ws = float(wingspan or 36.0)
+    except (ValueError, TypeError):
+        ws = 36.0
+
+    # If explicitly flying for a known civilian cargo operator (e.g. Lynden Air Cargo C-130), treat as civilian cargo
+    if al_u in CARGO_AIRLINE_OPERATORS and al_u != "CAR":
+        return {"is_military": False, "is_heavy_mil": False, "is_fighter_mil": False, "category": ""}
+
+    is_fighter = False
+    is_heavy = False
+
+    if icao_u in MILITARY_FIGHTER_TRAINER_TYPES or base_u in MILITARY_FIGHTER_TRAINER_TYPES:
+        is_fighter = True
+    elif icao_u in MILITARY_TRANSPORT_HEAVY_TYPES or base_u in MILITARY_TRANSPORT_HEAVY_TYPES:
+        is_heavy = True
+    elif al_u in MILITARY_OPERATORS:
+        if ws >= 24.0:
+            is_heavy = True
+        else:
+            is_fighter = True
+
+    if not is_fighter and not is_heavy:
+        for cs_pfx in ("CTM", "FAF", "FNY", "RCH", "RRR", "ASC", "GAF", "BAF", "NAF", "IAM", "CNV", "OAN"):
+            if cs_u.startswith(cs_pfx) and len(cs_u) > len(cs_pfx) and cs_u[len(cs_pfx)].isdigit():
+                if ws >= 24.0:
+                    is_heavy = True
+                else:
+                    is_fighter = True
+                break
+
+    combined_txt = f"{name_u} {title_u}".strip()
+    if not is_fighter and not is_heavy and combined_txt:
+        fighter_kw = (
+            "RAFALE", "MIRAGE", "EUROFIGHTER", "TYPHOON", "GRIPEN", "TORNADO",
+            "F-14", "F14", "TOMCAT", "F-15", "F15", "F-16", "F16", "F-18", "FA-18", "F/A-18", "HORNET",
+            "F-22", "F22", "RAPTOR", "F-35", "F35", "LIGHTNING II", "A-10", "WARTHOG", "THUNDERBOLT II",
+            "HARRIER", "AV-8B", "BAE HAWK", "T-45", "GOSHAWK", "T-38", "TALON", "PC-21", "PILATUS PC21",
+            "ALPHA JET", "ALPHAJET", "M-346", "L-39", "ALBATROS", "SU-27", "MIG-29", "F-4 PHANTOM",
+            "F-104", "STARFIGHTER", "F-117", "NIGHTHAWK",
+        )
+        heavy_mil_kw = (
+            "A400M", "A-400M", "C-17", "GLOBEMASTER", "C-130", "HERCULES", "C-5", "GALAXY",
+            "C-160", "TRANSALL", "C-27J", "SPARTAN", "C-295", "CN-235", "KC-135", "STRATOTANKER",
+            "KC-46", "KC-10", "EXTENDER", "MRTT", "PHENIX", "VOYAGER KC", "E-3", "AWACS", "SENTRY",
+            "P-8", "POSEIDON", "ATLANTIQUE 2", "V-22", "OSPREY", "B-1B", "LANCER", "B-2 SPIRIT",
+            "B-52", "STRATOFORTRESS", "AVRO VULCAN", "SR-71", "BLACKBIRD",
+        )
+        mil_livery_kw = (
+            "ARMEE DE L'AIR", "ARMÉE DE L'AIR", "FRENCH AIR FORCE", "AERONAVALE", "AÉRONAVALE",
+            "FRENCH NAVY", "ROYAL AIR FORCE", "US AIR FORCE", "U.S. AIR FORCE", "USAF", "US NAVY",
+            "U.S. NAVY", "USMC", "LUFTWAFFE", "GERMAN AIR FORCE", "BELGIAN AIR COMPONENT",
+            "MILITARY", "COTAM", "ESCADRON", "SQUADRON",
+        )
+        if any(k in combined_txt for k in fighter_kw):
+            is_fighter = True
+        elif any(k in combined_txt for k in heavy_mil_kw):
+            is_heavy = True
+        elif any(k in combined_txt for k in mil_livery_kw):
+            if ws >= 24.0:
+                is_heavy = True
+            else:
+                is_fighter = True
+
+    is_mil = bool(is_fighter or is_heavy)
+    return {
+        "is_military": is_mil,
+        "is_heavy_mil": is_heavy,
+        "is_fighter_mil": is_fighter,
+        "category": "MIL" if is_mil else "",
+    }
+
+
+def is_military_stand_gate(name, terminal="", g_type="", is_military=False):
+    if is_military:
+        return True
+    name_l = str(name or "").lower().strip()
+    term_l = str(terminal or "").lower().strip()
+    type_l = str(g_type or "").lower().strip()
+    if "military" in name_l or "military" in term_l or "military" in type_l or "mil_" in type_l:
+        return True
+    mil_phrases = (
+        "air base", "base aerienne", "base aérienne", "military apron", "mil apron",
+        "mil ramp", "military ramp", "nato", "otan", "fighter", "squadron", "escadron", "cotam",
+    )
+    for text in (name_l, term_l):
+        if any(p in text for p in mil_phrases):
+            return True
+        words = [w for w in re.split(r"[\s\-_/(),]+", text) if w]
+        if "mil" in words or "mod" in words or "faf" in words or "usaf" in words or "raf" in words:
+            return True
+        for w in words:
+            if w.startswith("mil") and len(w) > 3 and w[3].isdigit():
+                return True
+    return False
+
+
+def is_ga_or_business_flight(ac_icao, ac_name="", base_type="", airline_code="", callsign="", reg="", wingspan=36.0):
+    """
+    Detects whether a flight is General Aviation (light piston / turboprop) or Business Aviation
+    (executive jet / fractional operator) based on aircraft ICAO, base type, name, operator, and wingspan.
+    """
+    icao_u = str(ac_icao or "").strip().upper()
+    base_u = str(base_type or "").strip().upper()
+    name_u = str(ac_name or "").strip().upper()
+    al_u = normalize_airline_icao(airline_code)
+    cs_u = str(callsign or "").strip().upper()
+    reg_u = str(reg or "").strip().upper()
+    try:
+        ws = float(wingspan or 36.0)
+    except (ValueError, TypeError):
+        ws = 36.0
+
+    is_biz = False
+    is_light = False
+
+    if icao_u in BUSINESS_JET_AIRCRAFT_TYPES or base_u in BUSINESS_JET_AIRCRAFT_TYPES:
+        is_biz = True
+    elif icao_u in GA_LIGHT_AIRCRAFT_TYPES or base_u in GA_LIGHT_AIRCRAFT_TYPES:
+        is_light = True
+    elif al_u in BUSINESS_AVIATION_OPERATORS and al_u != "GA":
+        is_biz = True
+    elif al_u == "GA":
+        is_light = True
+
+    if not is_biz and not is_light and name_u:
+        biz_kw = (
+            "CITATION", "GULFSTREAM", "FALCON", "CHALLENGER", "GLOBAL 5", "GLOBAL 6",
+            "GLOBAL 7", "GLOBAL EXPRESS", "LEARJET", "PHENOM", "PRAETOR", "LEGACY 4",
+            "LEGACY 5", "LEGACY 6", "HONDAJET", "PC-24", "PC24", "HAWKER", "ECLIPSE 5",
+            "PREMIER I", "BBJ", "ACJ3",
+        )
+        light_kw = (
+            "CESSNA 1", "CESSNA 2", "CESSNA 3", "CESSNA 4", "SKYHAWK", "SKYLANE",
+            "CARAVAN", "CIRRUS", "VISION JET", "PIPER", "CHEROKEE", "ARCHER",
+            "WARRIOR", "SENECA", "SEMINOLE", "MALIBU", "MERIDIAN", "DIAMOND DA",
+            "BONANZA", "BARON", "KING AIR", "TBM ", "TBM-", "PILATUS PC-12", "PC-12",
+            "PC12", "KODIAK", "ISLANDER", "TWIN OTTER", "BEAVER", "ROBIN DR",
+            "SOCATA", "MOONEY", "VAN'S RV",
+        )
+        if any(k in name_u for k in biz_kw):
+            is_biz = True
+        elif any(k in name_u for k in light_kw):
+            is_light = True
+
+    # Private / tail-number flight without commercial airline code and smaller wingspan
+    if not is_biz and not is_light and not al_u:
+        commercial_airliners = (
+            TURBOPROP_TYPES
+            | REGIONAL_JET_TYPES
+            | STRETCHED_NARROWBODY_TYPES
+            | {
+                "A318", "A319", "A320", "A321", "A19N", "A20N", "A21N",
+                "A332", "A333", "A338", "A339", "A343", "A346", "A359", "A35K", "A388",
+                "B712", "B733", "B734", "B735", "B736", "B737", "B738", "B739",
+                "B37M", "B38M", "B39M", "B3XM", "B744", "B748", "B752", "B753",
+                "B762", "B763", "B764", "B772", "B773", "B77W", "B77L",
+                "B788", "B789", "B78X", "MD11", "A306", "A310",
+            }
+        )
+        if icao_u not in commercial_airliners and base_u not in commercial_airliners:
+            if ws <= 18.5:
+                is_light = True
+            elif ws <= 32.5:
+                is_biz = True
+        elif reg_u and cs_u and cs_u.replace("-", "") == reg_u.replace("-", "") and ws < 30.0:
+            is_biz = True
+
+    is_any_ga = bool(is_biz or is_light)
+    cat = "BIZ" if is_biz else ("GA" if is_light else "")
+    return {
+        "is_ga": is_any_ga,
+        "is_bizjet": is_biz,
+        "is_light_ga": is_light,
+        "category": cat,
+    }
 
 def normalize_airline_icao(code):
     if not code:
@@ -315,6 +702,36 @@ def infer_airport_stand_terminal(icao, gate_name, current_term=""):
             return "Terminal 2"
         if let_val in ("S", "Q", "H") or cur_l in ("apron s", "apron q", "apron h"):
             return "Cargo / Remote Apron"
+
+    if icao_u == "OEDF":
+        if "royal" in cur_l:
+            return "Royal Terminal (VIP)"
+        if "aramco" in cur_l:
+            return "Saudi Aramco Terminal (Private)"
+        if cur_l in ("", "airport terminal", "main apron", "other"):
+            return "Main Passenger Terminal"
+
+    if icao_u == "OMDW":
+        if let_val == "G" or cur_l == "apron g" or any(k in cur_l for k in ("jetex", "vip", "executive", "falcon", "dc aviation")):
+            return "VIP / Executive Aviation Terminal"
+        if let_val == "S" and num_val is not None:
+            if 400 <= num_val <= 499:
+                return "Passenger Terminal (Apron S4)"
+            if 320 <= num_val <= 399:
+                return "Passenger / Remote Apron (Apron S3)"
+            if 200 <= num_val <= 319:
+                return "Cargo Terminal (Apron S2)"
+
+    if icao_u == "KMCI":
+        if not cur or cur_l in ("main apron", "other"):
+            if let_val == "A" or (num_val is not None and 1 <= num_val <= 30):
+                return "Main Terminal (Concourse A)"
+            if let_val in ("B", "C") or (num_val is not None and 31 <= num_val <= 99):
+                return "Main Terminal (Concourse B)"
+
+    if icao_u == "CYMX":
+        if not cur or cur_l in ("main apron", "other"):
+            return "Main Cargo & Charter Apron"
 
     if icao_u == "LHBP" and num_val is not None:
         if g_clean.startswith("R") or (200 <= num_val <= 299):
@@ -514,6 +931,37 @@ AIRLINE_BRAND_STYLES = {
     "GEC": ("#05164D", "#FFAD00", "#05164D", "LH"),
     "BOX": ("#05164D", "#FFCC00", "#FFCC00", "3S"),
     "NJE": ("#0F172A", "#38BDF8", "#38BDF8", "1I"),
+    "EJA": ("#0F172A", "#38BDF8", "#38BDF8", "1I"),
+    "VJT": ("#991B1B", "#F8FAFC", "#DC2626", ""),
+    "FLX": ("#064E3B", "#FDE047", "#10B981", ""),
+    "LXJ": ("#064E3B", "#FDE047", "#10B981", ""),
+    "FJO": ("#064E3B", "#FDE047", "#10B981", ""),
+    "AHO": ("#1E3A8A", "#FFFFFF", "#3B82F6", ""),
+    "GJE": ("#1E293B", "#38BDF8", "#0284C7", ""),
+    "JFA": ("#0C4A6E", "#FFFFFF", "#38BDF8", ""),
+    "VVG": ("#1E293B", "#F8FAFC", "#64748B", ""),
+    "FNY": ("#0F172A", "#F8FAFC", "#38BDF8", ""),
+    "ARL": ("#1E3A8A", "#FFFFFF", "#60A5FA", ""),
+    "OJT": ("#1E293B", "#FFFFFF", "#38BDF8", ""),
+    "WUP": ("#1E3A8A", "#FFFFFF", "#38BDF8", ""),
+    "XJC": ("#0F172A", "#FACC15", "#EAB308", ""),
+    "EJM": ("#0F172A", "#38BDF8", "#0284C7", ""),
+    "TWY": ("#1E293B", "#FFFFFF", "#38BDF8", ""),
+    "GA": ("#0369A1", "#FFFFFF", "#38BDF8", ""),
+    "BIZ": ("#0F172A", "#38BDF8", "#0284C7", ""),
+    "MIL": ("#365314", "#FFFFFF", "#84CC16", ""),
+    "CAR": ("#9A3412", "#FFFFFF", "#F97316", ""),
+    "CTM": ("#1E3A8A", "#FFFFFF", "#EF4444", ""),
+    "FAF": ("#1E3A8A", "#FFFFFF", "#EF4444", ""),
+    "RCH": ("#1E293B", "#FACC15", "#3B82F6", ""),
+    "RRR": ("#1E3A8A", "#FFFFFF", "#DC2626", ""),
+    "GAF": ("#1F2937", "#FACC15", "#E5E7EB", ""),
+    "CMA": ("#00205B", "#FFFFFF", "#E30613", "2C"),
+    "CJT": ("#B91C1C", "#FFFFFF", "#111827", "W8"),
+    "GTI": ("#003087", "#FACC15", "#003087", "5Y"),
+    "CKS": ("#7C2D12", "#FACC15", "#DC2626", "K4"),
+    "PAC": ("#003087", "#FFFFFF", "#38BDF8", "PO"),
+    "NCA": ("#00205B", "#FFFFFF", "#E60012", "KZ"),
 }
 
 
@@ -708,9 +1156,67 @@ AIRLINE_FULL_NAMES = {
     "GEC": "Lufthansa Cargo",
     "BOX": "AeroLogic",
     "NJE": "NetJets Aviation",
+    "EJA": "NetJets Aviation",
+    "VJT": "VistaJet",
+    "FLX": "Flexjet",
+    "LXJ": "Flexjet",
+    "FJO": "Flexjet Europe",
+    "AHO": "Air Hamburg",
+    "GJE": "Global Jet",
+    "JFA": "Jetfly Aviation",
+    "VVG": "Valljet",
+    "FNY": "Aéronavale (French Navy)",
+    "ARL": "Airlec Air Espace",
+    "OJT": "Pan Européenne Air Service",
+    "WUP": "Wheels Up",
+    "XJC": "flyExclusive",
+    "EJM": "Executive Jet Management",
+    "TWY": "Solairus Aviation",
+    "GA": "General Aviation",
+    "BIZ": "Business Aviation",
+    "MIL": "Military Aviation",
+    "CAR": "Cargo Operations",
+    "CTM": "Armée de l'Air (COTAM)",
+    "FAF": "Armée de l'Air et de l'Espace",
+    "RCH": "USAF Air Mobility (Reach)",
+    "RRR": "Royal Air Force (Ascot)",
+    "GAF": "German Air Force (Luftwaffe)",
+    "BAF": "Belgian Air Component",
+    "NAF": "Royal Netherlands Air Force",
+    "IAM": "Italian Air Force",
+    "AME": "Spanish Air Force",
+    "SUI": "Swiss Air Force",
+    "CFC": "Royal Canadian Air Force",
+    "ASY": "Royal Australian Air Force",
+    "CNV": "U.S. Navy Logistics",
+    "OAN": "NATO Operations",
     "LOG": "Loganair",
     "AUR": "Aurigny Air Services",
     "FPO": "ASL Airlines France",
+    "ABR": "ASL Airlines Ireland",
+    "TAY": "ASL Airlines Belgium",
+    "CMA": "CMA CGM Air Cargo",
+    "CJT": "Cargojet Airways",
+    "GTI": "Atlas Air",
+    "PAC": "Polar Air Cargo",
+    "CKS": "Kalitta Air",
+    "NCA": "Nippon Cargo Airlines",
+    "SQC": "Singapore Airlines Cargo",
+    "CKK": "China Cargo Airlines",
+    "MPH": "Martinair Cargo",
+    "ICV": "Cargolux Italia",
+    "SWT": "Swiftair",
+    "SWN": "West Atlantic",
+    "NPT": "West Atlantic UK",
+    "AZG": "Silk Way West Airlines",
+    "ICL": "Challenge Airlines",
+    "SRR": "Maersk Air Cargo",
+    "RUN": "ACT Airlines (myCARGO)",
+    "MNB": "MNG Airlines",
+    "WGN": "Western Global Airlines",
+    "NCR": "National Airlines Cargo",
+    "AJT": "Amerijet International",
+    "CSS": "SF Airlines",
     "TVS": "Smartwings",
     "WIF": "Widerøe",
 }
@@ -1203,19 +1709,16 @@ def infer_stand_airlines(
                 return [c1, c2]
         return [c1]
 
-    cargo_only_set = {
-        "FDX", "UPS", "DHL", "BCS", "DHK", "CLX", "ICV", "BOX", "GTI",
-        "CKS", "PAC", "ABX", "GEC", "MPH", "NCA", "SQC", "CKK"
-    }
+    cargo_only_set = CARGO_AIRLINE_OPERATORS
 
     # 2. Cargo / GA / Military
+    if is_military or is_military_stand_gate(stand_ref, term_l, "", is_military):
+        return ["MIL"]
     if is_cargo or "cargo" in term_l or "fret" in term_l:
         rw_cargo = [[c] for c, cnt in sorted(rw_map.items(), key=lambda x: -x[1]) if c in cargo_only_set and cnt > 0]
         cargo_pool = rw_cargo if len(rw_cargo) >= 2 else [["FDX"], ["DHK"], ["UPS"], ["CLX"], ["GEC"], ["BOX"]]
         return cargo_pool[blk % len(cargo_pool)]
     if is_ga or "general aviation" in term_l or "business" in term_l or "affaires" in term_l:
-        return ["NJE"]
-    if is_military:
         return []
 
     # 3. Airport-Specific Real-World Pier & Stand-Sector Allocations (for stands without explicit GSX airlinecodes)
@@ -1430,26 +1933,39 @@ def infer_stand_airlines(
     return default_pool[blk % len(default_pool)]
 
 
-def is_freighter_aircraft(ac_icao, ac_name=""):
+def is_freighter_aircraft(ac_icao, ac_name="", sim_title=""):
     if not ac_icao: ac_icao = ""
     if not ac_name: ac_name = ""
+    if not sim_title: sim_title = ""
     ac_icao_u = str(ac_icao).upper().strip()
     ac_name_u = str(ac_name).upper().strip()
+    title_u = str(sim_title).upper().strip()
 
     cargo_icaos = {
-        "B77F", "A332F", "B748F", "B744F", "B742F", "B738F", "B738BCF", "B733F", "B734F",
-        "B752F", "B763F", "B762F", "MD11F", "A306F", "A310F", "A321F", "A320F", "A330F",
-        "AN124", "AN225", "AN12", "AN26", "AN72", "C17", "C130", "IL76", "AT7F", "AT4F",
-        "DC10F", "L1011F", "B707F", "DC8F"
+        "B77F", "A332F", "A333F", "B748F", "B744F", "B742F", "B74F", "B738F", "B738BCF", "B737F", "B733F", "B734F",
+        "B722F", "B752F", "B763F", "B762F", "B76F", "MD11F", "A306F", "A310F", "A321F", "A320F", "A330F",
+        "AN124", "AN225", "AN22", "AN12", "AN26", "AN72", "IL76", "AT7F", "AT4F", "C208F",
+        "DC10F", "L1011F", "B707F", "DC8F", "B77L_F"
     }
     if ac_icao_u in cargo_icaos:
         return True
 
-    if (ac_icao_u.endswith("F") and len(ac_icao_u) >= 4) or any(k in ac_icao_u for k in ("BCF", "P2F", "BDSF")):
+    if any(k in ac_icao_u for k in ("BCF", "P2F", "BDSF")) or re.match(r"^(?:A3\d\d|B7\d\d|MD11|DC\d\d|AT\d\d)F$", ac_icao_u):
         return True
 
-    cargo_keywords = ("BCF", "P2F", "BDSF", "FREIGHTER", "CARGO", "ALL-CARGO", "PACK", "FEDEX", "UPS", "DHL", "CARGO-F", "FREIGHT")
-    if (ac_name_u.endswith("F") and len(ac_name_u) >= 4) or any(k in ac_name_u for k in cargo_keywords):
+    combined_u = f"{ac_name_u} {title_u}".strip()
+    if not combined_u:
+        return False
+
+    explicit_freighter_models = (
+        "777F", "777-F", "777-200LRF", "747-8F", "747-400F", "747-400ERF",
+        "A300-600RF", "A300-600F", "A330-200F", "A321-200P2F", "A321P2F", "A320P2F",
+        "MD-11F", "767-300F", "767-300ERF", "757-200F", "737-800F", "737-800BCF", "727-200F",
+    )
+    if any(m in combined_u for m in explicit_freighter_models):
+        return True
+
+    if re.search(r"\b(?:BCF|P2F|BDSF|FREIGHTER|FREIGHT|CARGO|SKYCARGO|ALL-CARGO|FEDEX|UPS|DHL|CARGOLUX|AEROLOGIC)\b", combined_u):
         return True
 
     return False
@@ -1497,14 +2013,21 @@ def is_ga_ramp_gate(name, terminal="", g_type="", is_cargo=False):
     if "cargo" in name_lower or "cargo" in term_lower or "cargo" in g_type_lower:
         return False
 
+    ga_biz_phrases = (
+        "general aviation", "aviation generale", "aviation générale",
+        "business aviation", "aviation d'affaires", "affaires",
+        "private", "small", "prop", "fbo", "vip", "executive",
+        "royal terminal", "royal pavilion", "amiri", "presidential",
+        "state terminal", "aramco", "jetex",
+    )
     for text in (name_lower, term_lower):
-        if "general aviation" in text or "private" in text or "small" in text or "prop" in text:
+        if any(p in text for p in ga_biz_phrases):
             return True
         words = re.split(r'[\s\-_]', text)
-        if "ga" in words or "mil" in words:
+        if "ga" in words or "fbo" in words or "biz" in words:
             return True
         for w in words:
-            if (w.startswith("ga") or w.startswith("mil")) and len(w) > 2 and w[2].isdigit():
+            if w.startswith("ga") and len(w) > 2 and w[2].isdigit():
                 return True
 
     if g_type_lower in ("ga_ramp", "ramp_ga", "small_ramp"):
@@ -1583,6 +2106,17 @@ class SimConnectManager:
         self.arr_icao = None
         self.arr_protected_history = []
         self.user_wingspan = 36.0
+        self.user_sim_wingspan = None
+        self.user_title = ""
+        self.user_atc_model = ""
+        self.user_atc_type = ""
+        self.user_atc_id = ""
+        self.user_atc_airline = ""
+        self.user_livery_name = ""
+        self.user_camera_state = None
+        self._tarmac_anchor_coords = None
+        self._tarmac_stable_since = None
+        self.tarmac_stable_duration = 0.0
         self.dep_loop_active = False
         self.arr_loop_active = False
         self.dep_cleared = False
@@ -1609,10 +2143,29 @@ class SimConnectManager:
         }
         self.gsx_dd = None
         self._msfs_was_running = False
+        self._sim_quit_received = False
+        self._last_proc_alive_check = 0.0
 
         self._log("SimConnectManager initialized.")
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
+
+    def _on_sim_quit(self, recv) -> bool:
+        self._log("Received SIMCONNECT_RECV_ID_QUIT from MSFS — closing SimConnect handle immediately.")
+        self._sim_quit_received = True
+        self.connected = False
+        return True
+
+    def _close_simconnect_handle(self):
+        self.connected = False
+        self.user_dd = None
+        self.gsx_dd = None
+        if self.sm is not None:
+            try:
+                self.sm.Close()
+            except Exception:
+                pass
+            self.sm = None
 
     def _is_msfs_process_running(self) -> bool:
         try:
@@ -1654,17 +2207,25 @@ class SimConnectManager:
         except Exception:
             return False
 
-    def _check_auto_quit_if_msfs_closed(self):
+    def _check_auto_quit_if_msfs_closed(self, force_on_sim_quit: bool = False):
         try:
-            if not self.backend.config.settings.get("auto_quit_with_msfs", False):
+            auto_quit_cfg = bool(self.backend.config.settings.get("auto_quit_with_msfs", True))
+            launched_by_exexml = ("--silent" in sys.argv)
+            if not auto_quit_cfg and not launched_by_exexml:
                 return
+            if force_on_sim_quit:
+                self._log("MSFS sent SIMCONNECT_RECV_ID_QUIT; releasing handles and exiting GateFinder cleanly...")
+                self._close_simconnect_handle()
+                time.sleep(0.25)
+                os._exit(0)
             if self._is_msfs_process_running():
                 self._msfs_was_running = True
                 return
             if self._msfs_was_running:
-                time.sleep(2.0)
-                if not self._is_msfs_process_running() and self.backend.config.settings.get("auto_quit_with_msfs", False):
-                    self._log("MSFS process closed and auto_quit_with_msfs is enabled. Exiting GateFinder...")
+                self._close_simconnect_handle()
+                time.sleep(0.6)
+                if not self._is_msfs_process_running():
+                    self._log("MSFS process closed. Exiting GateFinder cleanly so Gaming Services / Steam can release...")
                     os._exit(0)
         except Exception:
             pass
@@ -2119,10 +2680,13 @@ class SimConnectManager:
                         except Exception:
                             pass
                     DataDefinition._instances.clear()
+                    self._sim_quit_received = False
                     self.sm = SC(name="GateFinder V2.0")
                     self.connected = True
                     self._msfs_was_running = True
+                    self._last_proc_alive_check = time.time()
                     self._log("Connected to MSFS successfully!")
+                    self.sm.add_receiver(RECV_QUIT, self._on_sim_quit)
                     self.sm.add_receiver(RECV_SIMOBJECT_DATA_BYTYPE, self._on_bytype_recv)
                     
                     # Setup AI query definitions (Lat, Lon, Groundspeed, IsUserSim for MARS stationary check)
@@ -2142,7 +2706,7 @@ class SimConnectManager:
                     ])
                     self.ai_evict_def_id = ai_evict_dd.id
                     
-                    # Setup User Position & Telemetry subscription (PERIOD_SIM_FRAME w/ interval=4 -> ~15 Hz continuous updates)
+                    # Setup User Position & Telemetry subscription (PERIOD_SIM_FRAME w/ interval=4 -> ~15-30 Hz low-overhead updates)
                     user_simvars = [
                         {"name": "PLANE LATITUDE", "units": "degrees"},
                         {"name": "PLANE LONGITUDE", "units": "degrees"},
@@ -2150,11 +2714,74 @@ class SimConnectManager:
                         {"name": "GROUND VELOCITY", "units": "knots"},
                         {"name": "SIM ON GROUND", "units": "bool"},
                         {"name": "GENERAL ENG COMBUSTION:1", "units": "bool"},
-                        {"name": "GENERAL ENG COMBUSTION:2", "units": "bool"}
+                        {"name": "GENERAL ENG COMBUSTION:2", "units": "bool"},
+                        {"name": "WING SPAN", "units": "feet"},
+                        {"name": "CAMERA STATE", "units": "Enum"}
                     ]
                     self.user_dd = self.sm.subscribe_simdata(user_simvars, period=PERIOD_SIM_FRAME, interval=4)
                     self._lvar_def_ids = {}
                     self._lvar_next_def_id = 900
+                    try:
+                        ac_str_defs = [
+                            ("TITLE", None, DATATYPE_STRING256),
+                            ("ATC MODEL", None, DATATYPE_STRING256),
+                            ("ATC TYPE", None, DATATYPE_STRING256),
+                            ("ATC ID", None, DATATYPE_STRING256),
+                            ("ATC AIRLINE", None, DATATYPE_STRING256),
+                        ]
+                        for idx_s, (sv_n, sv_u, sv_dt) in enumerate(ac_str_defs):
+                            self.sm.AddToDataDefinition(851, sv_n, sv_u, sv_dt, 0, idx_s)
+
+                        def _on_ac_str_recv(recv):
+                            if getattr(recv, "dwRequestID", None) != 851:
+                                return False
+                            try:
+                                offset = RECV_SIMOBJECT_DATA.dwData.offset
+                                vals = []
+                                for _ in range(min(5, int(recv.dwDefineCount))):
+                                    ptr = ctypes.cast(ctypes.byref(recv, offset), ctypes.POINTER(ctypes.c_char))
+                                    chunk = ptr[:256]
+                                    vals.append(chunk.split(b"\x00", 1)[0].decode("utf-8", errors="ignore").strip())
+                                    offset += 256
+                                if len(vals) == 5:
+                                    self.user_title = vals[0]
+                                    self.user_atc_model = vals[1]
+                                    self.user_atc_type = vals[2]
+                                    self.user_atc_id = vals[3]
+                                    self.user_atc_airline = vals[4]
+                            except Exception:
+                                pass
+                            return True
+
+                        self.sm.add_receiver(RECV_SIMOBJECT_DATA, _on_ac_str_recv)
+                        self.sm.RequestDataOnSimObject(
+                            851, 851, OBJECT_ID_USER, PERIOD_SECOND,
+                            DATA_REQUEST_FLAG_CHANGED, 0, 2, 0
+                        )
+                    except Exception as ac_err:
+                        self._log(f"Aircraft string SimVar subscription warning: {ac_err}")
+                    try:
+                        self.sm.AddToDataDefinition(852, "LIVERY NAME", None, DATATYPE_STRING256, 0, 0)
+
+                        def _on_ac_liv_recv(recv):
+                            if getattr(recv, "dwRequestID", None) != 852:
+                                return False
+                            try:
+                                offset = RECV_SIMOBJECT_DATA.dwData.offset
+                                ptr = ctypes.cast(ctypes.byref(recv, offset), ctypes.POINTER(ctypes.c_char))
+                                chunk = ptr[:256]
+                                self.user_livery_name = chunk.split(b"\x00", 1)[0].decode("utf-8", errors="ignore").strip()
+                            except Exception:
+                                pass
+                            return True
+
+                        self.sm.add_receiver(RECV_SIMOBJECT_DATA, _on_ac_liv_recv)
+                        self.sm.RequestDataOnSimObject(
+                            852, 852, OBJECT_ID_USER, PERIOD_SECOND,
+                            DATA_REQUEST_FLAG_CHANGED, 0, 2, 0
+                        )
+                    except Exception:
+                        pass
                     try:
                         gsx_defs = [
                             {"name": "L:FSDT_GSX_COUATL_STARTED", "units": "number", "dtyp": DATATYPE_FLOAT64, "epsilon": 0},
@@ -2184,8 +2811,27 @@ class SimConnectManager:
 
             try:
                 self._flush_lvar_writes()
-                while self.sm.receive(0.01):
-                    pass
+                for _ in range(48):
+                    if not (self.sm and self.sm.receive()):
+                        break
+                    if self._sim_quit_received:
+                        break
+
+                if self._sim_quit_received:
+                    self._close_simconnect_handle()
+                    self._check_auto_quit_if_msfs_closed(force_on_sim_quit=True)
+                    time.sleep(2.0)
+                    continue
+
+                now_proc_chk = time.time()
+                if (now_proc_chk - self._last_proc_alive_check) >= 2.0:
+                    self._last_proc_alive_check = now_proc_chk
+                    if not self._is_msfs_process_running():
+                        self._log("MSFS process is no longer running; closing SimConnect handle.")
+                        self._close_simconnect_handle()
+                        self._check_auto_quit_if_msfs_closed()
+                        time.sleep(2.0)
+                        continue
 
                 if self.gsx_dd and self.gsx_dd.simdata:
                     sd = self.gsx_dd.simdata
@@ -2213,18 +2859,72 @@ class SimConnectManager:
                         eng_running = bool(eng1) or bool(eng2)
                     else:
                         eng_running = None
+                    raw_ws_ft = self.user_dd.simdata.get("WING SPAN")
+                    if raw_ws_ft is not None:
+                        try:
+                            ws_m = float(raw_ws_ft) * 0.3048
+                            if 4.0 <= ws_m <= 95.0:
+                                self.user_sim_wingspan = round(ws_m, 1)
+                        except Exception:
+                            pass
 
                     gs_val = float(raw_gs or 0.0)
-                    # Detect MSFS 2020/2024 Main Menu / World Map / Pre-Flight state:
-                    # - MSFS 2024 World Map reports dummy coords near (0.0, 90.0) or (0.0, 0.0) with SIM ON GROUND=False, GS=0 kt
-                    # - Or SIM ON GROUND is False while stationary/slow (< 35 kt) with engines off
+                    raw_cam = self.user_dd.simdata.get("CAMERA STATE")
+                    cam_state = int(round(float(raw_cam))) if raw_cam is not None else None
+                    self.user_camera_state = cam_state
+
+                    # Detect MSFS 2020/2024 Main Menu / World Map / Pre-Flight / Loading state:
+                    # - CAMERA STATE in (11..20) or >= 22 means World Map (11), Hangar/Menu RTC (12..18),
+                    #   Pre-Flight Cinematic (14), or MSFS 2024 Menu/Briefing (24..35).
+                    # - Active flight/tarmac cameras (including ChasePlane & Walkaround) are 2..9 and 21.
+                    # - MSFS 2024 World Map / Menu also parks the preview SimObject at KBFI (Boeing Field, 47.53, -122.30) or (0, 0) / (0, 90).
+                    # - Or SIM ON GROUND is False while stationary/slow (< 35 kt) with engines off.
+                    is_menu_cam = bool(cam_state is not None and (cam_state == 11 or (12 <= cam_state <= 20) or cam_state >= 22))
+                    is_kbfi_staging = False
+                    if raw_lat is not None and raw_lon is not None:
+                        try:
+                            f_lat, f_lon = float(raw_lat), float(raw_lon)
+                            if 47.510 <= f_lat <= 47.550 and -122.325 <= f_lon <= -122.285:
+                                fd_cur = getattr(self.backend, "current_flight_data", None) or {}
+                                dep_c = str((fd_cur.get("departure") or {}).get("icao") or "").upper()
+                                arr_c = str((fd_cur.get("arrival") or {}).get("icao") or "").upper()
+                                if "KBFI" not in (dep_c, arr_c) and cam_state != 2:
+                                    is_kbfi_staging = True
+                        except Exception:
+                            pass
                     is_dummy_coords = (
                         raw_lat is None
                         or raw_lon is None
                         or (abs(float(raw_lat)) < 0.05 and (abs(float(raw_lon)) < 0.05 or abs(abs(float(raw_lon)) - 90.0) < 0.05))
+                        or is_kbfi_staging
                     )
-                    is_menu_state = bool(is_dummy_coords or (og_bool is False and gs_val < 35.0 and not eng_running))
+                    is_menu_state = bool(is_dummy_coords or is_menu_cam or (og_bool is False and gs_val < 35.0 and not eng_running))
                     self.in_menu = is_menu_state
+                    # Pre-warm GPS airport resolution in background ONLY when stationary/slow on ground or during MSFS tarmac intro camera
+                    if (
+                        not is_dummy_coords
+                        and raw_lat is not None
+                        and raw_lon is not None
+                        and self.backend
+                        and gs_val <= 12.0
+                        and (og_bool is not False or is_menu_cam)
+                    ):
+                        try:
+                            gk = (round(float(raw_lat), 3), round(float(raw_lon), 3))
+                            g_cache = getattr(self.backend, "_live_gps_airport_cache", None)
+                            prewarm_set = getattr(self, "_prewarming_gps_keys", None)
+                            if prewarm_set is None:
+                                self._prewarming_gps_keys = set()
+                                prewarm_set = self._prewarming_gps_keys
+                            if (g_cache is None or gk not in g_cache) and gk not in prewarm_set:
+                                prewarm_set.add(gk)
+                                plat, plon = float(raw_lat), float(raw_lon)
+                                threading.Thread(
+                                    target=lambda: self.backend.detect_live_msfs_airport(plat, plon),
+                                    daemon=True,
+                                ).start()
+                        except Exception:
+                            pass
                     if is_menu_state:
                         self.user_lat = None
                         self.user_lon = None
@@ -2232,6 +2932,11 @@ class SimConnectManager:
                         self.user_gs = 0.0
                         self.user_on_ground = None
                         self.user_engines_running = False
+                        self._tarmac_anchor_coords = None
+                        self._tarmac_stable_since = None
+                        self.tarmac_stable_duration = 0.0
+                        if self.backend and hasattr(self.backend, "_dismissed_airport_mismatches"):
+                            self.backend._dismissed_airport_mismatches.clear()
                     else:
                         self.user_lat = raw_lat
                         self.user_lon = raw_lon
@@ -2239,6 +2944,29 @@ class SimConnectManager:
                         self.user_gs = gs_val
                         self.user_on_ground = og_bool
                         self.user_engines_running = eng_running
+                        if (
+                            og_bool is True
+                            and gs_val <= 10.0
+                            and not is_menu_cam
+                            and raw_lat is not None
+                            and raw_lon is not None
+                        ):
+                            now_t = time.time()
+                            cur_pt = (float(raw_lat), float(raw_lon))
+                            if (
+                                self._tarmac_anchor_coords is None
+                                or self._tarmac_stable_since is None
+                                or haversine(cur_pt[0], cur_pt[1], self._tarmac_anchor_coords[0], self._tarmac_anchor_coords[1]) > 35.0
+                            ):
+                                self._tarmac_anchor_coords = cur_pt
+                                self._tarmac_stable_since = now_t
+                                self.tarmac_stable_duration = 0.0
+                            else:
+                                self.tarmac_stable_duration = max(0.0, now_t - self._tarmac_stable_since)
+                        else:
+                            self._tarmac_anchor_coords = None
+                            self._tarmac_stable_since = None
+                            self.tarmac_stable_duration = 0.0
                 else:
                     self.in_menu = False
                     self.user_lat = None
@@ -2247,9 +2975,12 @@ class SimConnectManager:
                     self.user_gs = None
                     self.user_on_ground = None
                     self.user_engines_running = None
+                    self._tarmac_anchor_coords = None
+                    self._tarmac_stable_since = None
+                    self.tarmac_stable_duration = 0.0
 
                 self._tick()
-                time.sleep(0.08)
+                time.sleep(0.03 if (self.user_on_ground is not False and not self.in_menu) else 0.08)
             except Exception as e:
                 self._log(f"Exception in run loop: {e}")
                 self.connected = False
@@ -2439,6 +3170,7 @@ class GateFinderBackend:
         self._logo_fetch_failed = set()
         self.logo_generation = 0
         self.taxi_router = TaxiRouter(defer_load=defer_heavy_init)
+        self.taxi_router.bgl_geometry_provider = self._fetch_msfs_bgl_airport_geometry
         self.simconnect_manager = SimConnectManager(self)
         self.interop_hub = InteroperabilityHub(self, self.config)
         if not defer_heavy_init:
@@ -2922,7 +3654,7 @@ class GateFinderBackend:
         import ssl
         import urllib.request
         c = normalize_airline_icao(code)
-        if not c or c in ("ANY", "NONE"):
+        if not c or c in ("ANY", "NONE", "GA", "BIZ"):
             return None
         cdir = self._get_logo_cache_dir()
         raw_path = os.path.join(cdir, f"{c}_raw.png")
@@ -2964,7 +3696,7 @@ class GateFinderBackend:
         cdir = self._get_logo_cache_dir()
         for raw_c in codes:
             c = normalize_airline_icao(raw_c)
-            if not c or c in ("ANY", "NONE") or c in self._logo_fetch_failed or c in self._logo_fetch_inflight:
+            if not c or c in ("ANY", "NONE", "GA", "BIZ", "MIL", "CAR") or c in self._logo_fetch_failed or c in self._logo_fetch_inflight:
                 continue
             raw_path = os.path.join(cdir, f"{c}_raw.png")
             if not (os.path.exists(raw_path) and os.path.getsize(raw_path) > 100):
@@ -2999,9 +3731,12 @@ class GateFinderBackend:
         cr = max(0, int(corner_radius))
         cdir = self._get_logo_cache_dir()
         raw_path = os.path.join(cdir, f"{c}_raw.png")
-        has_raw = os.path.exists(raw_path) and os.path.getsize(raw_path) > 100
+        if c in ("GA", "BIZ", "MIL", "CAR"):
+            has_raw = False
+        else:
+            has_raw = os.path.exists(raw_path) and os.path.getsize(raw_path) > 100
 
-        if not has_raw:
+        if not has_raw and c not in ("GA", "BIZ", "MIL", "CAR"):
             if allow_network:
                 self._fetch_and_cache_raw_logo(c)
                 has_raw = os.path.exists(raw_path) and os.path.getsize(raw_path) > 100
@@ -3320,7 +4055,7 @@ class GateFinderBackend:
         apt_rules = (self.cloud_ruleset or {}).get(icao_u) or {}
         rw_airlines = self.fetch_real_world_airport_airlines(icao_u, chart_data=chart_data)
         norm_assigned_al = normalize_airline_icao(assigned_airline)
-        if norm_assigned_al in ("", "ANY", "NONE"):
+        if norm_assigned_al in ("", "ANY", "NONE", "GA", "BIZ"):
             norm_assigned_al = ""
 
         assigned_clean = re.sub(r'^(?:GATE|STAND|PARKING|RAMP|DOCK|APRON)\s*', '', str(assigned_gate or "").strip().upper()).replace(" ", "")
@@ -3686,6 +4421,283 @@ class GateFinderBackend:
                     self.builtin_data[icao] = icao_dict
         except Exception as e:
             print(f"Error loading default_airports_db.bin: {e}")
+        self._static_builtin_icaos = set(self.builtin_data.keys())
+        self._msfs_live_bgl_icaos = set()
+
+    def _ensure_msfs_live_bgl_stands(self, icao):
+        """
+        Queries MSFS 2020/2024 directly in memory via SimConnect_RequestFacilityData
+        (TAXI_PARKING) when `icao` is a small/default airport not present in GSX (`self.data`)
+        and not already present in the 931 commercial airports of `default_airports_db.bin`.
+        Guarantees 100% zero regression on existing commercial/GSX airports while providing
+        all native MSFS white-dot parking positions (e.g. LFBJ's 3 stands, LFMD's 59 stands).
+        """
+        icao_u = str(icao or "").strip().upper()
+        if not icao_u or len(icao_u) < 3:
+            return False
+        if not hasattr(self, "_static_builtin_icaos"):
+            self._static_builtin_icaos = set(self.builtin_data.keys())
+        if not hasattr(self, "_msfs_live_bgl_icaos"):
+            self._msfs_live_bgl_icaos = set()
+        if icao_u in self.data or icao_u in self._static_builtin_icaos:
+            return False
+        if icao_u in self._msfs_live_bgl_icaos:
+            return True
+
+        dll_path = self._get_resource_file("SimConnect_MSFS.dll")
+        if not dll_path or not os.path.isfile(dll_path):
+            for cand_dll in (
+                os.path.expandvars(r"%LOCALAPPDATA%\LAND3.vRAAS\current\SDK2024\SimConnect.dll"),
+                r"D:\MSFS_Utility\MSFS_Addons_Linker\Simconnect_2024\SimConnect.dll",
+            ):
+                if os.path.isfile(cand_dll):
+                    dll_path = cand_dll
+                    break
+        if not dll_path or not os.path.isfile(dll_path):
+            return False
+
+        try:
+            import math
+            import struct
+            from ctypes import wintypes
+
+            if not hasattr(self, "_msfs_facility_dll") or self._msfs_facility_dll is None:
+                self._msfs_facility_dll = ctypes.WinDLL(dll_path)
+            sc = self._msfs_facility_dll
+
+            h_sc = wintypes.HANDLE()
+            hr = sc.SimConnect_Open(ctypes.byref(h_sc), b"GateFinder_Facility", None, 0, None, 0)
+            if hr != 0:
+                return False
+
+            raw_parkings = []
+            apt_lat, apt_lon = None, None
+            try:
+                def_id = 5001
+                fields = (
+                    b"OPEN AIRPORT",
+                    b"LATITUDE",
+                    b"LONGITUDE",
+                    b"OPEN TAXI_PARKING",
+                    b"TYPE",
+                    b"NUMBER",
+                    b"NAME",
+                    b"BIAS_X",
+                    b"BIAS_Z",
+                    b"HEADING",
+                    b"RADIUS",
+                    b"CLOSE TAXI_PARKING",
+                    b"CLOSE AIRPORT",
+                )
+                for fld in fields:
+                    sc.SimConnect_AddToFacilityDefinition(h_sc, def_id, fld)
+                if sc.SimConnect_RequestFacilityData(h_sc, def_id, 9001, icao_u.encode("ascii", errors="ignore"), b"") == 0:
+                    class _SC_RECV(ctypes.Structure):
+                        _fields_ = [
+                            ("dwSize", wintypes.DWORD),
+                            ("dwVersion", wintypes.DWORD),
+                            ("dwID", wintypes.DWORD),
+                        ]
+
+                    p_data = ctypes.POINTER(_SC_RECV)()
+                    cb_data = wintypes.DWORD()
+                    t0 = time.time()
+                    while time.time() - t0 < 0.65:
+                        if sc.SimConnect_GetNextDispatch(h_sc, ctypes.byref(p_data), ctypes.byref(cb_data)) == 0:
+                            dw_id = int(p_data.contents.dwID)
+                            if dw_id == 28:  # SIMCONNECT_RECV_ID_FACILITY_DATA
+                                raw = ctypes.string_at(p_data, int(p_data.contents.dwSize))
+                                payload = raw[40:]
+                                if len(payload) == 16:
+                                    apt_lat, apt_lon = struct.unpack("<dd", payload)
+                                elif len(payload) == 28 and apt_lat is not None and apt_lon is not None:
+                                    ptype, pnum, pname, bx, bz, hdg, rad = struct.unpack("<iiiffff", payload)
+                                    if ptype != 13:  # Exclude ground vehicle staging (13); keep aircraft & fuel box stands
+                                        p_lat = apt_lat + (bz / 111111.0)
+                                        p_lon = apt_lon + (bx / (111111.0 * max(0.1, math.cos(math.radians(apt_lat)))))
+                                        raw_parkings.append((pname, pnum, ptype, rad, round(p_lat, 6), round(p_lon, 6), round(float(hdg) % 360.0, 1)))
+                            elif dw_id == 29:  # SIMCONNECT_RECV_ID_FACILITY_DATA_END
+                                break
+                        else:
+                            time.sleep(0.005)
+            finally:
+                try:
+                    sc.SimConnect_Close(h_sc)
+                except Exception:
+                    pass
+
+            if not raw_parkings:
+                return False
+
+            icao_dict = {"ANY": []}
+            seen_names = set()
+            # Sort so standard aircraft parking stands (ptype != 12) take name precedence over fuel boxes (ptype == 12)
+            raw_parkings.sort(key=lambda x: (1 if x[2] == 12 else 0, x[1]))
+            for pname, pnum, ptype, rad, p_lat, p_lon, p_hdg in raw_parkings:
+                ptype_conv = 2 if ptype == 12 else ptype
+                gate_info, _ = convert_bgl_entry_to_gate_info(
+                    pname, pnum, ptype_conv, rad, p_lat, p_lon, False, []
+                )
+                if not gate_info:
+                    continue
+                g_name = str(gate_info["name"]).strip()
+                if g_name in seen_names:
+                    if ptype == 12:
+                        g_name = f"FUEL {pnum}" if f"FUEL {pnum}" not in seen_names else f"{g_name}F"
+                    else:
+                        continue
+                seen_names.add(g_name)
+                gate_info["name"] = g_name
+                gate_info["heading"] = p_hdg
+                gate_info["is_fuel_box"] = bool(ptype == 12)
+                icao_dict["ANY"].append(gate_info)
+
+            if not icao_dict["ANY"]:
+                return False
+
+            self.builtin_data[icao_u] = icao_dict
+            self._msfs_live_bgl_icaos.add(icao_u)
+            for k_osm in [k for k in list(self.osm_cache.keys()) if k == icao_u or k.startswith(f"{icao_u}_")]:
+                self.osm_cache.pop(k_osm, None)
+            if hasattr(self, "coherent_airports"):
+                self.coherent_airports.pop(icao_u, None)
+            return True
+        except Exception as e:
+            print(f"[SimConnect Facility] Warning fetching parkings for {icao_u}: {e}")
+            return False
+
+    def _fetch_msfs_bgl_airport_geometry(self, icao):
+        """
+        Global native MSFS BGL / default DB fallback provider for TaxiRouter when OpenStreetMap
+        geometry is missing or incomplete. Collects parking stands from GSX / default_airports_db.bin /
+        live SimConnect TAXI_PARKING, and queries native MSFS BGL RUNWAY records when MSFS is active.
+        """
+        icao_u = str(icao or "").strip().upper()
+        if not icao_u or len(icao_u) < 3:
+            return None
+
+        self._ensure_msfs_live_bgl_stands(icao_u)
+
+        stands_out = []
+        seen_st = set()
+        for src_map in (self.data.get(icao_u) or {}, self.builtin_data.get(icao_u) or {}):
+            for g_list in src_map.values():
+                for g in g_list:
+                    if g.get("lat") is not None and g.get("lon") is not None:
+                        nm = str(g.get("name") or "").strip()
+                        key = (nm.upper(), round(float(g["lat"]), 5), round(float(g["lon"]), 5))
+                        if nm and key not in seen_st:
+                            seen_st.add(key)
+                            stands_out.append(dict(g))
+
+        apt_lat, apt_lon = None, None
+        runways_out = []
+        dll_path = self._get_resource_file("SimConnect_MSFS.dll")
+        if not dll_path or not os.path.isfile(dll_path):
+            for cand_dll in (
+                os.path.expandvars(r"%LOCALAPPDATA%\LAND3.vRAAS\current\SDK2024\SimConnect.dll"),
+                r"D:\MSFS_Utility\MSFS_Addons_Linker\Simconnect_2024\SimConnect.dll",
+            ):
+                if os.path.isfile(cand_dll):
+                    dll_path = cand_dll
+                    break
+
+        sc_mgr = getattr(self, "simconnect_manager", None)
+        if dll_path and os.path.isfile(dll_path) and sc_mgr and getattr(sc_mgr, "connected", False):
+            try:
+                import math
+                import struct
+                from ctypes import wintypes
+
+                if not hasattr(self, "_msfs_facility_dll") or self._msfs_facility_dll is None:
+                    self._msfs_facility_dll = ctypes.WinDLL(dll_path)
+                sc = self._msfs_facility_dll
+                h_sc = wintypes.HANDLE()
+                if sc.SimConnect_Open(ctypes.byref(h_sc), b"GateFinder_RwyFacility", None, 0, None, 0) == 0:
+                    try:
+                        def_id = 5002
+                        rwy_fields = (
+                            b"OPEN AIRPORT",
+                            b"LATITUDE",
+                            b"LONGITUDE",
+                            b"OPEN RUNWAY",
+                            b"LATITUDE",
+                            b"LONGITUDE",
+                            b"HEADING",
+                            b"LENGTH",
+                            b"WIDTH",
+                            b"PRIMARY_NUMBER",
+                            b"PRIMARY_DESIGNATOR",
+                            b"SECONDARY_NUMBER",
+                            b"SECONDARY_DESIGNATOR",
+                            b"CLOSE RUNWAY",
+                            b"CLOSE AIRPORT",
+                        )
+                        for fld in rwy_fields:
+                            sc.SimConnect_AddToFacilityDefinition(h_sc, def_id, fld)
+                        if sc.SimConnect_RequestFacilityData(h_sc, def_id, 9002, icao_u.encode("ascii", errors="ignore"), b"") == 0:
+                            class _SC_RECV(ctypes.Structure):
+                                _fields_ = [
+                                    ("dwSize", wintypes.DWORD),
+                                    ("dwVersion", wintypes.DWORD),
+                                    ("dwID", wintypes.DWORD),
+                                ]
+
+                            p_data = ctypes.POINTER(_SC_RECV)()
+                            cb_data = wintypes.DWORD()
+                            desig_map = {0: "", 1: "L", 2: "R", 3: "C", 4: "W", 5: "A", 6: "B"}
+                            t0 = time.time()
+                            while time.time() - t0 < 0.55:
+                                if sc.SimConnect_GetNextDispatch(h_sc, ctypes.byref(p_data), ctypes.byref(cb_data)) == 0:
+                                    dw_id = int(p_data.contents.dwID)
+                                    if dw_id == 28:
+                                        raw = ctypes.string_at(p_data, int(p_data.contents.dwSize))
+                                        payload = raw[40:]
+                                        if len(payload) == 16:
+                                            apt_lat, apt_lon = struct.unpack("<dd", payload)
+                                        elif len(payload) == 44:
+                                            rlat, rlon, rhdg, rlen, rwid, pnum, pdes, snum, sdes = struct.unpack("<ddfffiiii", payload)
+                                            if rlen >= 250.0 and -90.0 <= rlat <= 90.0 and -180.0 <= rlon <= 180.0:
+                                                half_m = float(rlen) * 0.5
+                                                rad_h = math.radians(float(rhdg))
+                                                cos_lat = max(0.1, math.cos(math.radians(rlat)))
+                                                dlat = (half_m * math.cos(rad_h)) / 111320.0
+                                                dlon = (half_m * math.sin(rad_h)) / (111320.0 * cos_lat)
+                                                p1 = [round(rlat - dlat, 6), round(rlon - dlon, 6)]
+                                                p2 = [round(rlat + dlat, 6), round(rlon + dlon, 6)]
+                                                id1 = f"{int(pnum):02d}{desig_map.get(int(pdes), '')}" if 1 <= int(pnum) <= 36 else ""
+                                                id2 = f"{int(snum):02d}{desig_map.get(int(sdes), '')}" if 1 <= int(snum) <= 36 else ""
+                                                ref_s = f"{id1}/{id2}".strip("/")
+                                                runways_out.append({
+                                                    "ref": ref_s,
+                                                    "width": round(max(18.0, float(rwid)), 1),
+                                                    "length_m": round(float(rlen), 1),
+                                                    "points": [p1, p2],
+                                                })
+                                    elif dw_id == 29:
+                                        break
+                                else:
+                                    time.sleep(0.005)
+                    finally:
+                        try:
+                            sc.SimConnect_Close(h_sc)
+                        except Exception:
+                            pass
+            except Exception as e:
+                print(f"[SimConnect Facility] Warning fetching BGL runways for {icao_u}: {e}")
+
+        if apt_lat is None and stands_out:
+            apt_lat = sum(float(s["lat"]) for s in stands_out) / len(stands_out)
+            apt_lon = sum(float(s["lon"]) for s in stands_out) / len(stands_out)
+
+        if not runways_out and not stands_out:
+            return None
+        return {
+            "center_lat": apt_lat,
+            "center_lon": apt_lon,
+            "runways": runways_out,
+            "stands": stands_out,
+        }
 
     # Known multi-airport bundles & city-named 3rd-party packages
     SCENERY_BUNDLE_ICAOS = {
@@ -4664,11 +5676,44 @@ class GateFinderBackend:
         return merged
 
     def fetch_osm_gates(self, icao, lat=None, lon=None):
+        icao_u = str(icao or "").strip().upper()
+        self._ensure_msfs_live_bgl_stands(icao_u)
         cache_key = f"{icao}_{lat}_{lon}" if (lat and lon) else icao
         if cache_key in self.osm_cache:
             return self.osm_cache[cache_key], None
 
         chart = self.taxi_router.fetch_airport_vector_data(icao, center_lat=lat, center_lon=lon)
+        if (
+            chart
+            and icao_u in getattr(self, "_msfs_live_bgl_icaos", set())
+            and icao_u in self.builtin_data
+            and not chart.get("msfs_facility_stands")
+        ):
+            msfs_st = []
+            seen_msfs = set()
+            for al_l in self.builtin_data[icao_u].values():
+                for bg in al_l:
+                    ref_m = str(bg.get("name") or "").strip()
+                    if ref_m and ref_m not in seen_msfs and bg.get("lat") is not None and bg.get("lon") is not None:
+                        seen_msfs.add(ref_m)
+                        msfs_st.append({
+                            "ref": ref_m,
+                            "lat": round(float(bg["lat"]), 6),
+                            "lon": round(float(bg["lon"]), 6),
+                            "heading": bg.get("heading"),
+                            "terminal": bg.get("terminal") or "General Aviation Apron",
+                            "has_jetway": bool(bg.get("has_jetway", False)),
+                            "is_ga": bool(bg.get("is_ga", True)),
+                            "wingspan": float(bg.get("wingspan", 20.0)),
+                        })
+            if msfs_st:
+                chart["osm_stands"] = [dict(s) for s in msfs_st]
+                chart["stands"] = [dict(s) for s in msfs_st]
+                chart["msfs_facility_stands"] = True
+                try:
+                    self.taxi_router._save_disk_cache()
+                except Exception:
+                    pass
         osm_stands = (chart or {}).get("osm_stands") or (chart or {}).get("stands") or []
         if not osm_stands:
             return {}, "Failed to fetch OSM data"
@@ -4708,10 +5753,12 @@ class GateFinderBackend:
                     if nd < min_neighbor_d:
                         min_neighbor_d = nd
 
-            is_ga = False
-            max_ws = 36.0
-            if len_m >= 68.0:
-                max_ws = 65.0
+            is_ga = bool(p.get("is_ga", False))
+            max_ws = float(p.get("wingspan") or (24.0 if is_ga else 36.0))
+            if len_m >= 78.0:
+                max_ws = 80.0
+            elif len_m >= 68.0:
+                max_ws = 68.5
             elif 0.0 < len_m < 14.0 and not has_jetway:
                 is_ga = True
                 max_ws = 24.0
@@ -4729,6 +5776,7 @@ class GateFinderBackend:
                 "lat": p_lat,
                 "lon": p_lon,
                 "heading": p.get("heading"),
+                "terminal": p.get("terminal", ""),
                 "has_jetway": has_jetway,
                 "is_ga": is_ga,
                 "wingspan": max_ws
@@ -4753,6 +5801,7 @@ class GateFinderBackend:
         self.ensure_initialized()
         if not hasattr(self, "coherent_airports"):
             self.coherent_airports = {}
+        self._ensure_msfs_live_bgl_stands(icao_u)
         if icao_u in self.coherent_airports and self.coherent_airports[icao_u]:
             return self.coherent_airports[icao_u]
 
@@ -4882,6 +5931,55 @@ class GateFinderBackend:
                     g["terminal"] = infer_airport_stand_terminal(icao_u, g.get("name", ""), g.get("terminal", ""))
                     enriched_cache[cache_key] = g
                     coherent_db[al_k].append(g)
+
+            # Supplement GSX profiles that only define commercial terminal gates with any BGL/OSM GA stands (> 35m away)
+            gsx_all = list(enriched_cache.values())
+            if not any(g_item.get("is_ga") for g_item in gsx_all):
+                gsx_tokens = {clean_gate_token(g_item.get("name", "")) for g_item in gsx_all}
+                gsx_coords = [(g_item["lat"], g_item["lon"]) for g_item in gsx_all if g_item.get("lat") is not None and g_item.get("lon") is not None]
+                if "ANY" not in coherent_db:
+                    coherent_db["ANY"] = []
+                bgl_db_a = self.builtin_data.get(icao_u) or {}
+                seen_bgl_ga = set()
+                for al_list_a in bgl_db_a.values():
+                    for bg in al_list_a:
+                        if not bg.get("is_ga") or bg.get("lat") is None or bg.get("lon") is None:
+                            continue
+                        b_key = (bg.get("name"), bg.get("lat"), bg.get("lon"))
+                        if b_key in seen_bgl_ga:
+                            continue
+                        seen_bgl_ga.add(b_key)
+                        min_d_gsx = min((haversine(bg["lat"], bg["lon"], glat, glon) for glat, glon in gsx_coords), default=9999.0)
+                        if min_d_gsx <= 35.0:
+                            continue
+                        bg_name = str(bg.get("name") or "").strip()
+                        bg_tok = clean_gate_token(bg_name)
+                        if bg_tok in gsx_tokens:
+                            bg_name = f"GA {bg_name}"
+                            bg_tok = clean_gate_token(bg_name)
+                        if bg_tok in gsx_tokens:
+                            continue
+                        gsx_tokens.add(bg_tok)
+                        sp_t = _infer_spatial_terminal(bg["lat"], bg["lon"]) or "General Aviation Apron"
+                        coherent_db["ANY"].append({
+                            "name": bg_name,
+                            "raw_name": bg.get("name", bg_name),
+                            "osm_ref": "",
+                            "py_aircraft_types": [],
+                            "wingspan": float(bg.get("wingspan", 20.0)),
+                            "terminal": sp_t,
+                            "type": "STAND",
+                            "lat": bg["lat"],
+                            "lon": bg["lon"],
+                            "heading": bg.get("heading"),
+                            "no_pushback": False,
+                            "has_jetway": False,
+                            "is_cargo": False,
+                            "is_ga": True,
+                            "is_military": False,
+                            "airlines": [],
+                        })
+
             self.coherent_airports[icao_u] = coherent_db
             return coherent_db
 
@@ -4918,6 +6016,8 @@ class GateFinderBackend:
                         bgl_map[b_key]["airlines"].add(al_code)
             bgl_unique = list(bgl_map.values())
 
+            matched_bgl_ids = set()
+            existing_coh_tokens = set()
             for o_ref, o_info in osm_dict.items():
                 o_tok = clean_gate_token(o_ref)
                 py_s_name, py_t_name, py_dis, py_ac_list = standalone_py_exact.get(o_tok, (None, None, False, []))
@@ -4935,6 +6035,8 @@ class GateFinderBackend:
                             nearest_bgl = bg
 
                 matched_bgl = nearest_bgl if (nearest_bgl and best_d <= 38.0) else None
+                if matched_bgl is not None:
+                    matched_bgl_ids.add(id(matched_bgl))
                 has_jw = bool(o_info.get("has_jetway") or (matched_bgl and matched_bgl.get("has_jetway")))
                 max_ws = float(o_info.get("wingspan", 36.0))
                 if matched_bgl and not o_info.get("is_ga"):
@@ -4949,13 +6051,19 @@ class GateFinderBackend:
                 is_ga = bool(
                     o_info.get("is_ga", False)
                     or (matched_bgl and matched_bgl.get("is_ga", False) and not has_jw)
-                    or "affaires" in sp_term_l
-                    or "general aviation" in sp_term_l
+                    or any(
+                        kw in sp_term_l
+                        for kw in (
+                            "affaires", "general aviation", "executive", "vip",
+                            "royal terminal", "royal pavilion", "amiri", "presidential",
+                            "state terminal", "aramco", "jetex", "fbo", "private",
+                        )
+                    )
                 )
                 is_cargo = bool(
                     (matched_bgl and matched_bgl.get("is_cargo", False))
                     or "cargo" in o_ref.lower()
-                    or (("fret" in sp_term_l or "cargo" in sp_term_l) and "pax" not in sp_term_l)
+                    or (("fret" in sp_term_l or "cargo" in sp_term_l) and "pax" not in sp_term_l and "passenger" not in sp_term_l and "charter" not in sp_term_l)
                 )
                 is_mil = bool(matched_bgl and matched_bgl.get("is_military", False))
                 g_type = "RAMP" if is_cargo else ("GATE" if has_jw else "STAND")
@@ -4979,11 +6087,87 @@ class GateFinderBackend:
                     "is_military": is_mil,
                     "airlines": al_set
                 }
+                existing_coh_tokens.add(clean_gate_token(gate_info["name"]))
                 coherent_db["ANY"].append(gate_info)
                 for a_c in al_set:
                     if a_c not in coherent_db:
                         coherent_db[a_c] = []
                     coherent_db[a_c].append(gate_info)
+
+            # Also preserve unmatched BGL GA / non-jetway stands that were not drawn in OpenStreetMap
+            for bg in bgl_unique:
+                if id(bg) in matched_bgl_ids:
+                    continue
+                bg_lat = bg.get("lat")
+                bg_lon = bg.get("lon")
+                if bg_lat is None or bg_lon is None:
+                    continue
+                min_d_osm = min(
+                    (haversine(bg_lat, bg_lon, o_inf["lat"], o_inf["lon"]) for o_inf in osm_dict.values()),
+                    default=9999.0,
+                )
+                is_bg_ga = bool(bg.get("is_ga", False))
+                if min_d_osm <= (11.0 if is_bg_ga else 28.0):
+                    continue
+                bg_name = str(bg.get("name") or "").strip()
+                if not bg_name:
+                    continue
+                bg_tok = clean_gate_token(bg_name)
+                if bg_tok in existing_coh_tokens:
+                    if is_bg_ga and not bg_name.upper().startswith("GA"):
+                        bg_name = f"GA {bg_name}"
+                        bg_tok = clean_gate_token(bg_name)
+                    elif not is_bg_ga and not bg_name.upper().startswith("GATE"):
+                        bg_name = f"GATE {bg_name}"
+                        bg_tok = clean_gate_token(bg_name)
+                    if bg_tok in existing_coh_tokens:
+                        continue
+                sp_term = _infer_spatial_terminal(bg_lat, bg_lon)
+                if is_bg_ga and (not sp_term or sp_term in ("Main Apron", "Other")):
+                    sp_term = "General Aviation Apron"
+                else:
+                    sp_term = infer_airport_stand_terminal(icao_u, bg_name, sp_term)
+                sp_term_l_bg = (sp_term or "").lower()
+                is_bg_ga_final = bool(
+                    is_bg_ga
+                    or any(
+                        kw in sp_term_l_bg
+                        for kw in (
+                            "affaires", "general aviation", "executive", "vip",
+                            "royal terminal", "royal pavilion", "amiri", "presidential",
+                            "state terminal", "aramco", "jetex", "fbo", "private",
+                        )
+                    )
+                )
+                is_bg_cargo_final = bool(
+                    bg.get("is_cargo", False)
+                    or (("fret" in sp_term_l_bg or "cargo" in sp_term_l_bg) and "pax" not in sp_term_l_bg and "passenger" not in sp_term_l_bg and "charter" not in sp_term_l_bg)
+                )
+                al_set = sorted(list(bg.get("airlines") or []))
+                g_bgl_info = {
+                    "name": bg_name,
+                    "raw_name": bg.get("name", bg_name),
+                    "osm_ref": "",
+                    "py_aircraft_types": [],
+                    "wingspan": float(bg.get("wingspan", 20.0 if is_bg_ga_final else 36.0)),
+                    "terminal": sp_term,
+                    "type": bg.get("type", "STAND"),
+                    "lat": bg_lat,
+                    "lon": bg_lon,
+                    "heading": bg.get("heading"),
+                    "no_pushback": False,
+                    "has_jetway": bool(bg.get("has_jetway", False)),
+                    "is_cargo": is_bg_cargo_final,
+                    "is_ga": is_bg_ga_final,
+                    "is_military": bool(bg.get("is_military", False)),
+                    "airlines": al_set,
+                }
+                existing_coh_tokens.add(bg_tok)
+                coherent_db["ANY"].append(g_bgl_info)
+                for a_c in al_set:
+                    if a_c not in coherent_db:
+                        coherent_db[a_c] = []
+                    coherent_db[a_c].append(g_bgl_info)
 
             self.coherent_airports[icao_u] = coherent_db
             return coherent_db
@@ -5036,6 +6220,8 @@ class GateFinderBackend:
             flight_num = general.get('flight_number', '')
             ac_block = data.get('aircraft', {}) if isinstance(data.get('aircraft'), dict) else {}
             aircraft = ac_block.get('name') or ac_block.get('icaocode', '')
+            aircraft_icao = str(ac_block.get('icaocode') or '').strip().upper()
+            aircraft_base = str(ac_block.get('base_type') or '').strip().upper()
             if not origin or not destination:
                 return None
             return {
@@ -5048,7 +6234,9 @@ class GateFinderBackend:
                 "dest_rwy": dest_rwy,
                 "airline": airline,
                 "flight_number": flight_num,
-                "aircraft": aircraft
+                "aircraft": aircraft,
+                "aircraft_icao": aircraft_icao,
+                "aircraft_base": aircraft_base,
             }
         except Exception:
             return None
@@ -5164,6 +6352,13 @@ class GateFinderBackend:
         
         base_type = str(ac_block.get('base_type') or '').strip()
         wingspan = AIRCRAFT_WINGSPANS.get(aircraft_icao, AIRCRAFT_WINGSPANS.get(base_type, 36.0))
+        if ac_block.get('wingspan') is not None:
+            try:
+                ws_override = float(ac_block.get('wingspan'))
+                if 4.0 <= ws_override <= 95.0:
+                    wingspan = ws_override
+            except Exception:
+                pass
 
         weights_block = data.get('weights', {}) if isinstance(data.get('weights'), dict) else {}
         ofp_is_all_cargo = False
@@ -5177,6 +6372,59 @@ class GateFinderBackend:
             pass
 
         airline_norm = normalize_airline_icao(airline)
+        if not airline_norm and airline:
+            airline_norm = resolve_airline_or_callsign_to_icao(airline)
+        if not airline_norm and ofp_callsign:
+            cs_prefix = re.match(r"^([A-Z]{3})\d", str(ofp_callsign).strip().upper())
+            if cs_prefix:
+                cand_al = normalize_airline_icao(cs_prefix.group(1))
+                if cand_al in CARGO_AIRLINE_OPERATORS or cand_al in MILITARY_OPERATORS or cand_al in AIRLINE_FULL_NAMES:
+                    airline_norm = cand_al
+                    if not airline:
+                        airline = cand_al
+
+        sc_live_match_title = ""
+        sc_chk_title = getattr(self, "simconnect_manager", None)
+        if sc_chk_title and (sc_chk_title.connected or getattr(sc_chk_title, "user_title", "")):
+            raw_t = str(getattr(sc_chk_title, "user_title", "") or "").strip()
+            if str(ofp_id or "").startswith("LIVE_MSFS_"):
+                sc_live_match_title = raw_t
+            elif raw_t and aircraft_icao and len(aircraft_icao) >= 3:
+                # Only cross-check SimConnect livery title against SimBrief OFP if same aircraft family
+                fam_prefix = aircraft_icao[:3].upper()
+                if fam_prefix in raw_t.upper() or (base_type and base_type[:3].upper() in raw_t.upper()):
+                    sc_live_match_title = raw_t
+
+        mil_flight_info = is_military_aircraft_or_flight(
+            aircraft_icao, aircraft_name, base_type, airline_norm, ofp_callsign, aircraft_reg, wingspan, sim_title=sc_live_match_title
+        )
+        force_cargo_global = bool(self.config.settings.get("force_cargo_mode", False))
+        is_military_flight_global = bool(mil_flight_info["is_military"] and not force_cargo_global)
+        is_cargo_aircraft_global = is_freighter_aircraft(aircraft_icao, aircraft_name, sim_title=sc_live_match_title)
+        builtin_cargo_global = airline_norm in CARGO_AIRLINE_OPERATORS
+        is_cargo_carrier_global = bool(
+            (is_cargo_aircraft_global or builtin_cargo_global or ofp_is_all_cargo or force_cargo_global)
+            and not is_military_flight_global
+        )
+
+        ga_flight_info = is_ga_or_business_flight(
+            aircraft_icao, aircraft_name, base_type, airline_norm, ofp_callsign, aircraft_reg, wingspan
+        )
+        if is_military_flight_global or is_cargo_carrier_global:
+            ga_flight_info["is_ga"] = False
+            ga_flight_info["category"] = ""
+        if (
+            ga_flight_info["is_ga"]
+            and ac_block.get("wingspan") is None
+            and aircraft_icao.upper() not in AIRCRAFT_WINGSPANS
+            and base_type.upper() not in AIRCRAFT_WINGSPANS
+        ):
+            if ga_flight_info["is_light_ga"]:
+                wingspan = 12.0
+            elif ga_flight_info["is_bizjet"]:
+                wingspan = 21.0
+            else:
+                wingspan = 14.5
         sister_airlines = get_sister_airlines(airline_norm)
         alliance_airlines = get_alliance_airlines(airline_norm)
         customs_profile = classify_flight_customs_profile(origin, destination)
@@ -5233,11 +6481,13 @@ class GateFinderBackend:
         def process_airport(icao, phase_mode="departure", plan_rwy="", excluded_gate=""):
             if not icao: return None
             
-            is_cargo_aircraft = is_freighter_aircraft(aircraft_icao, aircraft_name)
-            builtin_cargo_code = airline_norm in {"FDX", "UPS", "DHL", "BOX", "GTI", "PAC", "CKS", "CLX", "ICV", "NCA", "ABX", "AJK", "SQC", "BCS", "DHK", "CCG", "CKK", "GEC", "MPH"}
-            force_cargo = self.config.settings.get("force_cargo_mode", False)
-            is_cargo_carrier = is_cargo_aircraft or builtin_cargo_code or ofp_is_all_cargo or force_cargo
+            is_military_flight = is_military_flight_global
+            is_heavy_mil = bool(mil_flight_info.get("is_heavy_mil"))
+            is_fighter_mil = bool(mil_flight_info.get("is_fighter_mil"))
+            is_cargo_carrier = is_cargo_carrier_global
             is_a380 = is_a380_aircraft(aircraft_icao, aircraft_name, base_type)
+            ga_profile = ga_flight_info
+            is_ga_flight = bool(ga_profile["is_ga"] and not is_cargo_carrier and not is_military_flight and not is_a380)
             
             # Find default airport coordinates from SimBrief response
             default_lat = None
@@ -5335,6 +6585,25 @@ class GateFinderBackend:
                     chart_d = self.taxi_router.fetch_airport_vector_data(icao, c_lat, c_lon, extra_stands=extra_stands)
                     r_dict["airline_code"] = normalize_airline_icao(airline)
                     if chart_d:
+                        if r_dict.get("gate") == "GA RAMP":
+                            if phase_mode == "arrival" and chart_d.get("aprons"):
+                                best_ap = max(chart_d["aprons"], key=lambda ap: len(ap.get("points") or []))
+                                ap_pts = best_ap.get("points") or []
+                                if ap_pts:
+                                    r_dict["lat"] = sum(p[0] for p in ap_pts) / len(ap_pts)
+                                    r_dict["lon"] = sum(p[1] for p in ap_pts) / len(ap_pts)
+                            stands_list = chart_d.setdefault("stands", [])
+                            if not any(str(s.get("ref") or "").upper() == "GA RAMP" for s in stands_list):
+                                stands_list.append({
+                                    "ref": "GA RAMP",
+                                    "lat": r_dict.get("lat"),
+                                    "lon": r_dict.get("lon"),
+                                    "heading": r_dict.get("heading"),
+                                    "has_jetway": False,
+                                    "is_ga": True,
+                                    "terminal": r_dict.get("terminal", "GENERAL AVIATION APRON"),
+                                    "airlines": [],
+                                })
                         self.enrich_chart_stands_with_airlines(
                             icao,
                             chart_d,
@@ -5406,14 +6675,33 @@ class GateFinderBackend:
                             ref_lower = ref.lower()
                             if exclude_cargo and "cargo" in ref_lower and not is_cargo_carrier:
                                 continue
-                            if exclude_ga_ramp and (osm_dict[ref].get("is_ga") or is_ga_ramp_gate(ref)) and not is_cargo_carrier:
+                            if exclude_ga_ramp and (osm_dict[ref].get("is_ga") or is_ga_ramp_gate(ref)) and not is_cargo_carrier and not is_ga_flight and not is_military_flight:
                                 continue
                             filtered_refs.append(ref)
                         if filtered_refs:
                             available_refs = filtered_refs
                             
-                    # Universal Cargo Rule for OSM Airports:
-                    if is_cargo_carrier:
+                    # Universal Military / Cargo / GA Rule for OSM Airports:
+                    if is_military_flight:
+                        mil_osm_refs = [
+                            ref for ref in available_refs
+                            if osm_dict[ref].get("is_military") or is_military_stand_gate(ref, "", "")
+                        ]
+                        if not mil_osm_refs:
+                            mil_osm_refs = [
+                                ref for ref in available_refs
+                                if not osm_dict[ref].get("has_jetway", False)
+                                and (
+                                    ("cargo" in ref.lower() or "ramp" in ref.lower())
+                                    if is_heavy_mil
+                                    else (osm_dict[ref].get("is_ga") or is_ga_ramp_gate(ref) or "ramp" in ref.lower())
+                                )
+                            ]
+                        if not mil_osm_refs:
+                            mil_osm_refs = [ref for ref in available_refs if not osm_dict[ref].get("has_jetway", False)]
+                        if mil_osm_refs:
+                            available_refs = mil_osm_refs
+                    elif is_cargo_carrier:
                         cargo_osm_refs = []
                         # Priority 1: Refs explicitly containing "cargo", "freight", "ramp", or starting with "R" / "C"
                         for ref in available_refs:
@@ -5429,6 +6717,21 @@ class GateFinderBackend:
                                     
                         if cargo_osm_refs:
                             available_refs = cargo_osm_refs
+                    elif is_ga_flight:
+                        ga_osm_refs = [
+                            ref for ref in available_refs
+                            if (osm_dict[ref].get("is_ga") or is_ga_ramp_gate(ref))
+                            and not osm_dict[ref].get("has_jetway", False)
+                        ]
+                        if not ga_osm_refs:
+                            ga_osm_refs = [
+                                ref for ref in available_refs
+                                if not osm_dict[ref].get("has_jetway", False)
+                                and "cargo" not in ref.lower()
+                            ]
+                        if ga_osm_refs:
+                            ga_osm_refs.sort(key=lambda r: abs(float(osm_dict[r].get("wingspan", 24.0)) - wingspan))
+                            available_refs = ga_osm_refs[:max(5, min(12, len(ga_osm_refs)))]
 
                     if self.config.settings.get("check_online_traffic", True):
                         try:
@@ -5471,8 +6774,16 @@ class GateFinderBackend:
                     res["gate"] = selected_gate_ref
                     
                     raw_t = get_terminal(selected_gate_ref, icao)
-                    if is_cargo_carrier:
+                    if is_military_flight or osm_dict[selected_gate_ref].get("is_military"):
+                        res["terminal"] = f"MILITARY APRON ({raw_t})" if raw_t and raw_t not in ("Main Apron", "Other") else "MILITARY APRON"
+                        res["is_military"] = True
+                    elif is_cargo_carrier:
                         res["terminal"] = f"CARGO APRON ({raw_t})" if raw_t and raw_t not in ("Main Apron", "Other") else "CARGO APRON"
+                        res["is_cargo"] = True
+                    elif is_ga_flight:
+                        ga_hdr = "BUSINESS AVIATION APRON" if ga_profile.get("is_bizjet") else "GENERAL AVIATION APRON"
+                        res["terminal"] = f"{ga_hdr} ({raw_t})" if raw_t and raw_t not in ("Main Apron", "Other") else ga_hdr
+                        res["is_ga"] = True
                     else:
                         res["terminal"] = raw_t
 
@@ -5495,14 +6806,53 @@ class GateFinderBackend:
                     elif "stand" in ref_lower:
                         res["type"] = "STAND"
                     else:
-                        res["type"] = "RAMP" if is_cargo_carrier else "GATE"
+                        res["type"] = "RAMP" if (is_cargo_carrier or is_military_flight) else "GATE"
                 else:
-                    res["error"] = "No A380 gate for this airport" if is_a380 else "No compatible stands found for this airport."
-                    res["lat"] = default_lat
-                    res["lon"] = default_lon
-                    res["gate_coords_found"] = False
-                    res["max_wingspan"] = 79.75 if is_a380 else 999.0
-                    res["type"] = "GATE"
+                    if (
+                        phase_mode == "departure"
+                        and u_lat_self is not None
+                        and u_lon_self is not None
+                        and (
+                            default_lat is None
+                            or default_lon is None
+                            or haversine(float(u_lat_self), float(u_lon_self), float(default_lat), float(default_lon)) <= 5000.0
+                        )
+                    ):
+                        res["osm"] = True
+                        res["gate"] = "MIL RAMP" if is_military_flight else ("CARGO RAMP" if is_cargo_carrier else "GA RAMP")
+                        res["terminal"] = "MILITARY APRON" if is_military_flight else ("CARGO APRON" if is_cargo_carrier else "GENERAL AVIATION APRON")
+                        res["is_military"] = bool(is_military_flight)
+                        res["is_cargo"] = bool(is_cargo_carrier)
+                        res["is_ga"] = bool(not is_military_flight and not is_cargo_carrier)
+                        res["lat"] = float(u_lat_self)
+                        res["lon"] = float(u_lon_self)
+                        res["heading"] = sc_self.user_hdg if sc_self else None
+                        res["no_pushback"] = True
+                        res["gate_coords_found"] = True
+                        res["max_wingspan"] = max(24.0, float(wingspan))
+                        res["has_jetway"] = False
+                        res["type"] = "RAMP"
+                        res["error"] = None
+                    elif is_ga_flight and default_lat is not None and default_lon is not None:
+                        res["osm"] = True
+                        res["gate"] = "GA RAMP"
+                        res["terminal"] = "GENERAL AVIATION APRON"
+                        res["is_ga"] = True
+                        res["lat"] = float(default_lat)
+                        res["lon"] = float(default_lon)
+                        res["no_pushback"] = True
+                        res["gate_coords_found"] = True
+                        res["max_wingspan"] = max(24.0, float(wingspan))
+                        res["has_jetway"] = False
+                        res["type"] = "RAMP"
+                        res["error"] = None
+                    else:
+                        res["error"] = "No A380 gate for this airport" if is_a380 else "No compatible stands found for this airport."
+                        res["lat"] = default_lat
+                        res["lon"] = default_lon
+                        res["gate_coords_found"] = False
+                        res["max_wingspan"] = 79.75 if is_a380 else 999.0
+                        res["type"] = "GATE"
                 return attach_chart_and_route(res)
 
             # Build deduplicated master list of all stands at `icao`, preserving complete airline code sets
@@ -5641,7 +6991,11 @@ class GateFinderBackend:
                 term_lower = (g.get('terminal') or '').lower()
                 g_type_lower = g.get('type', '').lower()
                 
-                exclude_keywords = ("cargo", "military", " general aviation", "private", "prop", "business aviation")
+                exclude_keywords = (
+                    "cargo", "military", " general aviation", "private", "prop",
+                    "business aviation", "vip", "executive", "royal terminal",
+                    "royal pavilion", "aramco", "jetex", "fbo",
+                )
                 for kw in exclude_keywords:
                     if kw in name_lower or kw in term_lower or kw in g_type_lower:
                         return False
@@ -5664,8 +7018,43 @@ class GateFinderBackend:
                     return True
                 return False
 
+            def is_military_gate(g):
+                return is_military_stand_gate(g['name'], g.get('terminal'), g.get('type'), bool(g.get('is_military')))
+
+            def is_ga_or_biz_stand(g):
+                if is_cargo_gate(g) or is_military_gate(g) or g.get('has_jetway'):
+                    return False
+                if g.get('is_ga'):
+                    return True
+                if is_ga_ramp_gate(g['name'], g.get('terminal'), g.get('type')):
+                    return True
+                g_als_norm = g.get('_norm_airlines') or set()
+                if g_als_norm and (g_als_norm & BUSINESS_AVIATION_OPERATORS):
+                    return True
+                return False
+
             preferred_gates = []
-            if is_cargo_carrier:
+            if is_military_flight:
+                # Priority 1: Dedicated Military ("Mil") stands (BGL MIL_CARGO / MIL_COMBAT, GSX mil, OSM military)
+                for g in compatible_gates:
+                    if is_military_gate(g):
+                        preferred_gates.append(g)
+                # Priority 2: Fallback if airport has no "Mil" stands -> Cargo/Remote Ramp for heavy transports, GA/FBO Ramp for fighters
+                if not preferred_gates:
+                    if is_heavy_mil:
+                        for g in compatible_gates:
+                            if not g.get('has_jetway') and (is_cargo_gate(g) or (not is_passenger_gate(g) and not g.get('is_ga'))):
+                                preferred_gates.append(g)
+                    else:
+                        for g in compatible_gates:
+                            if is_ga_or_biz_stand(g):
+                                preferred_gates.append(g)
+                # Priority 3: Any stand/ramp without jetway
+                if not preferred_gates:
+                    for g in compatible_gates:
+                        if not g.get('has_jetway'):
+                            preferred_gates.append(g)
+            elif is_cargo_carrier:
                 # Priority 1: Explicit cargo gates
                 for g in compatible_gates:
                     if is_cargo_gate(g):
@@ -5673,12 +7062,32 @@ class GateFinderBackend:
                 # Priority 2: Ramps / Stands without jetways that are NOT passenger, NOT military, NOT GA
                 if not preferred_gates:
                     for g in compatible_gates:
-                        if not is_passenger_gate(g) and not g.get('is_military') and not g.get('is_ga') and not g.get('has_jetway'):
+                        if not is_passenger_gate(g) and not is_military_gate(g) and not g.get('is_ga') and not g.get('has_jetway'):
                             preferred_gates.append(g)
                 # Priority 3: Any stand/ramp without jetway
                 if not preferred_gates:
                     for g in compatible_gates:
                         if not g.get('has_jetway'):
+                            preferred_gates.append(g)
+            elif is_ga_flight:
+                # Priority 1: Explicit GA / Business Aviation / FBO / Ramp stands without jetways
+                for g in compatible_gates:
+                    if is_ga_or_biz_stand(g):
+                        preferred_gates.append(g)
+                # Priority 2: Unassigned or Business-Aviation-only remote stands without jetways (not cargo, not military)
+                if not preferred_gates:
+                    for g in compatible_gates:
+                        if (
+                            not g.get('has_jetway')
+                            and not is_cargo_gate(g)
+                            and not is_military_gate(g)
+                            and not ((g.get('_norm_airlines') or set()) - BUSINESS_AVIATION_OPERATORS)
+                        ):
+                            preferred_gates.append(g)
+                # Priority 3: Any non-jetway stand (not cargo, not military)
+                if not preferred_gates:
+                    for g in compatible_gates:
+                        if not g.get('has_jetway') and not is_cargo_gate(g) and not is_military_gate(g):
                             preferred_gates.append(g)
             else:
                 for g in compatible_gates:
@@ -5698,14 +7107,14 @@ class GateFinderBackend:
                 term_lower = (g.get('terminal') or '').lower()
                 g_type_lower = g.get('type', '').lower()
                 
-                # Check Cargo: exclude cargo gates ONLY if user requested exclude_cargo AND this is NOT a cargo flight
+                # Check Cargo: exclude cargo gates ONLY if user requested exclude_cargo AND this is NOT a cargo/heavy-mil flight
                 is_cargo = g.get('is_cargo') or "cargo" in name_lower or "cargo" in term_lower or "cargo" in g_type_lower
-                if exclude_cargo and is_cargo and not is_cargo_carrier:
+                if exclude_cargo and is_cargo and not is_cargo_carrier and not is_military_flight:
                     continue
                     
-                # Check GA/Ramp/Military: exclude GA ramps ONLY if user requested exclude_ga_ramp AND this is NOT a cargo flight
-                is_ga_ramp = g.get('is_ga') or g.get('is_military') or is_ga_ramp_gate(g['name'], g.get('terminal'), g.get('type'), is_cargo=is_cargo)
-                if exclude_ga_ramp and is_ga_ramp and not is_cargo_carrier:
+                # Check GA/Ramp/Military: exclude GA ramps ONLY if user requested exclude_ga_ramp AND this is NOT a cargo/GA/military flight
+                is_ga_ramp = g.get('is_ga') or is_military_gate(g) or is_ga_ramp_gate(g['name'], g.get('terminal'), g.get('type'), is_cargo=is_cargo)
+                if exclude_ga_ramp and is_ga_ramp and not is_cargo_carrier and not is_ga_flight and not is_military_flight:
                     continue
                     
                 filtered_compatible.append(g)
@@ -5948,12 +7357,12 @@ class GateFinderBackend:
                     if _match_terminal_against_rules(g, alliance_cloud_rules) is not None:
                         score += 75.0
 
-                if not is_cargo_carrier and ("remote" in g_term_l or g_term_l.startswith("parking")):
+                if not is_cargo_carrier and not is_ga_flight and not is_military_flight and ("remote" in g_term_l or g_term_l.startswith("parking")):
                     if not (is_user_lcc and not has_jw):
                         score -= 95.0
 
                 # 3. Geopolitical & Customs / Schengen Zone Intelligence (Origin <-> Destination)
-                if not is_cargo_carrier:
+                if not is_cargo_carrier and not is_ga_flight and not is_military_flight:
                     is_term_non_sch = any(k in g_term_l for k in ("non-schengen", "non schengen", "extra-schengen", "hors schengen"))
                     is_term_sch = ("schengen" in g_term_l) and not is_term_non_sch
                     if not is_term_non_sch and not is_term_sch and g_term_l in term_schengen_votes:
@@ -5986,10 +7395,24 @@ class GateFinderBackend:
                             score -= 65.0
 
                 # 5. Carrier & Aircraft Boarding Profile (Jetway vs Walk-in)
-                if is_cargo_carrier:
+                if is_military_flight:
+                    if is_military_gate(g):
+                        score += 650.0
+                    elif is_heavy_mil and is_cargo_gate(g):
+                        score += 320.0
+                    elif not is_heavy_mil and is_ga_or_biz_stand(g):
+                        score += 320.0
+                    score += 180.0 if not has_jw else -480.0
+                elif is_cargo_carrier:
                     if is_cargo_gate(g):
                         score += 500.0
                     score += 120.0 if not has_jw else -250.0
+                elif is_ga_flight:
+                    if is_ga_or_biz_stand(g):
+                        score += 480.0
+                    elif not has_jw and not (g_als - BUSINESS_AVIATION_OPERATORS):
+                        score += 240.0
+                    score += 150.0 if not has_jw else -550.0
                 elif ac_icao_u in TURBOPROP_TYPES or base_u in TURBOPROP_TYPES:
                     score += 55.0 if not has_jw else -20.0
                 elif airline_norm in ULTRA_LOW_COST_CARRIERS:
@@ -6004,7 +7427,21 @@ class GateFinderBackend:
                         score += 95.0 if has_jw else -40.0
 
                 # 6. ICAO Aircraft Size Class Plateau & MARS Bay Variant Matching
-                if wingspan < 30.0:
+                if is_ga_flight or (is_military_flight and is_fighter_mil):
+                    ws_margin = g_ws - wingspan
+                    if ws_margin <= 6.0:
+                        score += 160.0
+                    elif ws_margin <= 12.0:
+                        score += 125.0
+                    elif ws_margin <= 20.0:
+                        score += 75.0
+                    elif g_ws <= 36.5:
+                        score += 25.0
+                    elif g_ws <= 46.0:
+                        score -= 90.0
+                    else:
+                        score -= 240.0
+                elif wingspan < 30.0:
                     if g_ws <= 36.5:
                         score += 75.0
                     elif g_ws <= 45.0:
@@ -6118,14 +7555,38 @@ class GateFinderBackend:
                             raw_term = rt
                             break
 
-            is_cargo_gate = selected_gate.get('is_cargo') or "cargo" in selected_gate['name'].lower() or selected_gate.get('type') == 'RAMP'
-            if is_cargo_carrier or is_cargo_gate:
+            is_mil_gate_flag = is_military_gate(selected_gate)
+            is_cargo_gate_flag = (
+                selected_gate.get('is_cargo')
+                or "cargo" in selected_gate['name'].lower()
+                or (selected_gate.get('type') == 'RAMP' and not is_ga_flight and not is_military_flight and not selected_gate.get('is_ga') and not is_mil_gate_flag)
+            )
+            if is_military_flight or is_mil_gate_flag:
+                res["is_military"] = True
+                res["is_mil_stand_tagged"] = bool(is_mil_gate_flag)
+                if not raw_term or raw_term in ("Main Apron", "Other"):
+                    res["terminal"] = "MILITARY APRON"
+                elif "military" in raw_term.lower() or "mil" in raw_term.lower():
+                    res["terminal"] = raw_term.upper()
+                else:
+                    res["terminal"] = f"MILITARY APRON ({raw_term})"
+            elif is_cargo_carrier or is_cargo_gate_flag:
+                res["is_cargo"] = True
                 if not raw_term or raw_term in ("Main Apron", "Other"):
                     res["terminal"] = "CARGO APRON"
                 elif raw_term.startswith("Zone"):
                     res["terminal"] = f"CARGO APRON ({raw_term})"
                 else:
                     res["terminal"] = f"CARGO APRON - {raw_term}"
+            elif is_ga_flight or selected_gate.get('is_ga'):
+                res["is_ga"] = True
+                apron_lbl = "BUSINESS AVIATION APRON" if ga_profile.get("is_bizjet") else "GENERAL AVIATION APRON"
+                if not raw_term or raw_term in ("Main Apron", "Other", "General Aviation"):
+                    res["terminal"] = apron_lbl
+                elif "general aviation" in raw_term.lower() or "business aviation" in raw_term.lower() or "fbo" in raw_term.lower():
+                    res["terminal"] = raw_term.upper()
+                else:
+                    res["terminal"] = f"{apron_lbl} ({raw_term})"
             else:
                 res["terminal"] = raw_term
                 
@@ -6153,10 +7614,30 @@ class GateFinderBackend:
             
             return attach_chart_and_route(res)
 
+        if not airline:
+            if is_military_flight_global:
+                airline = "MIL"
+            elif is_cargo_carrier_global:
+                airline = "CAR"
+            elif ga_flight_info.get("is_ga"):
+                airline = "BIZ" if ga_flight_info.get("is_bizjet") else "GA"
+            elif str(ofp_id or "").startswith("LIVE_MSFS_"):
+                airline = "PAX"
+
         al_name = self.airline_names.get(airline, '')
         if not al_name:
             code_u = airline.upper().strip()
-            if code_u.startswith("AF") or code_u.startswith("VAF"):
+            if code_u == "GA":
+                al_name = "General Aviation"
+            elif code_u == "BIZ":
+                al_name = "Business Aviation"
+            elif code_u == "MIL":
+                al_name = "Military Aviation"
+            elif code_u == "CAR":
+                al_name = "Cargo Operations"
+            elif code_u == "PAX":
+                al_name = "Commercial Passenger"
+            elif code_u.startswith("AF") or code_u.startswith("VAF"):
                 al_name = "Air France Virtuelle"
             elif code_u.startswith("DLH") or code_u.startswith("LH"):
                 al_name = "Lufthansa Virtuelle"
@@ -6247,7 +7728,10 @@ class GateFinderBackend:
             default_lon=dep_data.get("lon") if dep_data else None,
             prev_flight_snapshot=prev_flight_snapshot,
             fresh_dep_chart=(dep_data or {}).get("chart_data"),
-            aircraft_wingspan=wingspan
+            aircraft_wingspan=wingspan,
+            is_ga_flight=bool(ga_flight_info.get("is_ga")),
+            is_military_flight=bool(is_military_flight_global),
+            is_cargo_flight=bool(is_cargo_carrier_global),
         )
         if candidate_stand and candidate_stand.get("gate"):
             cand_gate = candidate_stand["gate"]
@@ -6286,6 +7770,59 @@ class GateFinderBackend:
                     dep_data = process_airport(origin, "departure", origin_rwy, excluded_gate=cand_gate)
                 if dep_data:
                     dep_data["user_requested_new_stand"] = True
+        elif (
+            str(ofp_id or "").startswith("LIVE_MSFS_")
+            and dep_data
+            and sc_live
+            and sc_live.connected
+            and not getattr(sc_live, "in_menu", False)
+            and sc_live.user_on_ground is True
+            and sc_live.user_lat is not None
+            and sc_live.user_lon is not None
+            and float(sc_live.user_gs or 0.0) <= 15.0
+        ):
+            dep_c_lat = (dep_data.get("chart_data") or {}).get("center_lat") or dep_data.get("lat")
+            dep_c_lon = (dep_data.get("chart_data") or {}).get("center_lon") or dep_data.get("lon")
+            if (
+                dep_c_lat is None
+                or dep_c_lon is None
+                or haversine(float(sc_live.user_lat), float(sc_live.user_lon), float(dep_c_lat), float(dep_c_lon)) <= 4500.0
+            ):
+                if is_military_flight_global:
+                    _fb_ramp_name = "MIL RAMP"
+                    _fb_term_name = "MILITARY APRON"
+                elif is_cargo_carrier_global:
+                    _fb_ramp_name = "CARGO RAMP"
+                    _fb_term_name = "CARGO APRON"
+                else:
+                    _fb_ramp_name = "GA RAMP"
+                    _fb_term_name = "GENERAL AVIATION APRON"
+                locked_turnaround_stand = {
+                    "gate": _fb_ramp_name,
+                    "lat": float(sc_live.user_lat),
+                    "lon": float(sc_live.user_lon),
+                    "heading": sc_live.user_hdg,
+                    "no_pushback": True,
+                    "terminal": _fb_term_name,
+                    "has_jetway": False,
+                    "max_wingspan": max(24.0, float(wingspan)),
+                    "reason": "msfs_live",
+                }
+                if dep_data.get("chart_data"):
+                    st_list = dep_data["chart_data"].setdefault("stands", [])
+                    if not any(str(s.get("ref") or "").upper() == _fb_ramp_name for s in st_list):
+                        st_list.append({
+                            "ref": _fb_ramp_name,
+                            "lat": float(sc_live.user_lat),
+                            "lon": float(sc_live.user_lon),
+                            "heading": sc_live.user_hdg,
+                            "has_jetway": False,
+                            "is_ga": not (is_military_flight_global or is_cargo_carrier_global),
+                            "is_military": bool(is_military_flight_global),
+                            "is_cargo": bool(is_cargo_carrier_global),
+                            "terminal": _fb_term_name,
+                            "airlines": ["MIL"] if is_military_flight_global else (["CAR"] if is_cargo_carrier_global else []),
+                        })
 
         # If Turnaround / MSFS Live stand lock was confirmed, apply the locked stand onto the freshly scanned departure airport
         if locked_turnaround_stand and dep_data:
@@ -6349,6 +7886,15 @@ class GateFinderBackend:
                     dep_data["selected_runway"] = dep_data["taxi_route"].get("runway_id", origin_rwy)
 
         _report_progress(0.95, "Synchronizing EFB & ATC...")
+        # Ensure routing graphs for both origin and destination are pre-warmed on this worker thread
+        if hasattr(self, "taxi_router") and self.taxi_router:
+            for _ph_apt in (dep_data, arr_data):
+                _ch = (_ph_apt or {}).get("chart_data")
+                if isinstance(_ch, dict) and "_routing_graph" not in _ch:
+                    try:
+                        self.taxi_router._get_or_build_graph(_ch)
+                    except Exception:
+                        pass
         # Restore persisted session gates/runways/latches ONLY if restarting GateFinder cold on the exact same OFP
         if prev_flight_snapshot is None:
             self._restore_session_state_if_matching(
@@ -6387,6 +7933,10 @@ class GateFinderBackend:
             "aircraft_version": aircraft_version,
             "aircraft_wingspan": wingspan,
             "airline": al_display,
+            "is_ga_flight": bool(ga_flight_info.get("is_ga")),
+            "ga_category": ga_flight_info.get("category", ""),
+            "is_cargo_flight": bool(is_cargo_carrier_global),
+            "is_military_flight": bool(is_military_flight_global),
             "departure": dep_data,
             "arrival": arr_data,
             "map_style": map_style_short,
@@ -6518,6 +8068,10 @@ class GateFinderBackend:
         charts_to_check = []
         if extra_chart_data and isinstance(extra_chart_data, dict):
             charts_to_check.append(extra_chart_data)
+        if hasattr(self, "taxi_router") and self.taxi_router:
+            mc = getattr(self.taxi_router, "memory_cache", {}) or {}
+            if icao_u in mc and isinstance(mc[icao_u], dict):
+                charts_to_check.append(mc[icao_u])
         if self.current_flight_data:
             for ph in ("departure", "arrival"):
                 apt = self.current_flight_data.get(ph) or {}
@@ -6537,11 +8091,14 @@ class GateFinderBackend:
                             "lat": float(slat),
                             "lon": float(slon),
                             "heading": st.get("heading"),
-                            "has_jetway": st.get("has_jetway", True),
-                            "wingspan": 999.0
+                            "terminal": st.get("terminal"),
+                            "has_jetway": st.get("has_jetway", False),
+                            "is_ga": st.get("is_ga", False),
+                            "wingspan": st.get("wingspan", 999.0)
                         }
 
-        if best_stand and best_dist <= 45.0:
+        max_match_d = 65.0 if (best_stand and best_stand.get("is_ga")) else 45.0
+        if best_stand and best_dist <= max_match_d:
             mars_best = None
             if resolve_mars_variant:
                 mars_best = self.resolve_mars_stand_variant_for_aircraft(
@@ -6570,7 +8127,1113 @@ class GateFinderBackend:
             }
         return None
 
-    def get_candidate_departure_stand(self, origin_icao, default_lat=None, default_lon=None, prev_flight_snapshot=None, fresh_dep_chart=None, aircraft_wingspan=None):
+    def get_live_msfs_aircraft_profile(self):
+        """
+        Extracts clean live aircraft metadata (ICAO type, title, registration, airline,
+        physical wingspan in meters, and GA classification) from SimConnect.
+        """
+        sc = getattr(self, "simconnect_manager", None)
+        if not sc or (
+            not sc.connected
+            and not getattr(sc, "user_title", "")
+            and not getattr(sc, "user_atc_model", "")
+            and getattr(sc, "user_sim_wingspan", None) is None
+        ):
+            return {
+                "icao": "GA",
+                "name": "LIVE MSFS AIRCRAFT",
+                "registration": "",
+                "airline": "",
+                "wingspan": 14.0,
+                "is_ga": True,
+                "ga_category": "GA",
+            }
+
+        def _clean_sim_loc(raw_s):
+            s = str(raw_s or "").strip()
+            if not s:
+                return ""
+            s = re.sub(r"^TT:\s*", "", s, flags=re.IGNORECASE)
+            s = re.sub(r"^ATCCOM\.(?:AC_MODEL|ATC_NAME)[_.\s]*", "", s, flags=re.IGNORECASE)
+            s = re.sub(r"\.\d+\.text$", "", s, flags=re.IGNORECASE)
+            return s.replace("_", " ").strip()
+
+        raw_model = _clean_sim_loc(getattr(sc, "user_atc_model", ""))
+        raw_type = _clean_sim_loc(getattr(sc, "user_atc_type", ""))
+        raw_title = _clean_sim_loc(getattr(sc, "user_title", ""))
+        raw_livery = _clean_sim_loc(getattr(sc, "user_livery_name", ""))
+        raw_reg = str(getattr(sc, "user_atc_id", "") or "").strip().upper()
+        raw_al = _clean_sim_loc(getattr(sc, "user_atc_airline", "")).upper()
+        sim_ws = getattr(sc, "user_sim_wingspan", None)
+
+        # Match and normalize ICAO aircraft code across model, title, and manufacturer type
+        # (handles e.g. 'BOEING' + '738', 'BOEING 738 (AUA)', 'FENIXA320 CFM WF', 'PMDG 737-800')
+        ac_icao = ""
+        for cand_src in (
+            f"{raw_type} {raw_model}".strip(),
+            raw_model,
+            raw_title,
+            raw_type,
+        ):
+            norm_ic = self._normalize_aircraft_icao(cand_src, manufacturer_hint=raw_type)
+            if norm_ic:
+                ac_icao = norm_ic
+                break
+        if not ac_icao:
+            m_mod = re.sub(r"[^A-Z0-9]", "", re.sub(r"\([^)]*\)", "", raw_model.upper()))
+            if 3 <= len(m_mod) <= 5:
+                ac_icao = m_mod
+
+        disp_name = raw_title or (f"{raw_type} {raw_model}".strip()) or ac_icao or "MSFS AIRCRAFT"
+        disp_name = re.sub(r"\s+", " ", disp_name).strip().upper()
+        if len(disp_name) > 28 and ac_icao:
+            disp_name = f"{raw_type.upper()} {ac_icao}".strip() if raw_type else ac_icao
+
+        ws_m = float(sim_ws) if (sim_ws is not None and 4.0 <= float(sim_ws) <= 95.0) else AIRCRAFT_WINGSPANS.get(ac_icao, 14.0)
+        al_code = resolve_airline_or_callsign_to_icao(raw_al) if raw_al else ""
+        if not al_code and (raw_livery or raw_title):
+            al_code = self._resolve_airline_from_livery_text(f"{raw_livery} {raw_title}")
+
+        # Prefer explicit tail registration embedded in livery/title if present (avoids stale default ATC ID)
+        liv_reg_match = re.search(
+            r"\b((?:OO|OE|HB|PH|EC|EI|CS|OY|SE|LN|OH|SP|OK|HA|YR|LZ|SX|TC|9H|YL|ES|JA|HL|VH|ZK|RP|VT|HS|9V|9M|A6|A7|HZ|SU|RA|PT|PR|PP|LV|CC|XA)-[A-Z0-9]{2,5}|(?:F|D|G|I|B|C)-[A-Z]{4}|N[1-9][0-9]{0,4}[A-Z]{0,2})\b",
+            f"{raw_livery} {raw_title}".upper()
+        )
+        if liv_reg_match:
+            raw_reg = liv_reg_match.group(1).upper()
+
+        mil_info = is_military_aircraft_or_flight(
+            ac_icao, disp_name, ac_icao, al_code, raw_al, raw_reg, ws_m, sim_title=f"{raw_title} {raw_livery}".strip()
+        )
+        is_mil_live = bool(mil_info.get("is_military"))
+        is_cargo_live = (not is_mil_live) and (
+            is_freighter_aircraft(ac_icao, disp_name, sim_title=f"{raw_title} {raw_livery}".strip())
+            or (al_code in CARGO_AIRLINE_OPERATORS)
+        )
+
+        if is_mil_live:
+            is_ga_flag = False
+            ga_cat = "MIL"
+            if not al_code:
+                al_code = "MIL"
+        elif is_cargo_live:
+            is_ga_flag = False
+            ga_cat = "CARGO"
+            if not al_code:
+                al_code = "CAR"
+        else:
+            ga_info = is_ga_or_business_flight(
+                ac_icao, disp_name, ac_icao, al_code, raw_reg, raw_reg, ws_m
+            )
+            # If physical wingspan from MSFS is < 26m and no commercial airline is set, treat as GA/Business
+            is_ga_flag = bool(ga_info.get("is_ga") or (ws_m < 26.0 and not al_code))
+            ga_cat = ga_info.get("category") or ("BIZ" if ws_m >= 15.5 else "GA")
+
+        return {
+            "icao": ac_icao or ("MIL" if is_mil_live else ("BIZ" if ga_cat == "BIZ" else "GA")),
+            "name": disp_name,
+            "registration": raw_reg,
+            "airline": al_code,
+            "wingspan": round(ws_m, 1),
+            "is_ga": is_ga_flag,
+            "is_military": is_mil_live,
+            "is_cargo": is_cargo_live,
+            "ga_category": ga_cat if (is_ga_flag or is_mil_live or is_cargo_live) else "",
+        }
+
+    def resolve_airport_coords_by_icao(self, icao):
+        """
+        Resolves (lat, lon, display_name) for any ICAO code, checking in-memory databases,
+        disk caches, and falling back to OpenStreetMap Overpass/Nominatim for unlisted VFR airfields.
+        """
+        icao_u = str(icao or "").strip().upper()
+        if not icao_u or len(icao_u) < 3:
+            return None, None, ""
+        cache_map = getattr(self, "_icao_coords_cache", None)
+        if cache_map is None:
+            self._icao_coords_cache = {}
+            cache_map = self._icao_coords_cache
+        if icao_u in cache_map:
+            return cache_map[icao_u]
+
+        # 1. Check in-memory stand databases
+        coherent_map = getattr(self, "coherent_airports", {}) or {}
+        for db in (coherent_map.get(icao_u), self.data.get(icao_u), self.builtin_data.get(icao_u)):
+            if not db or not isinstance(db, dict):
+                continue
+            for g_list in db.values():
+                if not isinstance(g_list, list):
+                    continue
+                for g in g_list:
+                    if g.get("lat") is not None and g.get("lon") is not None:
+                        lat_v, lon_v = float(g["lat"]), float(g["lon"])
+                        nm = self.get_airport_display_name(icao_u, self.airport_names.get(icao_u, ""))
+                        res = (lat_v, lon_v, nm)
+                        cache_map[icao_u] = res
+                        return res
+
+        # 2. Check TaxiRouter memory & disk cache
+        if hasattr(self, "taxi_router") and self.taxi_router:
+            mc = getattr(self.taxi_router, "memory_cache", {}) or {}
+            if icao_u in mc and isinstance(mc[icao_u], dict):
+                cd = mc[icao_u]
+                if cd.get("center_lat") is not None and cd.get("center_lon") is not None:
+                    nm = self.get_airport_display_name(icao_u, self.airport_names.get(icao_u, ""))
+                    res = (float(cd["center_lat"]), float(cd["center_lon"]), nm)
+                    cache_map[icao_u] = res
+                    return res
+
+        # 3. Query Nominatim / Overpass for small VFR airfields (e.g. LFPN, LFPZ)
+        try:
+            from urllib.parse import quote
+            ua_hdr = {"User-Agent": "GateFinder/2.0 (https://github.com/wildbill75/gsx-gatefinder)"}
+            nom_url = f"https://nominatim.openstreetmap.org/search?q={quote(icao_u)}&format=jsonv2&extratags=1&limit=3"
+            req = urllib.request.Request(nom_url, headers=ua_hdr)
+            with urllib.request.urlopen(req, timeout=3.5) as resp:
+                arr = json.loads(resp.read().decode("utf-8", errors="ignore"))
+            if isinstance(arr, list):
+                aero_arr = [
+                    x for x in arr
+                    if isinstance(x, dict) and (
+                        x.get("category") == "aeroway"
+                        or (x.get("extratags") or {}).get("icao") == icao_u
+                    )
+                ]
+                arr = aero_arr or arr
+            if not arr:
+                nom_url2 = f"https://nominatim.openstreetmap.org/search?q={quote(icao_u + ' airport')}&format=jsonv2&limit=3"
+                req2 = urllib.request.Request(nom_url2, headers=ua_hdr)
+                with urllib.request.urlopen(req2, timeout=3.5) as resp2:
+                    arr = json.loads(resp2.read().decode("utf-8", errors="ignore"))
+            if isinstance(arr, list) and arr:
+                item = arr[0]
+                lat_v = float(item["lat"])
+                lon_v = float(item["lon"])
+                raw_nm = str(item.get("name") or item.get("display_name", "").split(",")[0] or icao_u).strip()
+                self.airport_names[icao_u] = raw_nm
+                res = (lat_v, lon_v, raw_nm)
+                cache_map[icao_u] = res
+                return res
+        except Exception:
+            pass
+
+        return None, None, self.airport_names.get(icao_u, icao_u)
+
+    def _distance_to_chart_airfield(self, u_lat, u_lon, ch_d):
+        if not isinstance(ch_d, dict):
+            return None
+        bbox = ch_d.get("_airfield_bbox")
+        if bbox is None:
+            pts_lat = []
+            pts_lon = []
+            for r in (ch_d.get("runways") or ()):
+                la1, lo1 = r.get("lat1"), r.get("lon1")
+                la2, lo2 = r.get("lat2"), r.get("lon2")
+                if la1 is not None and lo1 is not None:
+                    pts_lat.append(float(la1))
+                    pts_lon.append(float(lo1))
+                if la2 is not None and lo2 is not None:
+                    pts_lat.append(float(la2))
+                    pts_lon.append(float(lo2))
+            for s in (ch_d.get("stands") or ()):
+                sla, slo = s.get("lat"), s.get("lon")
+                if sla is not None and slo is not None:
+                    pts_lat.append(float(sla))
+                    pts_lon.append(float(slo))
+            clat = ch_d.get("center_lat")
+            clon = ch_d.get("center_lon")
+            if clat is not None and clon is not None:
+                pts_lat.append(float(clat))
+                pts_lon.append(float(clon))
+            if pts_lat:
+                c_la = float(clat) if clat is not None else (min(pts_lat) + max(pts_lat)) * 0.5
+                c_lo = float(clon) if clon is not None else (min(pts_lon) + max(pts_lon)) * 0.5
+                bbox = (min(pts_lat), max(pts_lat), min(pts_lon), max(pts_lon), c_la, c_lo)
+                ch_d["_airfield_bbox"] = bbox
+            else:
+                return None
+        min_la, max_la, min_lo, max_lo, c_la, c_lo = bbox
+        if u_lat < min_la - 0.045 or u_lat > max_la + 0.045 or u_lon < min_lo - 0.065 or u_lon > max_lo + 0.065:
+            return None
+        d_min = haversine(u_lat, u_lon, c_la, c_lo)
+        for r in (ch_d.get("runways") or ()):
+            la1, lo1 = r.get("lat1"), r.get("lon1")
+            la2, lo2 = r.get("lat2"), r.get("lon2")
+            if la1 is not None and lo1 is not None and la2 is not None and lo2 is not None:
+                fla1, flo1, fla2, flo2 = float(la1), float(lo1), float(la2), float(lo2)
+                d1 = haversine(u_lat, u_lon, fla1, flo1)
+                if d1 < d_min:
+                    d_min = d1
+                d2 = haversine(u_lat, u_lon, fla2, flo2)
+                if d2 < d_min:
+                    d_min = d2
+                dm = haversine(u_lat, u_lon, (fla1 + fla2) * 0.5, (flo1 + flo2) * 0.5)
+                if dm < d_min:
+                    d_min = dm
+        if d_min > 1800.0:
+            for s in (ch_d.get("stands") or ()):
+                sla, slo = s.get("lat"), s.get("lon")
+                if sla is not None and slo is not None:
+                    fsla, fslo = float(sla), float(slo)
+                    if abs(fsla - u_lat) <= 0.032 and abs(fslo - u_lon) <= 0.045:
+                        ds = haversine(u_lat, u_lon, fsla, fslo)
+                        if ds < d_min:
+                            d_min = ds
+                            if d_min <= 400.0:
+                                break
+        return (d_min, c_la, c_lo)
+
+    def _get_builtin_airport_spatial_index(self):
+        b_db = self.builtin_data
+        if not b_db or not isinstance(b_db, dict):
+            return ()
+        init_ready = bool(getattr(self, "_init_done", False))
+        cached = getattr(self, "_fast_airport_coords_index", None)
+        if cached is not None and init_ready and getattr(self, "_fast_airport_coords_len", -1) == len(b_db):
+            return cached
+        try:
+            items_snap = list(b_db.items())
+        except RuntimeError:
+            return cached or ()
+        idx = []
+        for icao_k, al_map in items_snap:
+            if not isinstance(al_map, dict):
+                continue
+            try:
+                al_vals = list(al_map.values())
+            except RuntimeError:
+                continue
+            min_la = 999.0
+            max_la = -999.0
+            min_lo = 999.0
+            max_lo = -999.0
+            found = False
+            for g_list in al_vals:
+                if not isinstance(g_list, list):
+                    continue
+                for g in g_list:
+                    la = g.get("lat")
+                    lo = g.get("lon")
+                    if la is not None and lo is not None:
+                        fla, flo = float(la), float(lo)
+                        if fla < min_la:
+                            min_la = fla
+                        if fla > max_la:
+                            max_la = fla
+                        if flo < min_lo:
+                            min_lo = flo
+                        if flo > max_lo:
+                            max_lo = flo
+                        found = True
+            if found:
+                idx.append((
+                    str(icao_k).strip().upper(),
+                    min_la - 0.042,
+                    max_la + 0.042,
+                    min_lo - 0.060,
+                    max_lo + 0.060,
+                    min_la,
+                    max_la,
+                    min_lo,
+                    max_lo,
+                    (min_la + max_la) * 0.5,
+                    (min_lo + max_lo) * 0.5,
+                ))
+        res_tuple = tuple(idx)
+        if init_ready:
+            self._fast_airport_coords_index = res_tuple
+            self._fast_airport_coords_len = len(items_snap)
+        return res_tuple
+
+    def detect_live_msfs_airport(self, lat=None, lon=None):
+        """
+        Detects the airport (including small VFR/GA airfields like LFPN or LFPZ) where the
+        aircraft is currently located in MSFS based on GPS coordinates.
+        """
+        sc = getattr(self, "simconnect_manager", None)
+        u_lat = lat if lat is not None else (sc.user_lat if sc else None)
+        u_lon = lon if lon is not None else (sc.user_lon if sc else None)
+        if u_lat is None or u_lon is None:
+            return None
+        try:
+            u_lat = float(u_lat)
+            u_lon = float(u_lon)
+        except (ValueError, TypeError):
+            return None
+
+        gps_cache = getattr(self, "_live_gps_airport_cache", None)
+        if gps_cache is None:
+            self._live_gps_airport_cache = {}
+            gps_cache = self._live_gps_airport_cache
+        grid_key = (round(u_lat, 3), round(u_lon, 3))
+        if grid_key in gps_cache:
+            return gps_cache[grid_key]
+
+        best_icao = None
+        best_dist = 999999.0
+        best_lat = None
+        best_lon = None
+        best_name = ""
+
+        # 0. Ultra-fast check against active flight's departure/arrival chart geometry (covers distant runways like EHAM 18R)
+        fd_cur = self.current_flight_data
+        if isinstance(fd_cur, dict):
+            for ph_key in ("departure", "arrival"):
+                apt_d = fd_cur.get(ph_key)
+                if not isinstance(apt_d, dict) or not apt_d.get("icao"):
+                    continue
+                ch_d = apt_d.get("chart_data")
+                hit = self._distance_to_chart_airfield(u_lat, u_lon, ch_d) if ch_d else None
+                if hit is not None and hit[0] < best_dist:
+                    best_dist = hit[0]
+                    best_icao = str(apt_d["icao"]).strip().upper()
+                    best_lat = hit[1]
+                    best_lon = hit[2]
+
+        # 1a. Check coherent_airports and already-loaded GSX profiles (without triggering lazy disk loads)
+        coherent_map = getattr(self, "coherent_airports", {}) or {}
+        loaded_gsx_items = dict.items(self.data) if isinstance(self.data, dict) else ()
+        for src_items in (coherent_map.items(), loaded_gsx_items):
+            for icao_k, al_map in src_items:
+                if not isinstance(al_map, dict):
+                    continue
+                sample_g = None
+                for g_list in al_map.values():
+                    if isinstance(g_list, list) and g_list:
+                        for g in g_list:
+                            if g.get("lat") is not None and g.get("lon") is not None:
+                                sample_g = g
+                                break
+                    if sample_g:
+                        break
+                if not sample_g:
+                    continue
+                glat, glon = float(sample_g["lat"]), float(sample_g["lon"])
+                if abs(glat - u_lat) > 0.06 or abs(glon - u_lon) > 0.08:
+                    continue
+                d_m = haversine(u_lat, u_lon, glat, glon)
+                if d_m < best_dist:
+                    best_dist = d_m
+                    best_icao = str(icao_k).strip().upper()
+                    best_lat = glat
+                    best_lon = glon
+
+        # 1b. Fast flat spatial index scan of builtin_data (6,668 airports, < 0.2ms)
+        near_mega_candidates = []
+        for (
+            icao_u, pad_min_la, pad_max_la, pad_min_lo, pad_max_lo,
+            min_la, max_la, min_lo, max_lo, clat, clon
+        ) in self._get_builtin_airport_spatial_index():
+            if pad_min_la <= u_lat <= pad_max_la and pad_min_lo <= u_lon <= pad_max_lo:
+                clamp_la = min_la if u_lat < min_la else (max_la if u_lat > max_la else u_lat)
+                clamp_lo = min_lo if u_lon < min_lo else (max_lo if u_lon > max_lo else u_lon)
+                d_m = haversine(u_lat, u_lon, clamp_la, clamp_lo)
+                if d_m < best_dist:
+                    best_dist = d_m
+                    best_icao = icao_u
+                    best_lat = clat
+                    best_lon = clon
+            elif abs(clat - u_lat) <= 0.095 and abs(clon - u_lon) <= 0.13:
+                near_mega_candidates.append(icao_u)
+
+        # 1c. Also check TaxiRouter memory_cache (and local disk cache for nearby mega-airports with distant runways)
+        if hasattr(self, "taxi_router") and self.taxi_router:
+            mc = getattr(self.taxi_router, "memory_cache", {}) or {}
+            for icao_k, ch_d in list(mc.items()):
+                hit = self._distance_to_chart_airfield(u_lat, u_lon, ch_d)
+                if hit is not None and hit[0] < best_dist:
+                    best_dist = hit[0]
+                    best_icao = str(icao_k).strip().upper()
+                    best_lat = hit[1]
+                    best_lon = hit[2]
+            if best_dist > 4500.0 and near_mega_candidates:
+                for cand_ic in near_mega_candidates:
+                    if cand_ic in mc:
+                        continue
+                    try:
+                        disk_ch = self.taxi_router._load_from_disk(cand_ic)
+                    except Exception:
+                        disk_ch = None
+                    if disk_ch:
+                        hit = self._distance_to_chart_airfield(u_lat, u_lon, disk_ch)
+                        if hit is not None and hit[0] < best_dist:
+                            best_dist = hit[0]
+                            best_icao = cand_ic
+                            best_lat = hit[1]
+                            best_lon = hit[2]
+
+        if best_icao and best_dist <= 4500.0:
+            best_name = self.get_airport_display_name(best_icao, self.airport_names.get(best_icao, ""))
+            res = {
+                "icao": best_icao,
+                "name": best_name or best_icao,
+                "lat": best_lat,
+                "lon": best_lon,
+                "dist_m": round(best_dist, 1),
+            }
+            gps_cache[grid_key] = res
+            return res
+
+        # 2. Fallback: query OpenStreetMap bounding box for VFR/GA airfields not in builtin_data (e.g. LFPN, LFPZ)
+        try:
+            bbox_url = (
+                f"https://api.openstreetmap.org/api/0.6/map.json?"
+                f"bbox={u_lon - 0.015:.5f},{u_lat - 0.012:.5f},{u_lon + 0.015:.5f},{u_lat + 0.012:.5f}"
+            )
+            req = urllib.request.Request(bbox_url, headers={"User-Agent": "GateFinder/2.0 (https://github.com/wildbill75/gsx-gatefinder)"})
+            with urllib.request.urlopen(req, timeout=3.5) as resp:
+                osm_data = json.loads(resp.read().decode("utf-8", errors="ignore"))
+            elements = osm_data.get("elements") or []
+            nodes_by_id = {
+                el["id"]: (float(el["lat"]), float(el["lon"]))
+                for el in elements
+                if el.get("type") == "node" and "lat" in el and "lon" in el
+            }
+            for el in elements:
+                tags = el.get("tags") or {}
+                icao_tag = str(tags.get("icao") or tags.get("ref:icao") or "").strip().upper()
+                if not (3 <= len(icao_tag) <= 4 and icao_tag.isalnum()):
+                    continue
+                el_lat, el_lon = u_lat, u_lon
+                if "lat" in el and "lon" in el:
+                    el_lat, el_lon = float(el["lat"]), float(el["lon"])
+                elif el.get("nodes"):
+                    coords_n = [nodes_by_id[nid] for nid in el["nodes"] if nid in nodes_by_id]
+                    if coords_n:
+                        el_lat = sum(c[0] for c in coords_n) / len(coords_n)
+                        el_lon = sum(c[1] for c in coords_n) / len(coords_n)
+                d_m = haversine(u_lat, u_lon, el_lat, el_lon)
+                if d_m < best_dist:
+                    best_dist = d_m
+                    best_icao = icao_tag
+                    best_lat = el_lat
+                    best_lon = el_lon
+                    best_name = str(tags.get("name") or tags.get("name:en") or icao_tag).strip()
+            if best_icao and best_dist <= 5000.0:
+                if best_name:
+                    self.airport_names[best_icao] = best_name
+                if not hasattr(self, "_icao_coords_cache"):
+                    self._icao_coords_cache = {}
+                self._icao_coords_cache[best_icao] = (best_lat, best_lon, best_name or best_icao)
+                res = {
+                    "icao": best_icao,
+                    "name": best_name or best_icao,
+                    "lat": best_lat,
+                    "lon": best_lon,
+                    "dist_m": round(best_dist, 1),
+                }
+                gps_cache[grid_key] = res
+                return res
+        except Exception:
+            pass
+
+        gps_cache[grid_key] = None
+        return None
+
+    def _resolve_airline_from_livery_text(self, raw_text):
+        """
+        Extracts a 3-letter commercial/cargo/military ICAO airline code from an MSFS livery
+        name or aircraft title (e.g. 'Brussels Airlines OO-SNC' -> 'BEL', 'Air France' -> 'AFR').
+        """
+        if not raw_text:
+            return ""
+        txt_u = re.sub(r"[^A-Z0-9]+", " ", str(raw_text).upper()).strip()
+        if not txt_u:
+            return ""
+
+        lookup = getattr(self, "_livery_airline_phrases", None)
+        if lookup is None:
+            phrases = {}
+            for k, v in (getattr(self, "airline_names", None) or {}).items():
+                if isinstance(k, str) and len(k) == 3 and k.isalpha() and v:
+                    clean_v = re.sub(r"\s*\(.*?\)", "", str(v).upper())
+                    clean_v = re.sub(r"[^A-Z0-9]+", " ", clean_v).strip()
+                    if len(clean_v) >= 4 and clean_v not in ("GENERAL AVIATION", "BUSINESS AVIATION", "CARGO OPERATIONS", "MILITARY AVIATION"):
+                        phrases[clean_v] = k.upper()
+            for k, v in AIRLINE_FULL_NAMES.items():
+                if isinstance(k, str) and len(k) == 3 and k.isalpha() and v:
+                    clean_v = re.sub(r"\s*\(.*?\)", "", str(v).upper())
+                    clean_v = re.sub(r"[^A-Z0-9]+", " ", clean_v).strip()
+                    if len(clean_v) >= 4:
+                        phrases[clean_v] = k.upper()
+            phrases.update({
+                "BRUSSELS AIRLINES": "BEL", "BRUSSELS": "BEL",
+                "AIR FRANCE": "AFR", "AIRFRANCE": "AFR",
+                "BRITISH AIRWAYS": "BAW", "SPEEDBIRD": "BAW",
+                "LUFTHANSA": "DLH", "LUFTHANSA CITYLINE": "CLH",
+                "KLM ROYAL DUTCH": "KLM", "KLM CITYHOPPER": "KLM", "KLM": "KLM",
+                "EASYJET": "EZY", "EASY JET": "EZY",
+                "RYANAIR": "RYR", "SWISS": "SWR", "EDELWEISS": "EDW",
+                "AUSTRIAN": "AUA", "EUROWINGS": "EWG", "DISCOVER AIRLINES": "OCN",
+                "IBERIA": "IBE", "VUELING": "VLG", "VOLOTEA": "VOE", "AIR EUROPA": "AEA",
+                "TAP AIR PORTUGAL": "TAP", "TAP PORTUGAL": "TAP",
+                "TRANSAVIA FRANCE": "TVF", "TRANSAVIA": "TRA",
+                "WIZZ AIR": "WZZ", "WIZZAIR": "WZZ",
+                "SAS SCANDINAVIAN": "SAS", "SCANDINAVIAN": "SAS",
+                "FINNAIR": "FIN", "NORWEGIAN": "NAX", "AER LINGUS": "EIN",
+                "ITA AIRWAYS": "ITY", "AEGEAN": "AEE", "LOT POLISH": "LOT",
+                "TURKISH AIRLINES": "THY", "PEGASUS": "PGT", "SUNEXPRESS": "SXS",
+                "JET2": "EXS", "TUI AIRWAYS": "TOM", "TUIFLY": "TUI",
+                "VIRGIN ATLANTIC": "VIR", "CORSAIR": "CRL", "FRENCH BEE": "FBU", "AIR CARAIBES": "FWI",
+                "EMIRATES": "UAE", "QATAR AIRWAYS": "QTR", "ETIHAD": "ETD", "SAUDIA": "SVA", "FLYDUBAI": "FDB",
+                "DELTA AIR LINES": "DAL", "DELTA": "DAL",
+                "AMERICAN AIRLINES": "AAL", "UNITED AIRLINES": "UAL", "SOUTHWEST": "SWA",
+                "JETBLUE": "JBU", "ALASKA AIRLINES": "ASA", "SPIRIT AIRLINES": "NKS", "FRONTIER": "FFT",
+                "AIR CANADA": "ACA", "WESTJET": "WJA", "AIR TRANSAT": "TSC",
+                "SINGAPORE AIRLINES": "SIA", "CATHAY PACIFIC": "CPA", "QANTAS": "QFA",
+                "ALL NIPPON": "ANA", "JAPAN AIRLINES": "JAL", "KOREAN AIR": "KAL", "EVA AIR": "EVA",
+                "FEDEX": "FDX", "FEDERAL EXPRESS": "FDX", "CARGOLUX": "CLX", "AEROLOGIC": "BOX",
+            })
+            lookup = sorted(
+                [(re.compile(rf"\b{re.escape(p)}\b"), code) for p, code in phrases.items() if len(p) >= 3],
+                key=lambda item: len(item[0].pattern),
+                reverse=True,
+            )
+            self._livery_airline_phrases = lookup
+
+        padded = f" {txt_u} "
+        for pat, code in lookup:
+            if pat.search(padded):
+                return code
+        return ""
+
+    @staticmethod
+    def _normalize_aircraft_icao(raw_str, manufacturer_hint=""):
+        """
+        Normalizes MSFS / SimBrief aircraft strings into a canonical ICAO aircraft type code.
+        Strips parenthetical livery suffixes like '(AUA)', manufacturer/studio prefixes like 'BOEING',
+        'AIRBUS', 'PMDG', 'FENIX', and resolves bare 3-digit or hyphenated series (e.g. '738' -> 'B738',
+        'BOEING 738 (AUA)' -> 'B738', 'AIRBUS 320' -> 'A320', '737-800' -> 'B738', '190' -> 'E190').
+        """
+        s = str(raw_str or "").strip().upper()
+        if not s:
+            return ""
+        # Strip parenthetical or bracketed suffixes e.g. (AUA), (WL), [PMDG]
+        s = re.sub(r"\([^)]*\)|\[[^\]]*\]", " ", s)
+        s = s.replace("_", " ")
+        s = re.sub(r"\s+", " ", s).strip()
+        if not s or s in ("GA", "BIZ", "MIL", "CAR", "PAX", "MSFS AIRCRAFT", "UNKNOWN"):
+            return ""
+
+        hint_u = re.sub(r"\s+", " ", str(manufacturer_hint or "").upper()).strip()
+        combined_mfr = f"{hint_u} {s}"
+
+        # 1. Exact canonical check if already a clean known code
+        s_alnum = re.sub(r"[^A-Z0-9]", "", s)
+        known_sets = (
+            AIRCRAFT_WINGSPANS,
+            GA_LIGHT_AIRCRAFT_TYPES,
+            BUSINESS_JET_AIRCRAFT_TYPES,
+            MILITARY_FIGHTER_TRAINER_TYPES,
+            MILITARY_TRANSPORT_HEAVY_TYPES,
+        )
+        if 2 <= len(s_alnum) <= 5 and any(s_alnum in ks for ks in known_sets):
+            return s_alnum
+
+        # 2. Strip full manufacturer & addon developer prefixes/words to isolate model core
+        strip_phrases = (
+            "THE BOEING COMPANY", "MCDONNELL DOUGLAS", "DE HAVILLAND CANADA", "DE HAVILLAND",
+            "BRITISH AEROSPACE", "FLIGHTSIM STUDIO", "JUST FLIGHT", "CAPTAIN SIM", "BLACK SQUARE",
+            "WORKING TITLE", "QUALITYWINGS", "FLYBYWIRE", "LATINVFR",
+            "BOEING", "AIRBUS", "EMBRAER", "BOMBARDIER", "DOUGLAS", "CESSNA", "TEXTRON",
+            "BEECHCRAFT", "HAWKER", "CIRRUS", "DAHER", "SOCATA", "PILATUS", "DASSAULT",
+            "GULFSTREAM", "ANTONOV", "ILYUSHIN", "SUKHOI", "TUPOLEV", "SAAB", "FOKKER",
+            "DORNIER", "LOCKHEED", "PMDG", "FENIX", "INIBUILDS", "FBW", "IFLY", "LVFR",
+            "HORIZON", "HEADWIND", "AEROSOFT", "JUSTFLIGHT", "FSS", "TFDI", "LEONARDO",
+            "MADDOG", "CARENADO", "A2A", "ASOBO", "MICROSOFT",
+        )
+        core = f" {s} "
+        for ph in strip_phrases:
+            core = re.sub(rf"\b{re.escape(ph)}\b", " ", core)
+        core = re.sub(r"\s+", " ", core).strip()
+
+        # 3. Specific multi-token & hyphenated family rules (evaluated before generic regexes)
+        spec_patterns = (
+            (r"\b(?:A319\s*NEO|319\s*NEO|A19N|19N)\b", "A19N"),
+            (r"\b(?:A320\s*NEO|320\s*NEO|A32NX|A20N|20N)\b", "A20N"),
+            (r"\b(?:A321\s*(?:NEO|NX|LR|XLR)|321\s*(?:NEO|NX|LR|XLR)|A21N|21N)\b", "A21N"),
+            (r"\b(?:A?220[-\s]*100|CS100|BCS1|A221)\b", "BCS1"),
+            (r"\b(?:A?220[-\s]*300|CS300|BCS3|A223|A220)\b", "BCS3"),
+            (r"\b(?:A?300[-\s]*600\w*|A306\w*)\b", "A306"),
+            (r"\b(?:A?330[-\s]*800|330[-\s]*800|A338)\b", "A338"),
+            (r"\b(?:A?330[-\s]*900|330[-\s]*900|A330\s*NEO|A339)\b", "A339"),
+            (r"\b(?:A?330[-\s]*2\d\d|330[-\s]*2\d\d|A332)\b", "A332"),
+            (r"\b(?:A?330[-\s]*3\d\d|330[-\s]*3\d\d|A333)\b", "A333"),
+            (r"\b(?:A?340[-\s]*3\d\d|340[-\s]*3\d\d|A343)\b", "A343"),
+            (r"\b(?:A?340[-\s]*6\d\d|340[-\s]*6\d\d|A346)\b", "A346"),
+            (r"\b(?:A?350[-\s]*1000|350[-\s]*1000|A35K|35K)\b", "A35K"),
+            (r"\b(?:A?350[-\s]*9\d\d|350[-\s]*9\d\d|A359|A350)\b", "A359"),
+            (r"\b(?:A?380(?:[-\s]*8\d\d)?|A388)\b", "A388"),
+            (r"\b(?:B?737\s*MAX\s*7|737[-\s]*7\s*MAX|B37M|37M)\b", "B37M"),
+            (r"\b(?:B?737\s*MAX\s*8|737[-\s]*8\b(?!\d)|737\s*MAX|738M|B38M|38M|MAX\s*8)\b", "B38M"),
+            (r"\b(?:B?737\s*MAX\s*9|737[-\s]*9\b(?!\d)|739M|B39M|39M|MAX\s*9)\b", "B39M"),
+            (r"\b(?:B?737\s*MAX\s*10|737[-\s]*10\b|B3XM|3XM|MAX\s*10)\b", "B3XM"),
+            (r"\b(?:B?717(?:[-\s]*2\d\d)?|B712)\b", "B712"),
+            (r"\b(?:B?737[-\s]*6\d\d|B736)\b", "B736"),
+            (r"\b(?:B?737[-\s]*7\d\d|B737|73G|73W)\b", "B737"),
+            (r"\b(?:B?737[-\s]*8\d\d\w*|B738\w*|738W|73H)\b", "B738"),
+            (r"\b(?:B?737[-\s]*9\d\d\w*|B739\w*|73J)\b", "B739"),
+            (r"\b(?:B?747[-\s]*8\w*|B748\w*|748I|748F)\b", "B748"),
+            (r"\b(?:B?747[-\s]*4\d\d\w*|B744\w*|744F)\b", "B744"),
+            (r"\b(?:B?757[-\s]*3\d\d|B753)\b", "B753"),
+            (r"\b(?:B?757(?:[-\s]*2\d\d\w*)?|B752\w*)\b", "B752"),
+            (r"\b(?:B?767[-\s]*4\d\d|B764)\b", "B764"),
+            (r"\b(?:B?767[-\s]*2\d\d\w*|B762\w*)\b", "B762"),
+            (r"\b(?:B?767(?:[-\s]*3\d\d\w*)?|B763\w*)\b", "B763"),
+            (r"\b(?:B?777[-\s]*200\s*LR|B77L|77L)\b", "B77L"),
+            (r"\b(?:B?777[-\s]*F\b|777F|B77F|77F)\b", "B77F"),
+            (r"\b(?:B?777[-\s]*300\s*ER|777W|B77W|77W)\b", "B77W"),
+            (r"\b(?:B?777[-\s]*3\d\d|B773)\b", "B773"),
+            (r"\b(?:B?777[-\s]*2\d\d\w*|B772)\b", "B772"),
+            (r"\b(?:B?787[-\s]*10|B78X|78X)\b", "B78X"),
+            (r"\b(?:B?787[-\s]*9|B789)\b", "B789"),
+            (r"\b(?:B?787[-\s]*8|B788)\b", "B788"),
+            (r"\b(?:E190[-\s]*E2|190[-\s]*E2|E290)\b", "E290"),
+            (r"\b(?:E195[-\s]*E2|195[-\s]*E2|E295)\b", "E295"),
+            (r"\b(?:ERJ?[-\s]*170|E[-\s]*170)\b", "E170"),
+            (r"\b(?:ERJ?[-\s]*175|E[-\s]*175)\b", "E175"),
+            (r"\b(?:ERJ?[-\s]*190|E[-\s]*190)\b", "E190"),
+            (r"\b(?:ERJ?[-\s]*195|E[-\s]*195)\b", "E195"),
+            (r"\b(?:CRJ[-\s]*1000|CRJX)\b", "CRJX"),
+            (r"\b(?:CRJ[-\s]*900|CRJ9)\b", "CRJ9"),
+            (r"\b(?:CRJ[-\s]*(?:550|700)|CRJ7)\b", "CRJ7"),
+            (r"\b(?:CRJ[-\s]*200|CRJ2)\b", "CRJ2"),
+            (r"\b(?:ATR[-\s]*72[-\s]*600|ATR[-\s]*72|AT76)\b", "AT76"),
+            (r"\b(?:ATR[-\s]*42[-\s]*600|ATR[-\s]*42|AT46)\b", "AT46"),
+            (r"\b(?:DASH\s*8[-\s]*400|DHC[-\s]*8[-\s]*400|Q400|DH8D)\b", "DH8D"),
+            (r"\b(?:MD[-\s]*11\w*|MD11\w*)\b", "MD11"),
+            (r"\b(?:TBM[-\s]*9\d\d|TBM9)\b", "TBM9"),
+            (r"\b(?:PC[-\s]*12|PC12)\b", "PC12"),
+            (r"\b(?:PC[-\s]*24|PC24)\b", "PC24"),
+        )
+        for pat, canon in spec_patterns:
+            if re.search(pat, core) or re.search(pat, s):
+                return canon
+
+        # 4. Embedded 4-char ICAO codes inside concatenated titles (e.g. FENIXA320, PMDGB738, INIA306)
+        embedded_pat = re.compile(
+            r"(A318|A319|A320|A321|A19N|A20N|A21N|A221|A223|BCS1|BCS3|A306|A310|A332|A333|A338|A339|"
+            r"A343|A346|A359|A35K|A388|B712|B733|B734|B735|B736|B737|B738|B739|B37M|B38M|B39M|B3XM|"
+            r"B744|B748|B752|B753|B762|B763|B764|B772|B77L|B773|B77W|B77F|B788|B789|B78X|MD11|"
+            r"E135|E145|E170|E175|E190|E195|E290|E295|CRJ2|CRJ7|CRJ9|CRJX|AT45|AT46|AT72|AT75|AT76|"
+            r"DH8D|C152|C172|C182|C208|C25C|C700|SR22|SF50|DA40|DA42|DA62|TBM9|PC12|PC24)"
+        )
+        m_emb = embedded_pat.search(s)
+        if m_emb:
+            return m_emb.group(1)
+
+        # 5. Bare 3-character commercial/regional series codes (e.g. MSFS user_atc_model='738', '320', '190', '789')
+        bare3_map = {
+            "318": "A318", "319": "A319", "320": "A320", "321": "A321",
+            "221": "BCS1", "223": "BCS3", "306": "A306", "310": "A310",
+            "332": "A332", "333": "A333", "338": "A338", "339": "A339",
+            "343": "A343", "346": "A346", "359": "A359", "350": "A359", "388": "A388", "380": "A388",
+            "712": "B712", "717": "B712", "722": "B722",
+            "733": "B733", "734": "B734", "735": "B735",
+            "736": "B736", "737": "B737", "738": "B738", "739": "B739",
+            "744": "B744", "747": "B744", "748": "B748",
+            "752": "B752", "753": "B753", "757": "B752",
+            "762": "B762", "763": "B763", "764": "B764", "767": "B763",
+            "772": "B772", "773": "B773", "777": "B77W",
+            "788": "B788", "789": "B789", "787": "B789",
+            "170": "E170", "175": "E175", "190": "E190", "195": "E195",
+        }
+        # Check leading model token (e.g. '738' from 'BOEING 738' or '320-214' -> '320')
+        for tok in re.findall(r"\b([A-Z0-9]{3,5})\b", core):
+            if any(tok in ks for ks in known_sets):
+                return tok
+            if tok in bare3_map:
+                if tok in ("152", "172", "182", "208"):
+                    continue
+                return bare3_map[tok]
+            if "CESSNA" in combined_mfr and tok in ("150", "152", "172", "182", "206", "208", "210", "700"):
+                cand_c = f"C{tok}"
+                if any(cand_c in ks for ks in known_sets):
+                    return cand_c
+
+        m_lead3 = re.match(r"^(\d{3})(?:[-\s]\d+)?\b", core)
+        if m_lead3 and m_lead3.group(1) in bare3_map:
+            return bare3_map[m_lead3.group(1)]
+
+        return ""
+
+    @staticmethod
+    def _are_aircraft_types_compatible(live_icao, sb_icao, sb_name="", live_ws=36.0, sb_ws=36.0, live_is_ga=False, sb_is_ga=False, live_name=""):
+        """
+        Determines whether the spawned MSFS aircraft type matches the SimBrief OFP aircraft type.
+        Normalizes MSFS & SimBrief strings first (ignoring livery tags like '(AUA)' and manufacturer
+        prefixes like 'BOEING') and treats CEO/NEO & sub-series equivalents (e.g. A320/A20N, B738/B38M)
+        as compatible, while flagging distinct families/subtypes (e.g. A320 vs A359, A320 vs B738).
+        """
+        generic_tags = {"", "GA", "BIZ", "MIL", "CAR", "PAX"}
+        raw_l = str(live_icao or "").strip().upper()
+        raw_s = str(sb_icao or "").strip().upper()
+
+        norm_l = (
+            GateFinderBackend._normalize_aircraft_icao(raw_l)
+            or GateFinderBackend._normalize_aircraft_icao(live_name)
+        )
+        norm_s = (
+            GateFinderBackend._normalize_aircraft_icao(raw_s)
+            or GateFinderBackend._normalize_aircraft_icao(sb_name)
+        )
+
+        l_u = norm_l or (re.sub(r"\([^)]*\)", "", raw_l).strip() if raw_l not in generic_tags else "")
+        s_u = norm_s or (re.sub(r"\([^)]*\)", "", raw_s).strip() if raw_s not in generic_tags else "")
+
+        if l_u not in generic_tags and s_u not in generic_tags:
+            if l_u == s_u:
+                return True
+            equiv_groups = (
+                {"A318"},
+                {"A319", "A19N"},
+                {"A320", "A20N"},
+                {"A321", "A21N"},
+                {"A221", "BCS1"},
+                {"A223", "BCS3"},
+                {"A332", "A330"},
+                {"A333", "A330"},
+                {"A338", "A330"},
+                {"A339", "A330"},
+                {"A359", "A350"},
+                {"A35K", "A350"},
+                {"A388", "A380"},
+                {"B737", "B37M"},
+                {"B738", "B38M"},
+                {"B739", "B39M", "B3XM"},
+                {"B744", "B748", "B747"},
+                {"B752", "B753", "B757"},
+                {"B762", "B763", "B764", "B767"},
+                {"B772", "B77L", "B777"},
+                {"B773", "B77W", "B777"},
+                {"B788", "B789", "B78X", "B787"},
+                {"AT72", "AT75", "AT76"},
+                {"E190", "E290"},
+                {"E195", "E295"},
+            )
+            for grp in equiv_groups:
+                if l_u in grp and s_u in grp:
+                    return True
+            if l_u in AIRCRAFT_EQUIVALENT_FAMILIES and s_u in AIRCRAFT_EQUIVALENT_FAMILIES[l_u]:
+                return True
+            return False
+
+        if live_is_ga != sb_is_ga and abs(float(live_ws or 36.0) - float(sb_ws or 36.0)) >= 4.0:
+            return False
+        if abs(float(live_ws or 36.0) - float(sb_ws or 36.0)) >= 6.5:
+            return False
+        return True
+
+    def dismiss_simbrief_msfs_mismatch(self, mismatch_key):
+        if not hasattr(self, "_dismissed_airport_mismatches"):
+            self._dismissed_airport_mismatches = set()
+        if mismatch_key:
+            self._dismissed_airport_mismatches.add(str(mismatch_key))
+        self.pending_simbrief_mismatch = None
+        self._mismatch_check_memo = None
+
+    def check_simbrief_vs_msfs_mismatch(self):
+        """
+        Compares the currently loaded (or latest SimBrief) flight plan (origin -> destination & aircraft)
+        against the aircraft's actual on-tarmac state in MSFS AFTER clicking 'Start Flight'.
+        """
+        sc = getattr(self, "simconnect_manager", None)
+        if (
+            not sc
+            or not sc.connected
+            or getattr(sc, "in_menu", False)
+            or sc.user_on_ground is not True
+            or sc.user_lat is None
+            or sc.user_lon is None
+            or float(sc.user_gs or 0.0) > 10.0
+        ):
+            self.pending_simbrief_mismatch = None
+            return None
+
+        cam_st = getattr(sc, "user_camera_state", None)
+        if cam_st is not None and (cam_st == 11 or (12 <= cam_st <= 20) or cam_st >= 22):
+            self.pending_simbrief_mismatch = None
+            return None
+
+        stable_dur = float(getattr(sc, "tarmac_stable_duration", 0.0) or 0.0)
+        if stable_dur < 1.0:
+            return None
+
+        u_lat = float(sc.user_lat)
+        u_lon = float(sc.user_lon)
+
+        # Extra safety against MSFS 2020/2024 default KBFI (Boeing Field, Seattle) staging coordinates
+        if 47.510 <= u_lat <= 47.550 and -122.325 <= u_lon <= -122.285:
+            if cam_st != 2 or stable_dur < 15.0:
+                return None
+
+        fd = self.current_flight_data
+        dep_icao = ""
+        arr_icao = ""
+        ofp_id = "NO_OFP"
+        sb_ac_name = ""
+        cur_ac_type = ""
+        sb_ws = 36.0
+        sb_is_ga = False
+        near_expected_airport = False
+        peek_only = False
+
+        if fd:
+            dep = fd.get("departure") or {}
+            arr = fd.get("arrival") or {}
+            dep_icao = str(dep.get("icao") or "").strip().upper()
+            arr_icao = str(arr.get("icao") or "").strip().upper()
+            ofp_id = str(fd.get("ofp_id") or "")
+            sb_ac_name = str(fd.get("aircraft") or "").strip()
+            cur_ac_type = str(fd.get("aircraft_type") or "").strip().upper()
+            sb_ws = float(fd.get("aircraft_wingspan") or 36.0)
+            sb_is_ga = bool(fd.get("is_ga_flight", False))
+
+            already_departed = bool(dep_icao and self.taxi_router.dep_runway_entered.get(dep_icao))
+            valid_apts = (dep, arr) if (already_departed or str(ofp_id).startswith("LIVE_MSFS_")) else (dep,)
+            for apt in valid_apts:
+                alat = apt.get("lat")
+                alon = apt.get("lon")
+                if (alat is None or alon is None) and apt.get("chart_data"):
+                    alat = apt["chart_data"].get("center_lat")
+                    alon = apt["chart_data"].get("center_lon")
+                if alat is not None and alon is not None:
+                    if haversine(u_lat, u_lon, float(alat), float(alon)) <= 8500.0:
+                        near_expected_airport = True
+                        break
+                if apt.get("chart_data"):
+                    ch_hit = self._distance_to_chart_airfield(u_lat, u_lon, apt["chart_data"])
+                    if ch_hit is not None and ch_hit[0] <= 3200.0:
+                        near_expected_airport = True
+                        break
+        else:
+            sb_user = str(self.config.settings.get("simbrief_username") or "").strip()
+            if sb_user:
+                now_p = time.time()
+                cached_pk = getattr(self, "_cached_mismatch_sb_peek", None)
+                if cached_pk is None or (now_p - cached_pk[0]) >= 25.0 or cached_pk[1] != sb_user:
+                    pk_data = self.peek_latest_simbrief_ofp(sb_user)
+                    self._cached_mismatch_sb_peek = (now_p, sb_user, pk_data)
+                else:
+                    pk_data = cached_pk[2]
+                if isinstance(pk_data, dict) and pk_data.get("origin"):
+                    peek_only = True
+                    ofp_id = str(pk_data.get("ofp_id") or "PEEK_OFP")
+                    dep_icao = str(pk_data.get("origin") or "").strip().upper()
+                    arr_icao = str(pk_data.get("destination") or "").strip().upper()
+                    sb_ac_name = str(pk_data.get("aircraft") or pk_data.get("aircraft_icao") or "").strip()
+                    cur_ac_type = str(pk_data.get("aircraft_icao") or pk_data.get("aircraft_base") or "").strip().upper()
+                    sb_ws = float(AIRCRAFT_WINGSPANS.get(cur_ac_type, 36.0))
+                    sb_is_ga = bool(cur_ac_type in GA_LIGHT_AIRCRAFT_TYPES or cur_ac_type in BUSINESS_JET_AIRCRAFT_TYPES)
+
+        ac_prof = self.get_live_msfs_aircraft_profile()
+        has_live_ac_meta = bool(
+            getattr(sc, "user_title", "")
+            or getattr(sc, "user_atc_model", "")
+            or getattr(sc, "user_sim_wingspan", None) is not None
+        )
+        aircraft_mismatch = False
+        if (fd or peek_only) and has_live_ac_meta:
+            live_is_ga = bool(ac_prof.get("is_ga", False))
+            live_ws = float(ac_prof.get("wingspan") or sb_ws)
+            live_ac_icao = str(ac_prof.get("icao") or "").strip().upper()
+            live_ac_name = str(ac_prof.get("name") or "").strip()
+            if str(ofp_id).startswith("LIVE_MSFS_"):
+                if live_ac_icao and cur_ac_type and not self._are_aircraft_types_compatible(
+                    live_ac_icao, cur_ac_type, sb_ac_name, live_ws, sb_ws, live_is_ga, sb_is_ga, live_name=live_ac_name
+                ):
+                    aircraft_mismatch = True
+            else:
+                if not self._are_aircraft_types_compatible(
+                    live_ac_icao, cur_ac_type, sb_ac_name, live_ws, sb_ws, live_is_ga, sb_is_ga, live_name=live_ac_name
+                ):
+                    aircraft_mismatch = True
+
+        if near_expected_airport and not aircraft_mismatch:
+            self.pending_simbrief_mismatch = None
+            return None
+
+        dismissed = getattr(self, "_dismissed_airport_mismatches", set())
+        memo_key = (
+            round(u_lat, 4),
+            round(u_lon, 4),
+            ofp_id,
+            dep_icao,
+            arr_icao,
+            sb_ac_name,
+            cur_ac_type,
+            round(sb_ws, 1),
+            sb_is_ga,
+            peek_only,
+            has_live_ac_meta,
+            str(ac_prof.get("icao") or ""),
+            str(ac_prof.get("airline") or ""),
+            round(float(ac_prof.get("wingspan") or 0.0), 1),
+            bool(ac_prof.get("is_ga", False)),
+            cam_st == 2,
+            stable_dur >= 15.0,
+            bool(getattr(self, "_init_done", False)),
+            len(getattr(self, "coherent_airports", ()) or ()),
+            len(dismissed),
+        )
+        prev_memo = getattr(self, "_mismatch_check_memo", None)
+        if prev_memo is not None and prev_memo[0] == memo_key:
+            self.pending_simbrief_mismatch = prev_memo[1]
+            return prev_memo[1]
+
+        live_apt = self.detect_live_msfs_airport(u_lat, u_lon)
+        if not live_apt or not live_apt.get("icao"):
+            self._mismatch_check_memo = (memo_key, None)
+            self.pending_simbrief_mismatch = None
+            return None
+
+        live_icao = str(live_apt["icao"]).strip().upper()
+
+        # Check if parked at a known stand
+        live_stand_info = self.detect_live_msfs_parked_stand(
+            live_icao,
+            default_lat=live_apt.get("lat"),
+            default_lon=live_apt.get("lon"),
+            aircraft_wingspan=ac_prof.get("wingspan"),
+            resolve_mars_variant=False,
+        )
+        live_stand_name = live_stand_info.get("gate") if isinstance(live_stand_info, dict) else None
+        if live_icao == "KBFI" and dep_icao != "KBFI" and arr_icao != "KBFI":
+            if cam_st != 2 or stable_dur < 15.0 or not live_stand_name:
+                self._mismatch_check_memo = (memo_key, None)
+                self.pending_simbrief_mismatch = None
+                return None
+
+        if fd:
+            already_dep = bool(dep_icao and self.taxi_router.dep_runway_entered.get(dep_icao))
+            valid_icaos = (dep_icao, arr_icao) if (already_dep or str(ofp_id).startswith("LIVE_MSFS_")) else (dep_icao,)
+            airport_mismatch = bool(not dep_icao or live_icao not in valid_icaos)
+        elif peek_only:
+            airport_mismatch = bool(live_icao != dep_icao)
+        else:
+            airport_mismatch = True
+
+        if not airport_mismatch and not aircraft_mismatch:
+            self._mismatch_check_memo = (memo_key, None)
+            self.pending_simbrief_mismatch = None
+            return None
+
+        if airport_mismatch and aircraft_mismatch:
+            m_reason = "both"
+        elif aircraft_mismatch:
+            m_reason = "aircraft"
+        else:
+            m_reason = "airport"
+
+        mismatch_key = f"{ofp_id}|{dep_icao}|{arr_icao}|{live_icao}|{ac_prof.get('icao') or ''}"
+        if mismatch_key in dismissed:
+            self._mismatch_check_memo = (memo_key, None)
+            self.pending_simbrief_mismatch = None
+            return None
+
+        res_mismatch = {
+            "mismatch_key": mismatch_key,
+            "mismatch_reason": m_reason,
+            "peek_only": peek_only,
+            "ofp_id": ofp_id,
+            "live_icao": live_icao,
+            "live_name": live_apt.get("name") or live_icao,
+            "live_stand": live_stand_name or "",
+            "live_lat": live_apt.get("lat"),
+            "live_lon": live_apt.get("lon"),
+            "simbrief_origin": dep_icao,
+            "simbrief_dest": arr_icao or dep_icao,
+            "simbrief_aircraft": sb_ac_name,
+            "simbrief_aircraft_icao": cur_ac_type,
+            "live_aircraft": ac_prof,
+        }
+        self._mismatch_check_memo = (memo_key, res_mismatch)
+        self.pending_simbrief_mismatch = res_mismatch
+        return res_mismatch
+
+    def load_live_msfs_flight(self, origin_icao, dest_icao="", progress_callback=None):
+        """
+        Loads a Direct Live MSFS Flight without requiring a matching SimBrief OFP,
+        using the live aircraft telemetry from SimConnect and resolving airport stands/charts
+        for `origin_icao` and `dest_icao` (defaults to `origin_icao` for local flights).
+        """
+        orig_u = str(origin_icao or "").strip().upper()
+        dest_u = str(dest_icao or "").strip().upper() or orig_u
+
+        orig_lat, orig_lon, orig_name = self.resolve_airport_coords_by_icao(orig_u)
+        if orig_lat is None or orig_lon is None:
+            sc = getattr(self, "simconnect_manager", None)
+            if sc and sc.user_lat is not None and sc.user_lon is not None:
+                orig_lat, orig_lon = float(sc.user_lat), float(sc.user_lon)
+
+        if dest_u == orig_u:
+            dest_lat, dest_lon, dest_name = orig_lat, orig_lon, orig_name
+        else:
+            dest_lat, dest_lon, dest_name = self.resolve_airport_coords_by_icao(dest_u)
+
+        ac_prof = self.get_live_msfs_aircraft_profile()
+        ac_icao = ac_prof.get("icao") or "GA"
+        ac_name = ac_prof.get("name") or ac_icao
+        ac_reg = ac_prof.get("registration") or ""
+        ac_al = ac_prof.get("airline") or ""
+        ac_ws = ac_prof.get("wingspan") or 14.0
+
+        synthetic_ofp = {
+            "origin": {
+                "icao_code": orig_u,
+                "name": orig_name or orig_u,
+                "pos_lat": str(orig_lat) if orig_lat is not None else "",
+                "pos_long": str(orig_lon) if orig_lon is not None else "",
+                "plan_rwy": "",
+            },
+            "destination": {
+                "icao_code": dest_u,
+                "name": dest_name or dest_u,
+                "pos_lat": str(dest_lat) if dest_lat is not None else "",
+                "pos_long": str(dest_lon) if dest_lon is not None else "",
+                "plan_rwy": "",
+            },
+            "params": {
+                "request_id": f"LIVE_MSFS_{orig_u}_{dest_u}",
+                "time_generated": str(int(time.time())),
+            },
+            "general": {
+                "icao_airline": ac_al,
+                "airline": ac_al,
+                "flight_number": "",
+            },
+            "atc": {
+                "callsign": ac_al if (ac_al and ac_al != ac_reg) else "",
+            },
+            "aircraft": {
+                "icaocode": ac_icao,
+                "base_type": ac_icao,
+                "name": ac_name,
+                "reg": ac_reg,
+                "engines": "",
+                "wingspan": ac_ws,
+            },
+        }
+        self.pending_simbrief_mismatch = None
+        return self.get_flight_data(
+            username="",
+            _mock_data=synthetic_ofp,
+            turnaround_keep_gate=True,
+            progress_callback=progress_callback,
+        )
+
+    def get_candidate_departure_stand(
+        self,
+        origin_icao,
+        default_lat=None,
+        default_lon=None,
+        prev_flight_snapshot=None,
+        fresh_dep_chart=None,
+        aircraft_wingspan=None,
+        is_ga_flight=None,
+        is_military_flight=None,
+        is_cargo_flight=None,
+    ):
         """
         Returns the candidate stand to propose keeping at `origin_icao` when importing a flight plan:
           1. Live MSFS aircraft parked at a stand at `origin_icao` (SimConnect GPS match <= 45m).
@@ -6591,6 +9254,92 @@ class GateFinderBackend:
         if live_st and live_st.get("gate") and live_st.get("gate") != "N/A":
             return live_st
 
+        # If the user is currently on the ground in MSFS at a different airport (> 9 km from `origin_icao`),
+        # do NOT prompt to keep a historical turnaround stand at `origin_icao` (let the MSFS vs SimBrief mismatch modal handle it).
+        sc_chk = getattr(self, "simconnect_manager", None)
+        if (
+            sc_chk
+            and sc_chk.connected
+            and not getattr(sc_chk, "in_menu", False)
+            and sc_chk.user_on_ground is True
+            and sc_chk.user_lat is not None
+            and sc_chk.user_lon is not None
+        ):
+            chk_lat, chk_lon = default_lat, default_lon
+            if (chk_lat is None or chk_lon is None) and fresh_dep_chart:
+                chk_lat = fresh_dep_chart.get("center_lat")
+                chk_lon = fresh_dep_chart.get("center_lon")
+            if chk_lat is not None and chk_lon is not None:
+                if haversine(float(sc_chk.user_lat), float(sc_chk.user_lon), float(chk_lat), float(chk_lon)) > 9000.0:
+                    return None
+
+        def _is_compatible_turnaround_stand(cand_dict):
+            if not cand_dict or not cand_dict.get("gate"):
+                return False
+            _, _, g_meta = self.resolve_stand_in_airport_db(
+                icao_u,
+                cand_dict["gate"],
+                fallback_lat=cand_dict.get("lat"),
+                fallback_lon=cand_dict.get("lon"),
+            )
+            st_ws = float(
+                (g_meta or {}).get("wingspan")
+                or cand_dict.get("max_wingspan")
+                or 999.0
+            )
+            if aircraft_wingspan is not None and st_ws < float(aircraft_wingspan) - 0.3:
+                mars_alt = self.resolve_mars_stand_variant_for_aircraft(
+                    icao_u,
+                    cand_dict["gate"],
+                    gate_lat=cand_dict.get("lat"),
+                    gate_lon=cand_dict.get("lon"),
+                    aircraft_wingspan=aircraft_wingspan,
+                )
+                if not mars_alt or float(mars_alt.get("wingspan") or 0.0) < float(aircraft_wingspan) - 0.3:
+                    return False
+            st_jw = bool(
+                (g_meta or {}).get("has_jetway")
+                if (g_meta and "has_jetway" in g_meta)
+                else cand_dict.get("has_jetway", False)
+            )
+            st_term = str((g_meta or {}).get("terminal") or cand_dict.get("terminal") or "")
+            st_type = str((g_meta or {}).get("type") or "")
+            st_mil = is_military_stand_gate(
+                cand_dict["gate"],
+                st_term,
+                st_type,
+                bool((g_meta or {}).get("is_military")),
+            )
+            st_cargo = bool(
+                (g_meta or {}).get("is_cargo")
+                if (g_meta and "is_cargo" in g_meta)
+                else is_cargo_ramp_gate(cand_dict["gate"], st_term, st_type)
+            )
+            if is_military_flight is not None:
+                if is_military_flight and (st_jw or not (st_mil or st_cargo or not st_jw)):
+                    return False
+                if is_military_flight and not st_mil:
+                    # Only keep non-mil stand if airport has no military stands at all AND it's not a jetway gate
+                    return False
+                if (not is_military_flight) and st_mil:
+                    return False
+            if is_cargo_flight is not None:
+                if is_cargo_flight and not st_cargo:
+                    return False
+                if (not is_cargo_flight) and (not is_military_flight) and st_cargo:
+                    return False
+            if is_ga_flight is not None:
+                st_ga = bool(
+                    (g_meta or {}).get("is_ga")
+                    if (g_meta and "is_ga" in g_meta)
+                    else is_ga_ramp_gate(cand_dict["gate"], st_term, st_type)
+                )
+                if is_ga_flight and st_jw:
+                    return False
+                if (not is_ga_flight) and st_ga:
+                    return False
+            return True
+
         # 2 & 3. Previous in-memory flight data (arrival at `origin_icao` OR same departure `origin_icao`)
         fd_prev = prev_flight_snapshot if prev_flight_snapshot is not None else self.current_flight_data
         if fd_prev:
@@ -6599,7 +9348,7 @@ class GateFinderBackend:
                 if str(apt.get("icao") or "").strip().upper() == icao_u:
                     g_val = str(apt.get("gate") or "").strip()
                     if g_val and g_val != "N/A":
-                        return {
+                        cand = {
                             "gate": g_val,
                             "lat": apt.get("lat"),
                             "lon": apt.get("lon"),
@@ -6610,6 +9359,8 @@ class GateFinderBackend:
                             "max_wingspan": apt.get("max_wingspan"),
                             "reason": r_tag
                         }
+                        if _is_compatible_turnaround_stand(cand):
+                            return cand
 
         # 4. Persisted session (`last_flight_session.json` + `last_stands_by_icao`)
         try:
@@ -6621,23 +9372,29 @@ class GateFinderBackend:
                     if str(saved.get("destination") or "").strip().upper() == icao_u:
                         s_arr_g = str(saved.get("arr_gate") or "").strip()
                         if s_arr_g and s_arr_g != "N/A":
-                            return {"gate": s_arr_g, "reason": "turnaround_arrival"}
+                            cand = {"gate": s_arr_g, "reason": "turnaround_arrival"}
+                            if _is_compatible_turnaround_stand(cand):
+                                return cand
                     if str(saved.get("origin") or "").strip().upper() == icao_u:
                         s_dep_g = str(saved.get("dep_gate") or "").strip()
                         if s_dep_g and s_dep_g != "N/A":
-                            return {"gate": s_dep_g, "reason": "same_departure"}
+                            cand = {"gate": s_dep_g, "reason": "same_departure"}
+                            if _is_compatible_turnaround_stand(cand):
+                                return cand
                     by_icao = saved.get("last_stands_by_icao")
                     if isinstance(by_icao, dict) and icao_u in by_icao:
                         entry = by_icao[icao_u]
                         if isinstance(entry, dict) and (time.time() - float(entry.get("timestamp") or 0) <= 24 * 3600):
                             eg = str(entry.get("gate") or "").strip()
                             if eg and eg != "N/A":
-                                return {
+                                cand = {
                                     "gate": eg,
                                     "lat": entry.get("lat"),
                                     "lon": entry.get("lon"),
                                     "reason": entry.get("reason", "turnaround_arrival")
                                 }
+                                if _is_compatible_turnaround_stand(cand):
+                                    return cand
         except Exception:
             pass
 
@@ -6653,63 +9410,108 @@ class GateFinderBackend:
             return
         try:
             p_path = self._get_session_state_path()
-            last_stands_by_icao = {}
-            if os.path.exists(p_path):
-                try:
-                    with open(p_path, "r", encoding="utf-8") as rf:
-                        prev_saved = json.load(rf)
-                    if isinstance(prev_saved, dict) and isinstance(prev_saved.get("last_stands_by_icao"), dict):
-                        now_t = time.time()
-                        for k_icao, v_st in prev_saved["last_stands_by_icao"].items():
-                            if isinstance(v_st, dict) and (now_t - float(v_st.get("timestamp") or 0) <= 24 * 3600):
-                                last_stands_by_icao[k_icao] = v_st
-                except Exception:
-                    pass
-
             dep = self.current_flight_data.get("departure") or {}
             arr = self.current_flight_data.get("arrival") or {}
             now_ts = time.time()
-            if dep.get("icao") and dep.get("gate") and dep.get("gate") != "N/A":
-                last_stands_by_icao[str(dep["icao"]).upper()] = {
-                    "gate": dep.get("gate"),
-                    "lat": dep.get("lat"),
-                    "lon": dep.get("lon"),
-                    "reason": "same_departure",
-                    "timestamp": now_ts
-                }
-            if arr.get("icao") and arr.get("gate") and arr.get("gate") != "N/A":
-                last_stands_by_icao[str(arr["icao"]).upper()] = {
-                    "gate": arr.get("gate"),
-                    "lat": arr.get("lat"),
-                    "lon": arr.get("lon"),
-                    "reason": "turnaround_arrival",
-                    "timestamp": now_ts
-                }
+            session_sig = (
+                p_path,
+                self.current_flight_data.get("ofp_id"),
+                dep.get("icao"),
+                arr.get("icao"),
+                self.current_flight_data.get("aircraft"),
+                self.current_flight_data.get("airline"),
+                dep.get("gate"),
+                dep.get("gate_source"),
+                dep.get("lat"),
+                dep.get("lon"),
+                dep.get("selected_runway"),
+                dep.get("atc_runway"),
+                dep.get("atc_runway_source"),
+                arr.get("gate"),
+                arr.get("gate_source"),
+                arr.get("lat"),
+                arr.get("lon"),
+                arr.get("selected_runway"),
+                arr.get("atc_runway"),
+                arr.get("atc_runway_source"),
+                tuple(sorted(self.taxi_router.dep_runway_entered.items())),
+                tuple(sorted(self.taxi_router.arr_vacated_runway.items())),
+                tuple(sorted((str(k), str(v)) for k, v in self.taxi_router.locked_arrival_exit.items())),
+            )
+            if (
+                session_sig == getattr(self, "_last_saved_session_sig", None)
+                and (now_ts - getattr(self, "_last_saved_session_ts", 0.0)) < 300.0
+                and os.path.exists(p_path)
+            ):
+                return
 
-            payload = {
-                "timestamp": now_ts,
-                "ofp_id": self.current_flight_data.get("ofp_id"),
-                "origin": dep.get("icao"),
-                "destination": arr.get("icao"),
-                "aircraft": self.current_flight_data.get("aircraft"),
-                "airline": self.current_flight_data.get("airline"),
-                "dep_gate": dep.get("gate"),
-                "dep_gate_source": dep.get("gate_source"),
-                "dep_selected_runway": dep.get("selected_runway"),
-                "dep_atc_runway": dep.get("atc_runway"),
-                "dep_atc_runway_source": dep.get("atc_runway_source"),
-                "arr_gate": arr.get("gate"),
-                "arr_gate_source": arr.get("gate_source"),
-                "arr_selected_runway": arr.get("selected_runway"),
-                "arr_atc_runway": arr.get("atc_runway"),
-                "arr_atc_runway_source": arr.get("atc_runway_source"),
-                "dep_runway_entered": dict(self.taxi_router.dep_runway_entered),
-                "arr_vacated_runway": dict(self.taxi_router.arr_vacated_runway),
-                "locked_arrival_exit": dict(self.taxi_router.locked_arrival_exit),
-                "last_stands_by_icao": last_stands_by_icao
-            }
-            with open(p_path, "w", encoding="utf-8") as f:
-                json.dump(payload, f, indent=2)
+            io_lock = getattr(self, "_session_io_lock", None)
+            if io_lock is None:
+                self._session_io_lock = threading.RLock()
+                io_lock = self._session_io_lock
+
+            with io_lock:
+                cached_stands = getattr(self, "_cached_last_stands_by_icao", None)
+                last_stands_by_icao = {}
+                if isinstance(cached_stands, dict) and os.path.exists(p_path):
+                    for k_icao, v_st in cached_stands.items():
+                        if isinstance(v_st, dict) and (now_ts - float(v_st.get("timestamp") or 0) <= 24 * 3600):
+                            last_stands_by_icao[k_icao] = v_st
+                elif os.path.exists(p_path):
+                    try:
+                        with open(p_path, "r", encoding="utf-8") as rf:
+                            prev_saved = json.load(rf)
+                        if isinstance(prev_saved, dict) and isinstance(prev_saved.get("last_stands_by_icao"), dict):
+                            for k_icao, v_st in prev_saved["last_stands_by_icao"].items():
+                                if isinstance(v_st, dict) and (now_ts - float(v_st.get("timestamp") or 0) <= 24 * 3600):
+                                    last_stands_by_icao[k_icao] = v_st
+                    except Exception:
+                        pass
+
+                if dep.get("icao") and dep.get("gate") and dep.get("gate") != "N/A":
+                    last_stands_by_icao[str(dep["icao"]).upper()] = {
+                        "gate": dep.get("gate"),
+                        "lat": dep.get("lat"),
+                        "lon": dep.get("lon"),
+                        "reason": "same_departure",
+                        "timestamp": now_ts
+                    }
+                if arr.get("icao") and arr.get("gate") and arr.get("gate") != "N/A":
+                    last_stands_by_icao[str(arr["icao"]).upper()] = {
+                        "gate": arr.get("gate"),
+                        "lat": arr.get("lat"),
+                        "lon": arr.get("lon"),
+                        "reason": "turnaround_arrival",
+                        "timestamp": now_ts
+                    }
+                self._cached_last_stands_by_icao = dict(last_stands_by_icao)
+
+                payload = {
+                    "timestamp": now_ts,
+                    "ofp_id": self.current_flight_data.get("ofp_id"),
+                    "origin": dep.get("icao"),
+                    "destination": arr.get("icao"),
+                    "aircraft": self.current_flight_data.get("aircraft"),
+                    "airline": self.current_flight_data.get("airline"),
+                    "dep_gate": dep.get("gate"),
+                    "dep_gate_source": dep.get("gate_source"),
+                    "dep_selected_runway": dep.get("selected_runway"),
+                    "dep_atc_runway": dep.get("atc_runway"),
+                    "dep_atc_runway_source": dep.get("atc_runway_source"),
+                    "arr_gate": arr.get("gate"),
+                    "arr_gate_source": arr.get("gate_source"),
+                    "arr_selected_runway": arr.get("selected_runway"),
+                    "arr_atc_runway": arr.get("atc_runway"),
+                    "arr_atc_runway_source": arr.get("atc_runway_source"),
+                    "dep_runway_entered": dict(self.taxi_router.dep_runway_entered),
+                    "arr_vacated_runway": dict(self.taxi_router.arr_vacated_runway),
+                    "locked_arrival_exit": dict(self.taxi_router.locked_arrival_exit),
+                    "last_stands_by_icao": last_stands_by_icao
+                }
+                with open(p_path, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, indent=2)
+                self._last_saved_session_sig = session_sig
+                self._last_saved_session_ts = now_ts
         except Exception:
             pass
 
@@ -6769,7 +9571,14 @@ class GateFinderBackend:
                             apt["gate_coords_found"] = True
                             if saved.get(f"{prefix}_gate_source"):
                                 s_src = str(saved[f"{prefix}_gate_source"])
-                                if "LIVE" in s_src.upper() or "PARKED" in s_src.upper():
+                                s_src_u = s_src.upper()
+                                batc_on = bool(hasattr(self, "interop_hub") and self.interop_hub and self.interop_hub.batc_watcher.is_process_running())
+                                si_on = bool(hasattr(self, "interop_hub") and self.interop_hub and self.interop_hub.si_watcher.is_process_running())
+                                if "LIVE" in s_src_u or "PARKED" in s_src_u:
+                                    s_src = "GateFinder"
+                                elif "BEYOND" in s_src_u and not batc_on:
+                                    s_src = "GateFinder"
+                                elif "SAYINTENTIONS" in s_src_u and not si_on:
                                     s_src = "GateFinder"
                                 apt["gate_source"] = s_src
                             if g_meta:
@@ -6785,10 +9594,19 @@ class GateFinderBackend:
                                     apt["no_pushback"] = bool(g_meta["no_pushback"])
                 if s_rwy:
                     apt["selected_runway"] = s_rwy
-                if saved.get(f"{prefix}_atc_runway"):
-                    apt["atc_runway"] = saved[f"{prefix}_atc_runway"]
-                if saved.get(f"{prefix}_atc_runway_source"):
-                    apt["atc_runway_source"] = saved[f"{prefix}_atc_runway_source"]
+                s_atc_src = str(saved.get(f"{prefix}_atc_runway_source") or "").strip()
+                s_atc_src_u = s_atc_src.upper()
+                batc_on = bool(hasattr(self, "interop_hub") and self.interop_hub and self.interop_hub.batc_watcher.is_process_running())
+                si_on = bool(hasattr(self, "interop_hub") and self.interop_hub and self.interop_hub.si_watcher.is_process_running())
+                atc_src_alive = bool(
+                    s_atc_src
+                    and (not ("BEYOND" in s_atc_src_u and not batc_on))
+                    and (not ("SAYINTENTIONS" in s_atc_src_u and not si_on))
+                )
+                if atc_src_alive:
+                    if saved.get(f"{prefix}_atc_runway"):
+                        apt["atc_runway"] = saved[f"{prefix}_atc_runway"]
+                    apt["atc_runway_source"] = s_atc_src
                 if apt.get("chart_data") and apt.get("lat") is not None and apt.get("lon") is not None:
                     apt["taxi_route"] = self.taxi_router.compute_taxi_route(
                         apt["chart_data"], phase, apt["lat"], apt["lon"], apt["gate"],
@@ -6845,6 +9663,7 @@ class GateFinderBackend:
             # Second pass: BGL parking-type trailing letter strip (e.g. "P8G" -> "P8") or numeric match
             is_pure_num_target = bool(re.match(r'^\d+[A-Z]?$', target_tok))
             if bgl_type_stripped_tok or num_only or is_pure_num_target:
+                candidates = []
                 for al_list in db.values():
                     for g in al_list:
                         g_tok = clean_gate_token(g.get("name", ""))
@@ -6853,23 +9672,32 @@ class GateFinderBackend:
                         if bgl_type_stripped_tok and (
                             g_tok == bgl_type_stripped_tok or r_tok == bgl_type_stripped_tok or o_tok == bgl_type_stripped_tok
                         ):
-                            coords = (g["lat"], g["lon"]) if (g.get("lat") is not None and g.get("lon") is not None) else None
-                            return g["name"], coords, g
+                            candidates.append(g)
+                            continue
                         if num_only and (g_tok == num_only or r_tok == num_only or o_tok == num_only):
-                            coords = (g["lat"], g["lon"]) if (g.get("lat") is not None and g.get("lon") is not None) else None
-                            return g["name"], coords, g
+                            candidates.append(g)
+                            continue
                         if is_pure_num_target:
                             g_num = re.sub(r'^[A-Z]+', '', g_tok) if g_tok else ""
                             r_num = re.sub(r'^[A-Z]+', '', r_tok) if r_tok else ""
                             if g_num == target_tok or r_num == target_tok:
-                                coords = (g["lat"], g["lon"]) if (g.get("lat") is not None and g.get("lon") is not None) else None
-                                return g["name"], coords, g
+                                candidates.append(g)
+                if candidates:
+                    if fallback_lat is not None and fallback_lon is not None and len(candidates) > 1:
+                        candidates.sort(
+                            key=lambda c: haversine(float(fallback_lat), float(fallback_lon), float(c["lat"]), float(c["lon"]))
+                            if (c.get("lat") is not None and c.get("lon") is not None) else 999999.0
+                        )
+                    best_g = candidates[0]
+                    coords = (best_g["lat"], best_g["lon"]) if (best_g.get("lat") is not None and best_g.get("lon") is not None) else None
+                    return best_g["name"], coords, best_g
 
         # 2. Search cached chart_data stands (OSM + BGL merged stands)
         if self.current_flight_data:
             for ph in ("departure", "arrival"):
                 apt = self.current_flight_data.get(ph) or {}
                 if apt.get("icao") == icao_u and apt.get("chart_data"):
+                    st_candidates = []
                     for st in (apt["chart_data"].get("stands") or []):
                         s_ref = str(st.get("ref") or "").strip()
                         s_tok = clean_gate_token(s_ref)
@@ -6880,16 +9708,66 @@ class GateFinderBackend:
                             or (num_only and s_tok == num_only)
                             or (re.match(r'^\d+[A-Z]?$', target_tok) and s_num == target_tok)
                         ):
-                            return s_ref, (st.get("lat"), st.get("lon")), {
-                                "name": s_ref,
-                                "lat": st.get("lat"),
-                                "lon": st.get("lon"),
-                                "has_jetway": st.get("has_jetway", True),
-                                "wingspan": 999.0
-                            }
+                            st_candidates.append(st)
+                    if st_candidates:
+                        if fallback_lat is not None and fallback_lon is not None and len(st_candidates) > 1:
+                            st_candidates.sort(
+                                key=lambda s: haversine(float(fallback_lat), float(fallback_lon), float(s["lat"]), float(s["lon"]))
+                                if (s.get("lat") is not None and s.get("lon") is not None) else 999999.0
+                            )
+                        best_st = st_candidates[0]
+                        s_ref = str(best_st.get("ref") or "").strip()
+                        return s_ref, (best_st.get("lat"), best_st.get("lon")), {
+                            "name": s_ref,
+                            "lat": best_st.get("lat"),
+                            "lon": best_st.get("lon"),
+                            "has_jetway": best_st.get("has_jetway", True),
+                            "wingspan": best_st.get("wingspan", 999.0)
+                        }
+
+        # 2b. If GPS coordinates (fallback_lat/lon) were provided by SayIntentions, match nearest stand within 35m
+        if fallback_lat is not None and fallback_lon is not None:
+            best_prox_name = None
+            best_prox_coords = None
+            best_prox_meta = None
+            best_prox_dist = 35.0
+            for db in (coherent_map.get(icao_u), self.data.get(icao_u), self.builtin_data.get(icao_u)):
+                if not db:
+                    continue
+                for al_list in db.values():
+                    for g in al_list:
+                        if g.get("lat") is not None and g.get("lon") is not None:
+                            d = haversine(float(fallback_lat), float(fallback_lon), float(g["lat"]), float(g["lon"]))
+                            if d < best_prox_dist:
+                                best_prox_dist = d
+                                best_prox_name = g["name"]
+                                best_prox_coords = (g["lat"], g["lon"])
+                                best_prox_meta = g
+            if not best_prox_name and self.current_flight_data:
+                for ph in ("departure", "arrival"):
+                    apt = self.current_flight_data.get(ph) or {}
+                    if apt.get("icao") == icao_u and apt.get("chart_data"):
+                        for st in (apt["chart_data"].get("stands") or []):
+                            if st.get("lat") is not None and st.get("lon") is not None:
+                                d = haversine(float(fallback_lat), float(fallback_lon), float(st["lat"]), float(st["lon"]))
+                                if d < best_prox_dist:
+                                    best_prox_dist = d
+                                    s_ref = str(st.get("ref") or "").strip()
+                                    best_prox_name = s_ref
+                                    best_prox_coords = (st.get("lat"), st.get("lon"))
+                                    best_prox_meta = {
+                                        "name": s_ref,
+                                        "lat": st.get("lat"),
+                                        "lon": st.get("lon"),
+                                        "has_jetway": st.get("has_jetway", True),
+                                        "wingspan": st.get("wingspan", 999.0)
+                                    }
+            if best_prox_name:
+                return best_prox_name, best_prox_coords, best_prox_meta
 
         # 3. Fallback to cleaned label and provided coordinates
-        pretty_label = re.sub(r'^(GATE|STAND|PARKING|RAMP)[\s_\-]*', '', str(raw_gate).strip(), flags=re.IGNORECASE)
+        pretty_label = re.sub(r'^.*?\b(GATE|STAND|PARKING|RAMP|DOCK|SPOT|BAY)[\s_\-]+', '', str(raw_gate).strip(), flags=re.IGNORECASE)
+        pretty_label = re.sub(r'^(GATE|STAND|PARKING|RAMP|DOCK|SPOT|BAY)[\s_\-]*', '', pretty_label, flags=re.IGNORECASE)
         pretty_label = re.sub(r'[\s_\-]+NONE$', '', pretty_label, flags=re.IGNORECASE).strip() or str(raw_gate).strip()
         fb_coords = (fallback_lat, fallback_lon) if (fallback_lat is not None and fallback_lon is not None) else None
         return pretty_label, fb_coords, {"name": pretty_label, "lat": fallback_lat, "lon": fallback_lon}
@@ -6960,6 +9838,7 @@ class GateFinderBackend:
             return None
         if manual:
             apt["atc_taxi_via"] = None
+            apt["custom_taxi_mode"] = False
             if phase == "departure":
                 self.taxi_router.dep_runway_entered.pop(apt.get("icao", ""), None)
         if manual and hasattr(self, "interop_hub") and self.interop_hub:
@@ -6981,6 +9860,89 @@ class GateFinderBackend:
             apt["taxi_route"] = t_route
             if t_route:
                 apt["selected_runway"] = t_route.get("runway_id", rwy_id)
+        self._save_session_state()
+        return apt.get("taxi_route")
+
+    def set_custom_taxi_via(self, phase, action=None, toggle_twy=None, remove_twy=None, via_list=None):
+        """
+        Interactive Taxiway Route Builder:
+          - action='auto': resets to automatic A* routing (custom_taxi_mode=False, atc_taxi_via=None)
+          - action='clear': clears the taxi route so the pilot can click taxiway badges from scratch (custom_taxi_mode=True, atc_taxi_via=[])
+          - toggle_twy='W2': when clicking a taxiway badge on the Lido map (starts fresh custom route on 1st click, then appends/toggles)
+          - remove_twy='W2': when clicking a taxiway pill in the ATC TAXI CLEARANCE sidebar to remove it from the route
+          - via_list=['W2', 'LJS']: sets an explicit custom taxiway list
+        """
+        if not self.current_flight_data or phase not in ("departure", "arrival"):
+            return None
+        apt = self.current_flight_data.get(phase)
+        if not apt:
+            return None
+
+        act = str(action or "").strip().lower()
+        if act == "auto":
+            apt["custom_taxi_mode"] = False
+            apt["atc_taxi_via"] = None
+        elif act == "clear":
+            apt["custom_taxi_mode"] = True
+            apt["atc_taxi_via"] = []
+        elif via_list is not None:
+            apt["custom_taxi_mode"] = True
+            apt["atc_taxi_via"] = [str(x).strip().upper() for x in via_list if str(x).strip()]
+        elif remove_twy:
+            twy_u = str(remove_twy).strip().upper()
+            twy_norm = re.sub(r'[\s_\-]+', '', twy_u)
+            if apt.get("custom_taxi_mode") and isinstance(apt.get("atc_taxi_via"), list):
+                cur_list = list(apt["atc_taxi_via"])
+            else:
+                cur_list = list((apt.get("taxi_route") or {}).get("taxiway_sequence") or apt.get("atc_taxi_via") or [])
+            apt["custom_taxi_mode"] = True
+            apt["atc_taxi_via"] = [t for t in cur_list if re.sub(r'[\s_\-]+', '', str(t).upper()) != twy_norm]
+        elif toggle_twy:
+            twy_u = str(toggle_twy).strip().upper()
+            twy_norm = re.sub(r'[\s_\-]+', '', twy_u)
+            if not apt.get("custom_taxi_mode") or not isinstance(apt.get("atc_taxi_via"), list):
+                apt["custom_taxi_mode"] = True
+                apt["atc_taxi_via"] = [twy_u]
+            else:
+                cur_list = list(apt["atc_taxi_via"])
+                existing_norms = [re.sub(r'[\s_\-]+', '', str(t).upper()) for t in cur_list]
+                if twy_norm in existing_norms:
+                    apt["atc_taxi_via"] = [t for t in cur_list if re.sub(r'[\s_\-]+', '', str(t).upper()) != twy_norm]
+                else:
+                    if apt.get("chart_data") and apt.get("lat") is not None:
+                        u_lat = self.simconnect_manager.user_lat if hasattr(self, "simconnect_manager") else None
+                        u_lon = self.simconnect_manager.user_lon if hasattr(self, "simconnect_manager") else None
+                        u_og = self.simconnect_manager.user_on_ground if hasattr(self, "simconnect_manager") else None
+                        apt["atc_taxi_via"] = self.taxi_router.prune_conflicting_taxi_via(
+                            apt["chart_data"], phase, apt["lat"], apt["lon"],
+                            apt.get("selected_runway"), cur_list, twy_u,
+                            user_lat=u_lat, user_lon=u_lon, user_on_ground=u_og,
+                            gate_hdg=apt.get("heading"), no_pushback=apt.get("no_pushback", False)
+                        )
+                    else:
+                        cur_list.append(twy_u)
+                        apt["atc_taxi_via"] = cur_list
+
+        if phase == "departure":
+            self.taxi_router.dep_runway_entered.pop(apt.get("icao", ""), None)
+            self._last_dep_route_key = None
+        else:
+            self._last_arr_route_key = None
+
+        if apt.get("chart_data") and apt.get("gate") and apt.get("lat") is not None:
+            u_lat = self.simconnect_manager.user_lat if hasattr(self, "simconnect_manager") else None
+            u_lon = self.simconnect_manager.user_lon if hasattr(self, "simconnect_manager") else None
+            u_hdg = self.simconnect_manager.user_hdg if hasattr(self, "simconnect_manager") else None
+            u_gs = self.simconnect_manager.user_gs if hasattr(self, "simconnect_manager") else None
+            u_og = self.simconnect_manager.user_on_ground if hasattr(self, "simconnect_manager") else None
+            t_route = self.taxi_router.compute_taxi_route(
+                apt["chart_data"], phase, apt["lat"], apt["lon"], apt["gate"],
+                runway_id=apt.get("selected_runway"), user_lat=u_lat, user_lon=u_lon,
+                user_hdg=u_hdg, user_gs=u_gs, user_on_ground=u_og,
+                gate_hdg=apt.get("heading"), no_pushback=apt.get("no_pushback", False),
+                atc_taxi_via=apt.get("atc_taxi_via")
+            )
+            apt["taxi_route"] = t_route
         self._save_session_state()
         return apt.get("taxi_route")
 
@@ -7140,12 +10102,14 @@ class GateFinderBackend:
         cur_jw = bool(arr.get("has_jetway", True))
         cur_tok = clean_gate_token(cur_gate)
 
+        is_ga_fl = bool(self.current_flight_data.get("is_ga_flight"))
+        is_mil_fl = bool(self.current_flight_data.get("is_military_flight"))
         viable = [
             g for g in free_stands
             if clean_gate_token(g["name"]) != cur_tok
             and float(g.get("wingspan") or 36.0) >= ac_ws
-            and not g.get("is_ga")
-            and not g.get("is_military")
+            and (is_ga_fl or not g.get("is_ga"))
+            and (is_mil_fl or not g.get("is_military"))
         ]
         if not viable:
             return None
@@ -7210,6 +10174,8 @@ class GateFinderBackend:
             fd["map_hibernated"] = bool(hib_opt and is_airborne)
             if is_airborne or (u_gs or 0.0) >= 4.0:
                 self.pending_live_stand_prompt = None
+            if is_airborne or (u_gs or 0.0) > 10.0:
+                self.pending_simbrief_mismatch = None
             if is_airborne:
                 fd["recommended_phase"] = "arrival"
             elif in_menu:
@@ -7217,13 +10183,17 @@ class GateFinderBackend:
             fd["user_aircraft"] = {
                 "connected": sc_conn,
                 "in_menu": in_menu,
-                "lat": round(u_lat, 6) if u_lat is not None else None,
-                "lon": round(u_lon, 6) if u_lon is not None else None,
-                "heading": round(u_hdg, 1) if u_hdg is not None else 0.0,
-                "gs": round(u_gs, 1) if u_gs is not None else 0.0,
+                "lat": round(u_lat, 7) if u_lat is not None else None,
+                "lon": round(u_lon, 7) if u_lon is not None else None,
+                "heading": round(u_hdg, 2) if u_hdg is not None else 0.0,
+                "gs": round(u_gs, 2) if u_gs is not None else 0.0,
                 "on_ground": u_og,
                 "engines_running": getattr(sc, "user_engines_running", None)
             }
+            try:
+                fd["map_follow_refresh_hz"] = int(self.config.settings.get("map_follow_refresh_hz", 10) or 10)
+            except Exception:
+                fd["map_follow_refresh_hz"] = 10
             d_dep = float('inf')
             d_arr = float('inf')
             if sc_conn and u_lat is not None:
@@ -7233,6 +10203,10 @@ class GateFinderBackend:
                     d_arr = haversine(u_lat, u_lon, fd["arrival"]["lat"], fd["arrival"]["lon"])
             fd["d_dep_m"] = d_dep if d_dep != float('inf') else None
             fd["d_arr_m"] = d_arr if d_arr != float('inf') else None
+            route_lock = getattr(self, "_route_calc_lock", None)
+            if route_lock is None:
+                self._route_calc_lock = threading.RLock()
+                route_lock = self._route_calc_lock
             if "departure" in fd and fd["departure"]:
                 dep = dict(fd["departure"])
                 dep["ai_cleared"] = sc.dep_cleared
@@ -7240,46 +10214,52 @@ class GateFinderBackend:
                 dep["simconnect_connected"] = sc_conn
                 if sc_conn and u_lat is not None and dep.get("chart_data") and dep.get("lat") is not None:
                     if d_dep < 6500.0:
-                        prev_pos = getattr(self, "_last_dep_route_pos", None)
-                        prev_key = getattr(self, "_last_dep_route_key", None)
-                        cur_key = (dep.get("icao"), dep.get("gate"), dep.get("selected_runway"), tuple(dep.get("atc_taxi_via") or ()), bool(u_og))
-                        cur_dep_status = (dep.get("taxi_route") or {}).get("live_status")
-                        back_at_gate = (d_dep < 55.0 and (u_gs or 0.0) < 3.0 and u_og is not False)
-                        if cur_dep_status == "ON_RUNWAY" and not back_at_gate and prev_key == cur_key:
-                            need_recalc = False
-                        else:
-                            need_recalc = (
-                                not dep.get("taxi_route")
-                                or prev_pos is None
-                                or prev_key != cur_key
-                                or haversine(u_lat, u_lon, prev_pos[0], prev_pos[1]) > 4.0
-                            )
-                        if need_recalc:
-                            dep["taxi_route"] = self.taxi_router.compute_taxi_route(
-                                dep["chart_data"], "departure", dep["lat"], dep["lon"], dep["gate"],
-                                runway_id=dep.get("selected_runway"),
-                                user_lat=u_lat, user_lon=u_lon, user_hdg=u_hdg, user_gs=u_gs, user_on_ground=u_og,
-                                gate_hdg=dep.get("heading"), no_pushback=dep.get("no_pushback", False),
-                                atc_taxi_via=dep.get("atc_taxi_via")
-                            )
-                            self.current_flight_data["departure"]["taxi_route"] = dep["taxi_route"]
-                            self._last_dep_route_pos = (u_lat, u_lon)
-                            self._last_dep_route_key = cur_key
-                            self._save_session_state()
+                        with route_lock:
+                            cur_dep_live = self.current_flight_data.get("departure") or dep
+                            dep["taxi_route"] = cur_dep_live.get("taxi_route", dep.get("taxi_route"))
+                            prev_pos = getattr(self, "_last_dep_route_pos", None)
+                            prev_key = getattr(self, "_last_dep_route_key", None)
+                            dep_via_k = None if dep.get("atc_taxi_via") is None else tuple(dep.get("atc_taxi_via"))
+                            cur_key = (dep.get("icao"), dep.get("gate"), dep.get("selected_runway"), dep_via_k, bool(dep.get("custom_taxi_mode")), bool(u_og))
+                            cur_dep_status = (dep.get("taxi_route") or {}).get("live_status")
+                            back_at_gate = (d_dep < 55.0 and (u_gs or 0.0) < 3.0 and u_og is not False)
+                            if cur_dep_status == "ON_RUNWAY" and not back_at_gate and prev_key == cur_key:
+                                need_recalc = False
+                            else:
+                                need_recalc = (
+                                    not dep.get("taxi_route")
+                                    or prev_pos is None
+                                    or prev_key != cur_key
+                                    or haversine(u_lat, u_lon, prev_pos[0], prev_pos[1]) > 4.0
+                                )
+                            if need_recalc:
+                                dep["taxi_route"] = self.taxi_router.compute_taxi_route(
+                                    dep["chart_data"], "departure", dep["lat"], dep["lon"], dep["gate"],
+                                    runway_id=dep.get("selected_runway"),
+                                    user_lat=u_lat, user_lon=u_lon, user_hdg=u_hdg, user_gs=u_gs, user_on_ground=u_og,
+                                    gate_hdg=dep.get("heading"), no_pushback=dep.get("no_pushback", False),
+                                    atc_taxi_via=dep.get("atc_taxi_via")
+                                )
+                                self.current_flight_data["departure"]["taxi_route"] = dep["taxi_route"]
+                                self._last_dep_route_pos = (u_lat, u_lon)
+                                self._last_dep_route_key = cur_key
+                                self._save_session_state()
                         if u_og is not False:
                             fd["recommended_phase"] = "departure"
                     elif is_airborne or (d_dep >= 6500.0 and d_arr < 15000.0):
                         # Aircraft has already departed (in flight or on ground at arrival airport)
                         dep_icao = dep.get("icao", "")
                         if dep_icao and not self.taxi_router.dep_runway_entered.get(dep_icao):
-                            self.taxi_router.dep_runway_entered[dep_icao] = dep.get("selected_runway") or "RWY"
-                            dep["taxi_route"] = self.taxi_router.compute_taxi_route(
-                                dep["chart_data"], "departure", dep["lat"], dep["lon"], dep["gate"],
-                                runway_id=dep.get("selected_runway"),
-                                user_lat=u_lat, user_lon=u_lon, user_hdg=u_hdg, user_gs=u_gs, user_on_ground=u_og,
-                                gate_hdg=dep.get("heading"), no_pushback=dep.get("no_pushback", False)
-                            )
-                            self.current_flight_data["departure"]["taxi_route"] = dep["taxi_route"]
+                            with route_lock:
+                                if not self.taxi_router.dep_runway_entered.get(dep_icao):
+                                    self.taxi_router.dep_runway_entered[dep_icao] = dep.get("selected_runway") or "RWY"
+                                    dep["taxi_route"] = self.taxi_router.compute_taxi_route(
+                                        dep["chart_data"], "departure", dep["lat"], dep["lon"], dep["gate"],
+                                        runway_id=dep.get("selected_runway"),
+                                        user_lat=u_lat, user_lon=u_lon, user_hdg=u_hdg, user_gs=u_gs, user_on_ground=u_og,
+                                        gate_hdg=dep.get("heading"), no_pushback=dep.get("no_pushback", False)
+                                    )
+                                    self.current_flight_data["departure"]["taxi_route"] = dep["taxi_route"]
                 fd["departure"] = dep
 
             if "arrival" in fd and fd["arrival"]:
@@ -7289,30 +10269,35 @@ class GateFinderBackend:
                 arr["simconnect_connected"] = sc_conn
                 if sc_conn and u_lat is not None and arr.get("chart_data") and arr.get("lat") is not None:
                     if d_arr < 8500.0:
-                        prev_pos = getattr(self, "_last_arr_route_pos", None)
-                        prev_key = getattr(self, "_last_arr_route_key", None)
-                        cur_key = (arr.get("icao"), arr.get("gate"), arr.get("selected_runway"), tuple(arr.get("atc_taxi_via") or ()), bool(u_og))
-                        need_recalc = (
-                            not arr.get("taxi_route")
-                            or prev_pos is None
-                            or prev_key != cur_key
-                            or haversine(u_lat, u_lon, prev_pos[0], prev_pos[1]) > 4.0
-                        )
-                        if need_recalc:
-                            arr["taxi_route"] = self.taxi_router.compute_taxi_route(
-                                arr["chart_data"], "arrival", arr["lat"], arr["lon"], arr["gate"],
-                                runway_id=arr.get("selected_runway"),
-                                user_lat=u_lat, user_lon=u_lon, user_hdg=u_hdg, user_gs=u_gs, user_on_ground=u_og,
-                                gate_hdg=arr.get("heading"), no_pushback=arr.get("no_pushback", False),
-                                atc_taxi_via=arr.get("atc_taxi_via")
+                        with route_lock:
+                            cur_arr_live = self.current_flight_data.get("arrival") or arr
+                            arr["taxi_route"] = cur_arr_live.get("taxi_route", arr.get("taxi_route"))
+                            arr["selected_runway"] = cur_arr_live.get("selected_runway", arr.get("selected_runway"))
+                            prev_pos = getattr(self, "_last_arr_route_pos", None)
+                            prev_key = getattr(self, "_last_arr_route_key", None)
+                            arr_via_k = None if arr.get("atc_taxi_via") is None else tuple(arr.get("atc_taxi_via"))
+                            cur_key = (arr.get("icao"), arr.get("gate"), arr.get("selected_runway"), arr_via_k, bool(arr.get("custom_taxi_mode")), bool(u_og))
+                            need_recalc = (
+                                not arr.get("taxi_route")
+                                or prev_pos is None
+                                or prev_key != cur_key
+                                or haversine(u_lat, u_lon, prev_pos[0], prev_pos[1]) > 4.0
                             )
-                            if arr["taxi_route"] and arr["taxi_route"].get("runway_id"):
-                                arr["selected_runway"] = arr["taxi_route"]["runway_id"]
-                            self.current_flight_data["arrival"]["taxi_route"] = arr["taxi_route"]
-                            self.current_flight_data["arrival"]["selected_runway"] = arr.get("selected_runway")
-                            self._last_arr_route_pos = (u_lat, u_lon)
-                            self._last_arr_route_key = cur_key
-                            self._save_session_state()
+                            if need_recalc:
+                                arr["taxi_route"] = self.taxi_router.compute_taxi_route(
+                                    arr["chart_data"], "arrival", arr["lat"], arr["lon"], arr["gate"],
+                                    runway_id=arr.get("selected_runway"),
+                                    user_lat=u_lat, user_lon=u_lon, user_hdg=u_hdg, user_gs=u_gs, user_on_ground=u_og,
+                                    gate_hdg=arr.get("heading"), no_pushback=arr.get("no_pushback", False),
+                                    atc_taxi_via=arr.get("atc_taxi_via")
+                                )
+                                if arr["taxi_route"] and arr["taxi_route"].get("runway_id"):
+                                    arr["selected_runway"] = arr["taxi_route"]["runway_id"]
+                                self.current_flight_data["arrival"]["taxi_route"] = arr["taxi_route"]
+                                self.current_flight_data["arrival"]["selected_runway"] = arr.get("selected_runway")
+                                self._last_arr_route_pos = (u_lat, u_lon)
+                                self._last_arr_route_key = cur_key
+                                self._save_session_state()
                         fd["recommended_phase"] = "arrival"
                     elif u_og is False and (d_dep > 1800.0 or (u_gs or 0.0) > 65.0):
                         # In-flight / Enroute / Approach -> automatically recommend Arrival phase
@@ -7342,6 +10327,8 @@ class GateFinderBackend:
             if isinstance(_apt_d, dict) and not _apt_d.get("city") and _apt_d.get("icao"):
                 _apt_d["city"] = self.get_airport_city(_apt_d["icao"], lat=_apt_d.get("lat"), lon=_apt_d.get("lon"))
         fd["pending_live_stand_prompt"] = getattr(self, "pending_live_stand_prompt", None)
+        fd["pending_simbrief_mismatch"] = getattr(self, "pending_simbrief_mismatch", None)
+        fd["suppress_popups_in_cockpit"] = bool(self.config.settings.get("suppress_popups_in_cockpit", False))
         al_code_cam = fd.get("airline_code") or (fd.get("departure") or {}).get("airline_code") or ""
         if not al_code_cam and fd.get("airline"):
             raw_al_s = str(fd["airline"])
@@ -7349,7 +10336,7 @@ class GateFinderBackend:
         if fd.get("aircraft_version") and "•" in str(fd["aircraft_version"]):
             fd["aircraft_version"] = re.sub(r"\s*•\s*", " - ", str(fd["aircraft_version"]))
         fd["camaieu_palette"] = self.get_airline_camaieu_palette(al_code_cam)
-        fd["app_version"] = "2.0.4"
+        fd["app_version"] = "2.0.6"
         return fd
 
     def scan_gsx_profiles(self):
@@ -7610,7 +10597,7 @@ class GateFinderBackend:
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <title>GateFinder V2.0.4 - Live Web EFB</title>
+    <title>GateFinder V2.0.6 - Live Web EFB</title>
     <link rel="stylesheet" href="/GateFinderPanel.css?v=44" />
     <style>
         html, body {
@@ -7956,11 +10943,11 @@ class GateFinderBackend:
             display: none !important;
         }
     </style>
-    <script type="text/javascript" src="/GateFinderPanel.js?v=44"></script>
+    <script type="text/javascript" src="/GateFinderPanel.js?v=206"></script>
 </head>
 <body class="border-box color-white">
     <gsx-gatefinder-panel>
-        <ingame-ui id="GSX_GateFinder" panel-id="PANEL_GATEFINDER" title="GATEFINDER V2.0.4">
+        <ingame-ui id="GSX_GateFinder" panel-id="PANEL_GATEFINDER" title="GATEFINDER V2.0.6">
             <div id="MainDisplay">
                 <div id="StatusMessage" class="status-message-box">
                     <h2 id="StatusTitle" class="status-title">Awaiting Flight Data</h2>
@@ -8220,7 +11207,7 @@ class GateFinderBackend:
                             raw_bytes = f.read()
                         if fname.endswith('.html'):
                             ts_b = str(int(time.time())).encode('ascii')
-                            raw_bytes = raw_bytes.replace(b'?v=204', b'?v=' + ts_b).replace(b'?v=203', b'?v=' + ts_b)
+                            raw_bytes = raw_bytes.replace(b'?v=206', b'?v=' + ts_b).replace(b'?v=205', b'?v=' + ts_b).replace(b'?v=204', b'?v=' + ts_b).replace(b'?v=203', b'?v=' + ts_b)
                         self.wfile.write(raw_bytes)
                         return
 
@@ -8256,7 +11243,15 @@ class GateFinderBackend:
                     have_arr = query.get('have_arr', [''])[0].strip().upper()
                     self.send_response(200)
                     self.end_headers()
-                    fd = APIHandler.backend_instance.get_dynamic_flight_data()
+                    bi = APIHandler.backend_instance
+                    now_api_t = time.time()
+                    if (now_api_t - getattr(bi, "_last_api_mismatch_check_ts", 0.0)) >= 2.0:
+                        bi._last_api_mismatch_check_ts = now_api_t
+                        try:
+                            bi.check_simbrief_vs_msfs_mismatch()
+                        except Exception:
+                            pass
+                    fd = bi.get_dynamic_flight_data()
                     if fd:
                         if have_dep and fd.get("departure") and fd["departure"].get("icao") == have_dep:
                             dep_copy = dict(fd["departure"])
@@ -8266,6 +11261,20 @@ class GateFinderBackend:
                             arr_copy = dict(fd["arrival"])
                             arr_copy.pop("chart_data", None)
                             fd["arrival"] = arr_copy
+                    else:
+                        pmm = getattr(bi, "pending_simbrief_mismatch", None)
+                        if pmm:
+                            sc_now = getattr(bi, "simconnect_manager", None)
+                            fd = {
+                                "pending_simbrief_mismatch": pmm,
+                                "suppress_popups_in_cockpit": bool(bi.config.settings.get("suppress_popups_in_cockpit", False)),
+                                "is_airborne": False,
+                                "user_aircraft": {
+                                    "connected": bool(sc_now and sc_now.connected),
+                                    "on_ground": bool(sc_now and sc_now.user_on_ground),
+                                    "gs": round(float(getattr(sc_now, "user_gs", 0.0) or 0.0), 2) if sc_now else 0.0,
+                                },
+                            }
                     self.wfile.write(json.dumps(fd).encode())
                     return
 
@@ -8281,6 +11290,27 @@ class GateFinderBackend:
                     phase = query.get('phase', [''])[0].strip().lower()
                     rwy = query.get('rwy', [''])[0].strip().upper()
                     APIHandler.backend_instance.set_active_runway(phase, rwy)
+                    self.send_response(200)
+                    self.end_headers()
+                    fd = APIHandler.backend_instance.get_dynamic_flight_data()
+                    self.wfile.write(json.dumps(fd).encode())
+                    return
+
+                if parsed.path == '/api/set_taxi_via':
+                    query = parse_qs(parsed.query)
+                    phase = query.get('phase', ['departure'])[0].strip().lower()
+                    action = query.get('action', [''])[0].strip().lower() or None
+                    toggle_twy = query.get('toggle', [''])[0].strip().upper() or None
+                    remove_twy = query.get('remove', [''])[0].strip().upper() or None
+                    via_raw = query.get('via', [''])[0].strip()
+                    via_list = [x.strip().upper() for x in via_raw.split(',') if x.strip()] if 'via' in query else None
+                    APIHandler.backend_instance.set_custom_taxi_via(
+                        phase,
+                        action=action,
+                        toggle_twy=toggle_twy,
+                        remove_twy=remove_twy,
+                        via_list=via_list
+                    )
                     self.send_response(200)
                     self.end_headers()
                     fd = APIHandler.backend_instance.get_dynamic_flight_data()
@@ -8330,6 +11360,66 @@ class GateFinderBackend:
                     self.end_headers()
                     fd = APIHandler.backend_instance.get_dynamic_flight_data()
                     self.wfile.write(json.dumps(fd).encode())
+                    return
+
+                if parsed.path == '/api/open_simbrief_dispatch':
+                    try:
+                        import webbrowser
+                        webbrowser.open("https://dispatch.simbrief.com/home")
+                    except Exception:
+                        pass
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"ok": True}).encode('utf-8'))
+                    return
+
+                if parsed.path == '/api/peek_simbrief':
+                    bi = APIHandler.backend_instance
+                    sb_u = bi.config.settings.get("simbrief_username", "").strip()
+                    pk = bi.peek_latest_simbrief_ofp(sb_u) if sb_u else None
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(json.dumps(pk or {}).encode('utf-8'))
+                    return
+
+                if parsed.path == '/api/resolve_mismatch':
+                    query = parse_qs(parsed.query)
+                    action = query.get('action', ['keep_simbrief'])[0].strip().lower()
+                    dest_q = re.sub(r'[^A-Z0-9]', '', query.get('dest', [''])[0].strip().upper())[:4]
+                    mkey_q = query.get('key', [''])[0].strip()
+                    live_q = re.sub(r'[^A-Z0-9]', '', query.get('live_icao', [''])[0].strip().upper())[:4]
+                    bi = APIHandler.backend_instance
+                    pmm = getattr(bi, "pending_simbrief_mismatch", None) or {}
+                    eff_key = mkey_q or pmm.get("mismatch_key")
+                    eff_live = live_q or str(pmm.get("live_icao") or "").strip().upper()
+                    try:
+                        if action == 'use_msfs':
+                            bi.dismiss_simbrief_msfs_mismatch(eff_key)
+                            if eff_live:
+                                bi.load_live_msfs_flight(eff_live, dest_q or eff_live)
+                        elif action == 'import_simbrief':
+                            bi._cached_mismatch_sb_peek = None
+                            bi._mismatch_check_memo = None
+                            bi.pending_simbrief_mismatch = None
+                            sb_u = bi.config.settings.get("simbrief_username", "").strip()
+                            if sb_u:
+                                bi.get_flight_data(sb_u)
+                        else:
+                            bi.dismiss_simbrief_msfs_mismatch(eff_key)
+                            if not bi.current_flight_data:
+                                sb_u = bi.config.settings.get("simbrief_username", "").strip()
+                                if sb_u:
+                                    bi.get_flight_data(sb_u)
+                        bi._gui_close_mismatch_modal = True
+                        bi._gui_sync_needed = True
+                        self.send_response(200)
+                        self.end_headers()
+                        fd = bi.get_dynamic_flight_data()
+                        self.wfile.write(json.dumps(fd).encode('utf-8'))
+                    except Exception as e:
+                        self.send_response(500)
+                        self.end_headers()
+                        self.wfile.write(json.dumps({"error": str(e)}).encode('utf-8'))
                     return
                     
                 if parsed.path == '/api/simbrief':

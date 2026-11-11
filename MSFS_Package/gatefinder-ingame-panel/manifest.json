@@ -1,16 +1,16 @@
 {
   "dependencies": [],
   "content_type": "UI",
-  "title": "GateFinder V2.0.4",
+  "title": "GateFinder V2.0.6",
   "manufacturer": "Sidestick Priority",
   "creator": "Sidestick Priority",
-  "package_version": "2.0.4",
+  "package_version": "2.0.6",
   "minimum_game_version": "1.0.0",
   "release_notes": {
     "neutral": {
-      "LastUpdate": "GateFinder V2.0.4 MSFS Panel Release",
+      "LastUpdate": "GateFinder V2.0.6 MSFS Panel Release",
       "OlderHistory": ""
     }
   },
-  "total_package_size": "00000000000000315034"
+  "total_package_size": "00000000000000373946"
 }

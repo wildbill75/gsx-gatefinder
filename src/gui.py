@@ -1,6 +1,6 @@
 import customtkinter as ctk
 from tkinter import messagebox
-from config import Config
+from config import Config, find_sayintentions_api_key
 from autostart import AutoStartManager
 import os
 import re
@@ -256,16 +256,28 @@ class SettingsView(ctk.CTkFrame):
 
         from tkinter import filedialog
 
-        # Single non-scrolling EFB container using the main window's #121418 background
-        main_container = ctk.CTkFrame(self, fg_color="transparent", corner_radius=0, border_width=0)
-        main_container.pack(fill="both", expand=True, padx=16, pady=(8, 10))
+        # Adaptive EFB container: fills full height without scrollbar when viewport is tall enough,
+        # and automatically enables smooth vertical scrolling on high-DPI 4K screens (200%/250%/300%) or compact windows
+        self._scroll_canvas = tk.Canvas(
+            self, bg="#121418", bd=0, highlightthickness=0, yscrollincrement=24
+        )
+        self._scrollbar = ctk.CTkScrollbar(
+            self, orientation="vertical", command=self._scroll_canvas.yview,
+            fg_color="transparent", button_color="#2B303B", button_hover_color="#578DA8"
+        )
+        self._scroll_canvas.configure(yscrollcommand=self._scrollbar.set)
+        self._scroll_canvas.pack(side="left", fill="both", expand=True, padx=(16, 16), pady=(8, 10))
+
+        main_container = ctk.CTkFrame(self._scroll_canvas, fg_color="#121418", corner_radius=0, border_width=0)
+        self._main_container = main_container
+        self._canvas_win_id = self._scroll_canvas.create_window((0, 0), window=main_container, anchor="nw")
 
         def _make_section_card(title_text, is_first=False, is_last=False, subtitle_text="", right_widget_builder=None):
             card = ctk.CTkFrame(main_container, fg_color="#1B1E24", corner_radius=10, border_width=0)
-            card.pack(fill="both", expand=True, padx=0, pady=(0 if is_first else 3, 0 if is_last else 3))
+            card.pack(fill="both", expand=True, padx=0, pady=(0 if is_first else 2, 0 if is_last else 2))
 
             hdr_row = ctk.CTkFrame(card, fg_color="transparent")
-            hdr_row.pack(fill="x", padx=14, pady=(8, 4))
+            hdr_row.pack(fill="x", padx=14, pady=(5, 2))
 
             title_bar = ctk.CTkFrame(hdr_row, fg_color="#252932", corner_radius=7, border_width=0)
             title_bar.pack(side="left", fill="x", expand=True, padx=(0, 8 if (is_first or right_widget_builder) else 0))
@@ -273,18 +285,18 @@ class SettingsView(ctk.CTkFrame):
                 title_bar, text=title_text,
                 font=ctk.CTkFont(size=11, weight="bold"),
                 text_color="#FFFFFF"
-            ).pack(side="left", padx=(12, 8), pady=3)
+            ).pack(side="left", padx=(12, 8), pady=2)
             if subtitle_text:
                 ctk.CTkLabel(
                     title_bar, text=subtitle_text,
                     font=ctk.CTkFont(size=11),
                     text_color="#94A3B8"
-                ).pack(side="left", padx=(4, 10), pady=3)
+                ).pack(side="left", padx=(4, 10), pady=2)
 
             if is_first:
                 self.btn_back = ctk.CTkButton(
                     hdr_row, text="Back", command=self.on_close_callback,
-                    width=84, height=26, corner_radius=7,
+                    width=84, height=25, corner_radius=7,
                     fg_color="#578DA8", hover_color="#4A6C7D", border_width=0,
                     text_color="#FFFFFF",
                     font=ctk.CTkFont(size=12, weight="bold")
@@ -296,7 +308,7 @@ class SettingsView(ctk.CTkFrame):
                 right_widget_builder(hdr_row)
 
             body = ctk.CTkFrame(card, fg_color="transparent")
-            body.pack(fill="both", expand=True, padx=16, pady=(1, 8))
+            body.pack(fill="both", expand=True, padx=16, pady=(0, 5))
             body.grid_columnconfigure(0, minsize=230)
             body.grid_columnconfigure(1, weight=1)
             return body
@@ -308,8 +320,9 @@ class SettingsView(ctk.CTkFrame):
             "hover_color": "#4A6C7D",
             "border_color": "#383E4C",
             "checkmark_color": "#FFFFFF",
-            "checkbox_width": 19,
-            "checkbox_height": 19,
+            "checkbox_width": 18,
+            "checkbox_height": 18,
+            "height": 20,
             "corner_radius": 5,
         }
 
@@ -319,14 +332,14 @@ class SettingsView(ctk.CTkFrame):
         c1 = _make_section_card("DISPATCH & STAND SELECTION", is_first=True)
 
         lbl_sb = ctk.CTkLabel(c1, text="SimBrief Username or Pilot ID:", font=ctk.CTkFont(size=13, weight="bold"), text_color="#E2E8F0")
-        lbl_sb.grid(row=0, column=0, sticky="w", pady=3)
+        lbl_sb.grid(row=0, column=0, sticky="w", pady=1)
         Tooltip(lbl_sb, "Enter your SimBrief username or 6-digit Pilot ID to import your Operational Flight Plans.")
 
         sb_entry_frame = ctk.CTkFrame(c1, fg_color="transparent")
-        sb_entry_frame.grid(row=0, column=1, sticky="w", padx=(10, 0), pady=3)
+        sb_entry_frame.grid(row=0, column=1, sticky="w", padx=(10, 0), pady=1)
 
         self.simbrief_entry = ctk.CTkEntry(
-            sb_entry_frame, width=160, height=28, corner_radius=6,
+            sb_entry_frame, width=160, height=26, corner_radius=6,
             border_width=0, fg_color="#2B303B", text_color="#FFFFFF",
             placeholder_text="Username or ID"
         )
@@ -338,7 +351,7 @@ class SettingsView(ctk.CTkFrame):
             sb_entry_frame,
             text="Test Connection",
             width=120,
-            height=28,
+            height=26,
             corner_radius=6,
             fg_color="#578DA8",
             hover_color="#4A6C7D",
@@ -355,7 +368,7 @@ class SettingsView(ctk.CTkFrame):
         self.lbl_connection_status.pack(side="left", padx=4)
 
         c1_checks = ctk.CTkFrame(c1, fg_color="transparent")
-        c1_checks.grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        c1_checks.grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
         self.autofetch_var = ctk.BooleanVar(value=self.config.settings.get("auto_fetch", False))
         chk_autofetch = ctk.CTkCheckBox(
@@ -365,7 +378,7 @@ class SettingsView(ctk.CTkFrame):
             command=self.save_settings_silent,
             **chk_style
         )
-        chk_autofetch.pack(anchor="w", pady=3)
+        chk_autofetch.pack(anchor="w", pady=1)
         self._chk_widgets.append(chk_autofetch)
         Tooltip(chk_autofetch, "Automatically download and load your active SimBrief flight plan when GateFinder starts.")
 
@@ -377,7 +390,7 @@ class SettingsView(ctk.CTkFrame):
             command=self.save_settings_silent,
             **chk_style
         )
-        chk_turnaround.pack(anchor="w", pady=3)
+        chk_turnaround.pack(anchor="w", pady=1)
         self._chk_widgets.append(chk_turnaround)
         Tooltip(chk_turnaround, "When importing a new flight departing from your previous arrival airport or current MSFS position, offer to keep the same gate.")
 
@@ -389,7 +402,7 @@ class SettingsView(ctk.CTkFrame):
             command=self.save_settings_silent,
             **chk_style
         )
-        chk_cargo.pack(anchor="w", pady=3)
+        chk_cargo.pack(anchor="w", pady=1)
         self._chk_widgets.append(chk_cargo)
         Tooltip(chk_cargo, "Always assign a Cargo / Freighter ramp even when flying a passenger aircraft.")
 
@@ -399,7 +412,7 @@ class SettingsView(ctk.CTkFrame):
         c2 = _make_section_card("ATC, GSX PRO & ONLINE TRAFFIC")
 
         c2_checks = ctk.CTkFrame(c2, fg_color="transparent")
-        c2_checks.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        c2_checks.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 2))
 
         self.prioritize_ai_atc_var = ctk.BooleanVar(value=self.config.settings.get("prioritize_ai_atc", True))
         chk_ai_atc = ctk.CTkCheckBox(
@@ -409,7 +422,7 @@ class SettingsView(ctk.CTkFrame):
             command=self.save_settings_silent,
             **chk_style
         )
-        chk_ai_atc.pack(anchor="w", pady=3)
+        chk_ai_atc.pack(anchor="w", pady=1)
         self._chk_widgets.append(chk_ai_atc)
         Tooltip(chk_ai_atc, "Automatically adopt active runway and arrival stand assignments received from BeyondATC or SayIntentions.AI.")
 
@@ -421,7 +434,7 @@ class SettingsView(ctk.CTkFrame):
             command=self.save_settings_silent,
             **chk_style
         )
-        chk_gsx.pack(anchor="w", pady=3)
+        chk_gsx.pack(anchor="w", pady=1)
         self._chk_widgets.append(chk_gsx)
         Tooltip(chk_gsx, "Automatically selects your arrival gate and default handling operator in GSX Pro on landing. Uncheck to hide GSX UI controls.")
 
@@ -433,7 +446,7 @@ class SettingsView(ctk.CTkFrame):
             command=self.save_settings_silent,
             **chk_style
         )
-        chk_online.pack(anchor="w", pady=3)
+        chk_online.pack(anchor="w", pady=1)
         self._chk_widgets.append(chk_online)
         Tooltip(chk_online, "Excludes stands occupied by other online pilots on VATSIM and IVAO at Dispatch, Pre-TOD (~180 NM) and Approach (~19 NM).")
 
@@ -445,7 +458,7 @@ class SettingsView(ctk.CTkFrame):
             command=self.save_settings_silent,
             **chk_style
         )
-        chk_clear_ai.pack(anchor="w", pady=3)
+        chk_clear_ai.pack(anchor="w", pady=1)
         self._chk_widgets.append(chk_clear_ai)
         Tooltip(chk_clear_ai, "Automatically removes SimConnect AI aircraft parked at your assigned Departure and Arrival stands.")
 
@@ -457,27 +470,32 @@ class SettingsView(ctk.CTkFrame):
             command=self.save_settings_silent,
             **chk_style
         )
-        chk_mars_overlap.pack(anchor="w", pady=3)
+        chk_mars_overlap.pack(anchor="w", pady=1)
         self._chk_widgets.append(chk_mars_overlap)
         Tooltip(chk_mars_overlap, "Prevents wingtip collisions on double/triple MARS stands (e.g. A4 & A41) by automatically clearing AI traffic (BeyondATC / MSFS) spawned on overlapping neighbor sub-stands and filtering overlapping occupied stands.")
 
         lbl_si_key = ctk.CTkLabel(c2, text="SayIntentions.AI SAPI Key:", font=ctk.CTkFont(size=13, weight="bold"), text_color="#E2E8F0")
-        lbl_si_key.grid(row=1, column=0, sticky="w", pady=3)
-        Tooltip(lbl_si_key, "Optional. Leave blank to auto-detect your API key directly from your local SayIntentions.AI installation.")
+        lbl_si_key.grid(row=1, column=0, sticky="w", pady=1)
+        Tooltip(lbl_si_key, "Automatically detected from your local SayIntentions.AI installation (%LOCALAPPDATA%\\SayIntentionsAI\\flight.json). You may also edit it manually.")
 
         si_frame = ctk.CTkFrame(c2, fg_color="transparent")
-        si_frame.grid(row=1, column=1, sticky="w", padx=(10, 0), pady=3)
+        si_frame.grid(row=1, column=1, sticky="w", padx=(10, 0), pady=1)
 
         self.si_api_key_entry = ctk.CTkEntry(
-            si_frame, width=220, height=28, corner_radius=6,
+            si_frame, width=220, height=26, corner_radius=6,
             border_width=0, fg_color="#2B303B", text_color="#FFFFFF",
-            placeholder_text="Auto-detected if left blank"
+            placeholder_text="Not detected (optional)"
         )
         self.si_api_key_entry.pack(side="left")
-        saved_si_key = self.config.settings.get("sayintentions_api_key", "")
+        saved_si_key = str(self.config.settings.get("sayintentions_api_key") or "").strip()
+        if not saved_si_key:
+            saved_si_key = find_sayintentions_api_key()
+            if saved_si_key:
+                self.config.settings["sayintentions_api_key"] = saved_si_key
+                self.config.save()
         if saved_si_key:
             self.si_api_key_entry.insert(0, saved_si_key)
-        Tooltip(self.si_api_key_entry, "Optional. Leave blank to auto-detect your API key directly from your local SayIntentions.AI installation.")
+        Tooltip(self.si_api_key_entry, "Automatically detected from your local SayIntentions.AI installation (%LOCALAPPDATA%\\SayIntentionsAI\\flight.json). You may also edit it manually.")
 
         # ==================================================================
         # CARD 3: PERFORMANCE & SYSTEM
@@ -551,7 +569,7 @@ class SettingsView(ctk.CTkFrame):
             command=self.save_settings_silent,
             **chk_style
         )
-        chk_autostart.pack(anchor="w", pady=2)
+        chk_autostart.pack(anchor="w", pady=1)
         self._chk_widgets.append(chk_autostart)
         Tooltip(chk_autostart, "Registers GateFinder in your MSFS exe.xml file so it starts automatically in the background when the simulator launches.")
 
@@ -563,7 +581,7 @@ class SettingsView(ctk.CTkFrame):
             command=self.save_settings_silent,
             **chk_style
         )
-        chk_autoquit.pack(anchor="w", pady=2)
+        chk_autoquit.pack(anchor="w", pady=1)
         self._chk_widgets.append(chk_autoquit)
         Tooltip(chk_autoquit, "Automatically closes GateFinder in the background when Microsoft Flight Simulator exits.")
 
@@ -575,16 +593,59 @@ class SettingsView(ctk.CTkFrame):
             command=self.save_settings_silent,
             **chk_style
         )
-        chk_hibernate.pack(anchor="w", pady=2)
+        chk_hibernate.pack(anchor="w", pady=1)
         self._chk_widgets.append(chk_hibernate)
         Tooltip(chk_hibernate, "Pauses map canvas redraws between Wheels-Off and Touchdown to save GPU and CPU resources during flight.")
+
+        self.suppress_popups_var = ctk.BooleanVar(value=bool(self.config.settings.get("suppress_popups_in_cockpit", False)))
+        chk_suppress_popups = ctk.CTkCheckBox(
+            c3_checks,
+            text="Suppress automatic popups on Desktop (Cockpit / VR Mode)",
+            variable=self.suppress_popups_var,
+            command=self.save_settings_silent,
+            **chk_style
+        )
+        chk_suppress_popups.pack(anchor="w", pady=1)
+        self._chk_widgets.append(chk_suppress_popups)
+        Tooltip(chk_suppress_popups, "Prevents automatic Live Stand, Turnaround, and SimBrief Mismatch modals from forcing open over the simulator or desktop UI. Status and choices remain accessible inside the in-sim EFB panel.")
+
+        lbl_poll_rate = ctk.CTkLabel(c3, text="Live Map Follow Refresh Rate:", font=ctk.CTkFont(size=13, weight="bold"), text_color="#E2E8F0")
+        lbl_poll_rate.grid(row=1, column=0, sticky="w", pady=(3, 1))
+        Tooltip(lbl_poll_rate, "Controls real-time aircraft tracking refresh rate on the ground chart. Zero impact on MSFS FPS; 20 Hz slightly increases GateFinder CPU usage on very large hubs.")
+
+        poll_frame = ctk.CTkFrame(c3, fg_color="transparent")
+        poll_frame.grid(row=1, column=1, sticky="w", padx=(10, 0), pady=(3, 1))
+
+        cur_hz = int(self.config.settings.get("map_follow_refresh_hz", 10) or 10)
+        if cur_hz not in (5, 10, 20):
+            cur_hz = 10
+        self.map_follow_refresh_hz_var = ctk.IntVar(value=cur_hz)
+        self._poll_rate_btns = {}
+
+        def _select_poll_hz(hz_val):
+            self.map_follow_refresh_hz_var.set(int(hz_val))
+            self._update_poll_rate_btn_colors()
+            self.save_settings_silent()
+
+        for hz_opt, hz_lbl in ((5, "5 Hz (Eco)"), (10, "10 Hz (Smooth)"), (20, "20 Hz (Ultra)")):
+            b_hz = ctk.CTkButton(
+                poll_frame, text=hz_lbl, width=108, height=24, corner_radius=6,
+                fg_color="#578DA8" if cur_hz == hz_opt else "#2B303B",
+                hover_color="#4A6C7D" if cur_hz == hz_opt else "#383E4C",
+                border_width=0, text_color="#FFFFFF",
+                font=ctk.CTkFont(size=11, weight="bold"),
+                command=lambda v=hz_opt: _select_poll_hz(v)
+            )
+            b_hz.pack(side="left", padx=(0, 6))
+            self._poll_rate_btns[hz_opt] = b_hz
+            Tooltip(b_hz, "5 Hz (200 ms): Lowest CPU usage  |  10 Hz (100 ms): Smooth recommended tracking  |  20 Hz (50 ms): Ultra-fluid ground tracking (Zero MSFS FPS impact).")
 
         # ==================================================================
         # CARD 4: CRASH REPORTING & DIAGNOSTIC PRIVACY (SceneryX Style)
         # ==================================================================
         def _build_crash_hdr_btns(hdr_parent):
             btn_hist = ctk.CTkButton(
-                hdr_parent, text="History", width=76, height=26, corner_radius=6,
+                hdr_parent, text="History", width=76, height=25, corner_radius=6,
                 fg_color="#161920", hover_color="#2B303B",
                 border_width=1, border_color="#2B303B",
                 text_color="#E2E8F0", font=ctk.CTkFont(size=12, weight="bold"),
@@ -594,7 +655,7 @@ class SettingsView(ctk.CTkFrame):
             Tooltip(btn_hist, "View locally recorded crash logs in %APPDATA%\\GateFinder\\crashes\\.")
 
             btn_issue = ctk.CTkButton(
-                hdr_parent, text="Report an Issue...", width=136, height=26, corner_radius=6,
+                hdr_parent, text="Report an Issue...", width=136, height=25, corner_radius=6,
                 fg_color="#252932", hover_color="#323846",
                 border_width=1, border_color="#334155",
                 text_color="#FFFFFF", font=ctk.CTkFont(size=12, weight="bold"),
@@ -613,22 +674,22 @@ class SettingsView(ctk.CTkFrame):
             c_crash, fg_color="#15181E", corner_radius=8,
             border_width=1, border_color="#252932"
         )
-        crash_box.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(1, 2))
+        crash_box.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(1, 1))
         crash_box.grid_columnconfigure(0, weight=1)
 
         # Row 1: Send Crash Reports Automatically
         row_cr1 = ctk.CTkFrame(crash_box, fg_color="transparent")
-        row_cr1.pack(fill="x", padx=14, pady=(7, 5))
+        row_cr1.pack(fill="x", padx=14, pady=(4, 3))
         cr1_left = ctk.CTkFrame(row_cr1, fg_color="transparent")
         cr1_left.pack(side="left", fill="x", expand=True)
         ctk.CTkLabel(
             cr1_left, text="Send Crash Reports Automatically",
-            font=ctk.CTkFont(size=12, weight="bold"), text_color="#F8FAFC", anchor="w"
+            font=ctk.CTkFont(size=12, weight="bold"), text_color="#F8FAFC", anchor="w", height=18
         ).pack(anchor="w")
         ctk.CTkLabel(
             cr1_left,
             text="Captures unhandled exceptions, call stacks, and anonymized hardware/simulator specs upon fatal errors. No usernames, personal file paths, or credentials are ever collected.",
-            font=ctk.CTkFont(size=11), text_color="#64748B", anchor="w", justify="left"
+            font=ctk.CTkFont(size=11), text_color="#64748B", anchor="w", justify="left", height=16
         ).pack(anchor="w")
 
         self.send_crash_reports_var = ctk.BooleanVar(value=self.config.settings.get("send_crash_reports", True))
@@ -646,17 +707,17 @@ class SettingsView(ctk.CTkFrame):
 
         # Row 2: Share Anonymized Flight Statistics
         row_cr2 = ctk.CTkFrame(crash_box, fg_color="transparent")
-        row_cr2.pack(fill="x", padx=14, pady=(5, 7))
+        row_cr2.pack(fill="x", padx=14, pady=(3, 4))
         cr2_left = ctk.CTkFrame(row_cr2, fg_color="transparent")
         cr2_left.pack(side="left", fill="x", expand=True)
         ctk.CTkLabel(
             cr2_left, text="Share Anonymized Flight Statistics",
-            font=ctk.CTkFont(size=12, weight="bold"), text_color="#F8FAFC", anchor="w"
+            font=ctk.CTkFont(size=12, weight="bold"), text_color="#F8FAFC", anchor="w", height=18
         ).pack(anchor="w")
         ctk.CTkLabel(
             cr2_left,
             text="Submits high-level flight dispatch aggregates (aircraft type, airport ICAO, ATC source) to help optimize default stand presets and Lido LOD tuning.",
-            font=ctk.CTkFont(size=11), text_color="#64748B", anchor="w", justify="left"
+            font=ctk.CTkFont(size=11), text_color="#64748B", anchor="w", justify="left", height=16
         ).pack(anchor="w")
 
         self.share_flight_stats_var = ctk.BooleanVar(value=self.config.settings.get("share_flight_stats", True))
@@ -678,14 +739,14 @@ class SettingsView(ctk.CTkFrame):
 
         # Row 0: GSX Profile Path
         lbl_gsx = ctk.CTkLabel(c4, text="GSX Profile Path:", font=ctk.CTkFont(size=13, weight="bold"), text_color="#E2E8F0")
-        lbl_gsx.grid(row=0, column=0, sticky="w", pady=2)
+        lbl_gsx.grid(row=0, column=0, sticky="w", pady=1)
         Tooltip(lbl_gsx, "Path to your Virtuali GSX MSFS profiles folder (%APPDATA%\\Virtuali\\GSX\\MSFS) containing custom airport .ini and .py files.")
 
         gsx_frame = ctk.CTkFrame(c4, fg_color="transparent")
-        gsx_frame.grid(row=0, column=1, padx=(10, 0), pady=2, sticky="w")
+        gsx_frame.grid(row=0, column=1, padx=(10, 0), pady=1, sticky="w")
 
         self.gsx_entry = ctk.CTkEntry(
-            gsx_frame, width=path_entry_width, height=26, corner_radius=6,
+            gsx_frame, width=path_entry_width, height=25, corner_radius=6,
             border_width=0, fg_color="#2B303B", text_color="#FFFFFF",
             placeholder_text="Leave empty if GSX Pro is not installed"
         )
@@ -709,14 +770,14 @@ class SettingsView(ctk.CTkFrame):
             self.save_settings_silent()
 
         btn_browse_gsx = ctk.CTkButton(
-            gsx_frame, text="...", width=34, height=26, corner_radius=6,
+            gsx_frame, text="...", width=34, height=25, corner_radius=6,
             fg_color="#2B303B", hover_color="#383E4C", border_width=0, command=browse_gsx
         )
         btn_browse_gsx.pack(side="left", padx=6)
         Tooltip(btn_browse_gsx, "Browse for your GSX MSFS profiles folder.")
 
         btn_autodetect_gsx = ctk.CTkButton(
-            gsx_frame, text="Auto-Detect", width=95, height=26, corner_radius=6,
+            gsx_frame, text="Auto-Detect", width=95, height=25, corner_radius=6,
             fg_color="#578DA8", hover_color="#4A6C7D", border_width=0,
             text_color="#FFFFFF", font=ctk.CTkFont(size=12, weight="bold"), command=auto_scan_gsx
         )
@@ -726,14 +787,14 @@ class SettingsView(ctk.CTkFrame):
 
         # Row 1: Primary MSFS Community Folder
         lbl_comm20 = ctk.CTkLabel(c4, text="Primary Community Folder:", font=ctk.CTkFont(size=13, weight="bold"), text_color="#E2E8F0")
-        lbl_comm20.grid(row=1, column=0, sticky="w", pady=2)
+        lbl_comm20.grid(row=1, column=0, sticky="w", pady=1)
         Tooltip(lbl_comm20, "Path to your primary MSFS Community folder used to scan third-party sceneries and install the In-Game Panel.")
 
         comm2020_frame = ctk.CTkFrame(c4, fg_color="transparent")
-        comm2020_frame.grid(row=1, column=1, padx=(10, 0), pady=2, sticky="w")
+        comm2020_frame.grid(row=1, column=1, padx=(10, 0), pady=1, sticky="w")
 
         self.community2020_entry = ctk.CTkEntry(
-            comm2020_frame, width=path_entry_width, height=26, corner_radius=6,
+            comm2020_frame, width=path_entry_width, height=25, corner_radius=6,
             border_width=0, fg_color="#2B303B", text_color="#FFFFFF",
             placeholder_text="Path to primary MSFS Community folder"
         )
@@ -750,7 +811,7 @@ class SettingsView(ctk.CTkFrame):
                 self.refresh_dynamic_statuses()
 
         btn_browse_c20 = ctk.CTkButton(
-            comm2020_frame, text="...", width=34, height=26, corner_radius=6,
+            comm2020_frame, text="...", width=34, height=25, corner_radius=6,
             fg_color="#2B303B", hover_color="#383E4C", border_width=0, command=browse_comm2020
         )
         btn_browse_c20.pack(side="left", padx=(6, 0))
@@ -758,14 +819,14 @@ class SettingsView(ctk.CTkFrame):
 
         # Row 2: Custom / Secondary Community Folder
         lbl_comm24 = ctk.CTkLabel(c4, text="Secondary / MSFS 2024 Folder:", font=ctk.CTkFont(size=13, weight="bold"), text_color="#E2E8F0")
-        lbl_comm24.grid(row=2, column=0, sticky="w", pady=2)
+        lbl_comm24.grid(row=2, column=0, sticky="w", pady=1)
         Tooltip(lbl_comm24, "Optional path to a secondary MSFS 2024 Community folder or custom Addon Linker scenery directory.")
 
         comm2024_frame = ctk.CTkFrame(c4, fg_color="transparent")
-        comm2024_frame.grid(row=2, column=1, padx=(10, 0), pady=2, sticky="w")
+        comm2024_frame.grid(row=2, column=1, padx=(10, 0), pady=1, sticky="w")
 
         self.community2024_entry = ctk.CTkEntry(
-            comm2024_frame, width=path_entry_width, height=26, corner_radius=6,
+            comm2024_frame, width=path_entry_width, height=25, corner_radius=6,
             border_width=0, fg_color="#2B303B", text_color="#FFFFFF",
             placeholder_text="Optional path to Community2024 or Addon Linker"
         )
@@ -782,7 +843,7 @@ class SettingsView(ctk.CTkFrame):
                 self.refresh_dynamic_statuses()
 
         btn_browse_c24 = ctk.CTkButton(
-            comm2024_frame, text="...", width=34, height=26, corner_radius=6,
+            comm2024_frame, text="...", width=34, height=25, corner_radius=6,
             fg_color="#2B303B", hover_color="#383E4C", border_width=0, command=browse_comm2024
         )
         btn_browse_c24.pack(side="left", padx=(6, 0))
@@ -790,14 +851,14 @@ class SettingsView(ctk.CTkFrame):
 
         # Row 3: MSFS EFB & In-Game Toolbar Panel + Migrate / Clean V1.x
         lbl_panel = ctk.CTkLabel(c4, text="MSFS EFB & In-Game Panel:", font=ctk.CTkFont(size=13, weight="bold"), text_color="#E2E8F0")
-        lbl_panel.grid(row=3, column=0, sticky="w", pady=(4, 1))
+        lbl_panel.grid(row=3, column=0, sticky="w", pady=(2, 1))
         Tooltip(lbl_panel, "Install or uninstall the GateFinder MSFS EFB App & VR/Toolbar In-Game Panel ('gatefinder-ingame-panel') in your MSFS Community folder(s).")
 
         panel_frame = ctk.CTkFrame(c4, fg_color="transparent")
-        panel_frame.grid(row=3, column=1, padx=(10, 0), pady=(4, 1), sticky="ew")
+        panel_frame.grid(row=3, column=1, padx=(10, 0), pady=(2, 1), sticky="ew")
 
         self.btn_install_panel = ctk.CTkButton(
-            panel_frame, text="Install MSFS EFB", width=148, height=26, corner_radius=6,
+            panel_frame, text="Install MSFS EFB", width=148, height=25, corner_radius=6,
             fg_color="#578DA8", hover_color="#4A6C7D", border_width=0,
             text_color="#FFFFFF",
             font=ctk.CTkFont(size=12, weight="bold"),
@@ -812,7 +873,7 @@ class SettingsView(ctk.CTkFrame):
         self.lbl_msfs_efb_status.pack(side="left", padx=(10, 0))
 
         self.btn_migrate_v1 = ctk.CTkButton(
-            panel_frame, text="Migrate / Clean V1.x...", width=155, height=26, corner_radius=6,
+            panel_frame, text="Migrate / Clean V1.x...", width=155, height=25, corner_radius=6,
             fg_color="#252932", hover_color="#323846",
             border_width=1, border_color="#334155",
             text_color="#E2E8F0",
@@ -824,14 +885,14 @@ class SettingsView(ctk.CTkFrame):
 
         # Row 4: Fenix A320 EFB Integration + Uninstall GateFinder right-justified in red
         lbl_fenix_efb = ctk.CTkLabel(c4, text="Fenix A320 EFB Integration:", font=ctk.CTkFont(size=13, weight="bold"), text_color="#E2E8F0")
-        lbl_fenix_efb.grid(row=4, column=0, sticky="w", pady=(3, 1))
+        lbl_fenix_efb.grid(row=4, column=0, sticky="w", pady=(2, 1))
         Tooltip(lbl_fenix_efb, "Install or uninstall the GateFinder app directly inside the Fenix A319/A320/A321 cockpit EFB tablet (Captain & First Officer).")
 
         fenix_frame = ctk.CTkFrame(c4, fg_color="transparent")
-        fenix_frame.grid(row=4, column=1, padx=(10, 0), pady=(3, 1), sticky="ew")
+        fenix_frame.grid(row=4, column=1, padx=(10, 0), pady=(2, 1), sticky="ew")
 
         self.btn_install_fenix_efb = ctk.CTkButton(
-            fenix_frame, text="Install Fenix EFB", width=148, height=26, corner_radius=6,
+            fenix_frame, text="Install Fenix EFB", width=148, height=25, corner_radius=6,
             fg_color="#578DA8", hover_color="#4A6C7D", border_width=0,
             text_color="#FFFFFF",
             font=ctk.CTkFont(size=12, weight="bold"),
@@ -847,7 +908,7 @@ class SettingsView(ctk.CTkFrame):
 
         self.btn_uninstall_app = ctk.CTkButton(
             fenix_frame, text="Uninstall GateFinder", command=self.run_uninstall,
-            width=155, height=26, corner_radius=6,
+            width=155, height=25, corner_radius=6,
             fg_color="#B91C1C", hover_color="#991B1B",
             border_width=0, text_color="#FFFFFF",
             font=ctk.CTkFont(size=12, weight="bold")
@@ -887,6 +948,81 @@ class SettingsView(ctk.CTkFrame):
             entry_w.bind("<Return>", lambda e: self.save_settings_silent(), add="+")
             entry_w.bind("<KeyRelease>", lambda e: self.save_settings_silent(), add="+")
 
+        self._scroll_sync_job = None
+
+        def _sync_settings_scroll_layout(event=None, _from_timer=False):
+            try:
+                if not self._scroll_canvas.winfo_exists() or not main_container.winfo_exists():
+                    return
+                raw_w = self._scroll_canvas.winfo_width()
+                raw_h = self._scroll_canvas.winfo_height()
+                if raw_h < 120 or raw_w < 120:
+                    if not _from_timer and self._scroll_sync_job is None:
+                        self._scroll_sync_job = self.after(30, lambda: _run_deferred_sync())
+                    return
+                c_w = max(100, raw_w)
+                c_h = max(100, raw_h)
+                req_h = main_container.winfo_reqheight()
+                need_scroll = (req_h > c_h + 6)
+                if need_scroll:
+                    if not self._scrollbar.winfo_ismapped():
+                        self._scroll_canvas.pack_configure(padx=(16, 4))
+                        self._scrollbar.pack(side="right", fill="y", padx=(0, 8), pady=(8, 10))
+                        self.update_idletasks()
+                        c_w = max(100, self._scroll_canvas.winfo_width())
+                    target_h = req_h
+                    self._scroll_canvas.itemconfigure(self._canvas_win_id, width=c_w, height=target_h)
+                    self._scroll_canvas.configure(scrollregion=(0, 0, c_w, target_h))
+                else:
+                    if self._scrollbar.winfo_ismapped():
+                        self._scrollbar.pack_forget()
+                        self._scroll_canvas.pack_configure(padx=(16, 16))
+                        self.update_idletasks()
+                        c_w = max(100, self._scroll_canvas.winfo_width())
+                    target_h = max(c_h, req_h)
+                    self._scroll_canvas.itemconfigure(self._canvas_win_id, width=c_w, height=target_h)
+                    self._scroll_canvas.configure(scrollregion=(0, 0, c_w, target_h))
+                    self._scroll_canvas.yview_moveto(0.0)
+                if not _from_timer:
+                    if self._scroll_sync_job is not None:
+                        try:
+                            self.after_cancel(self._scroll_sync_job)
+                        except Exception:
+                            pass
+                    self._scroll_sync_job = self.after(25, lambda: _run_deferred_sync())
+            except Exception:
+                pass
+
+        def _run_deferred_sync():
+            self._scroll_sync_job = None
+            _sync_settings_scroll_layout(_from_timer=True)
+
+        self._sync_settings_scroll_layout = _sync_settings_scroll_layout
+        self._scroll_canvas.bind("<Configure>", _sync_settings_scroll_layout, add="+")
+        main_container.bind("<Configure>", _sync_settings_scroll_layout, add="+")
+
+        def _on_settings_mousewheel(event):
+            try:
+                if self._scrollbar.winfo_ismapped():
+                    units = int(-1 * (event.delta / 40)) if event.delta else 0
+                    if units == 0 and event.delta:
+                        units = -1 if event.delta > 0 else 1
+                    self._scroll_canvas.yview_scroll(units, "units")
+                    return "break"
+            except Exception:
+                pass
+
+        def _bind_wheel_recursive(w):
+            try:
+                w.bind("<MouseWheel>", _on_settings_mousewheel, add="+")
+            except Exception:
+                pass
+            for child in w.winfo_children():
+                _bind_wheel_recursive(child)
+
+        _bind_wheel_recursive(self._scroll_canvas)
+        _bind_wheel_recursive(main_container)
+
         self.refresh_dynamic_statuses()
 
     def refresh_dynamic_statuses(self):
@@ -912,6 +1048,7 @@ class SettingsView(ctk.CTkFrame):
                 pb.configure(fg_color=c_primary, hover_color=c_hover)
             except Exception:
                 pass
+        self._update_poll_rate_btn_colors(c_primary, c_hover)
 
         try:
             comm20 = self.community2020_entry.get().strip() if hasattr(self, "community2020_entry") else ""
@@ -1331,6 +1468,8 @@ class SettingsView(ctk.CTkFrame):
         modal.grab_set()
         if hasattr(top_win, "_apply_window_icon"):
             top_win._apply_window_icon(modal)
+        if hasattr(top_win, "_center_toplevel"):
+            top_win._center_toplevel(modal, 700, 460)
 
         outer = ctk.CTkFrame(modal, fg_color="#0D1017", corner_radius=10, border_width=1, border_color="#1E2532")
         outer.pack(fill="both", expand=True, padx=10, pady=10)
@@ -1434,6 +1573,8 @@ class SettingsView(ctk.CTkFrame):
         modal.grab_set()
         if hasattr(top_win, "_apply_window_icon"):
             top_win._apply_window_icon(modal)
+        if hasattr(top_win, "_center_toplevel"):
+            top_win._center_toplevel(modal, 780, 570)
 
         outer = ctk.CTkFrame(modal, fg_color="#0B0E14", corner_radius=10, border_width=1, border_color="#1E2532")
         outer.pack(fill="both", expand=True, padx=8, pady=8)
@@ -1630,6 +1771,8 @@ class SettingsView(ctk.CTkFrame):
         modal.grab_set()
         if hasattr(top_win, "_apply_window_icon"):
             top_win._apply_window_icon(modal)
+        if hasattr(top_win, "_center_toplevel"):
+            top_win._center_toplevel(modal, 680, 430)
 
         outer = ctk.CTkFrame(modal, fg_color="#0D1017", corner_radius=10, border_width=1, border_color="#1E2532")
         outer.pack(fill="both", expand=True, padx=10, pady=10)
@@ -1780,14 +1923,45 @@ class SettingsView(ctk.CTkFrame):
             font=ctk.CTkFont(size=12, weight="bold"), command=_execute_upgrade
         ).pack(side="right")
 
+    def _update_poll_rate_btn_colors(self, c_primary=None, c_hover=None):
+        if c_primary is None or c_hover is None:
+            c_primary = "#578DA8"
+            c_hover = "#4A6C7D"
+            try:
+                top = self.winfo_toplevel()
+                if hasattr(top, "_get_active_camaieu"):
+                    cam = top._get_active_camaieu()
+                    c_primary = cam.get("s1", "#578DA8")
+                    c_hover = cam.get("s3", "#4A6C7D")
+            except Exception:
+                pass
+        sel_hz = int(self.map_follow_refresh_hz_var.get()) if hasattr(self, "map_follow_refresh_hz_var") else 10
+        for hz_opt, btn_w in getattr(self, "_poll_rate_btns", {}).items():
+            try:
+                if btn_w.winfo_exists():
+                    is_sel = (int(hz_opt) == sel_hz)
+                    btn_w.configure(
+                        fg_color=c_primary if is_sel else "#2B303B",
+                        hover_color=c_hover if is_sel else "#383E4C",
+                        text_color="#FFFFFF" if is_sel else "#CBD5E1"
+                    )
+            except Exception:
+                pass
+
     def save_settings_silent(self):
+        si_key_val = self.si_api_key_entry.get().strip()
+        if not si_key_val:
+            si_key_val = find_sayintentions_api_key()
+            if si_key_val:
+                self.si_api_key_entry.delete(0, "end")
+                self.si_api_key_entry.insert(0, si_key_val)
         new_vals = {
             "simbrief_username": self.simbrief_entry.get().strip(),
             "gsx_profile_path": self.gsx_entry.get().strip(),
             "msfs_community_path": self.community2020_entry.get().strip(),
             "msfs_community2024_path": self.community2024_entry.get().strip(),
             "ignored_gates": "",
-            "sayintentions_api_key": self.si_api_key_entry.get().strip(),
+            "sayintentions_api_key": si_key_val,
             "auto_start": self.autostart_var.get(),
             "auto_quit_with_msfs": self.auto_quit_msfs_var.get() if hasattr(self, "auto_quit_msfs_var") else False,
             "auto_fetch": self.autofetch_var.get(),
@@ -1795,6 +1969,8 @@ class SettingsView(ctk.CTkFrame):
             "check_online_traffic": self.check_online_traffic_var.get(),
             "auto_lock_turnaround": self.auto_lock_turnaround_var.get(),
             "hibernate_map_in_flight": self.hibernate_map_in_flight_var.get(),
+            "suppress_popups_in_cockpit": self.suppress_popups_var.get() if hasattr(self, "suppress_popups_var") else False,
+            "map_follow_refresh_hz": int(self.map_follow_refresh_hz_var.get()) if hasattr(self, "map_follow_refresh_hz_var") else 10,
             "auto_clear_ai": self.auto_clear_ai_var.get(),
             "mars_overlap_protection": self.mars_overlap_protection_var.get() if hasattr(self, "mars_overlap_protection_var") else True,
             "auto_inject_gsx": self.auto_inject_gsx_var.get(),
@@ -1842,12 +2018,14 @@ class LidoVectorChart(ctk.CTkFrame):
     holding points, neighboring Lido-orange stands, the active A* taxi route with
     directional chevrons, and the live SimConnect aircraft icon.
     """
-    def __init__(self, parent, initial_theme="night", backend=None, on_stand_click=None, on_runway_click=None, **kwargs):
+    def __init__(self, parent, initial_theme="night", backend=None, on_stand_click=None, on_runway_click=None, on_taxiway_click=None, app_ref=None, **kwargs):
         super().__init__(parent, fg_color="#1B1E24", corner_radius=12, border_width=0, **kwargs)
         self.theme_mode = initial_theme  # "day" (Lido paper chart) or "night" (Lido EFB dark)
         self.backend = backend
+        self.app_ref = app_ref
         self.on_stand_click = on_stand_click
         self.on_runway_click = on_runway_click
+        self.on_taxiway_click = on_taxiway_click
         self._tk_logo_cache = {}
         self.chart_data = None
         self.airport_data = None
@@ -1869,6 +2047,7 @@ class LidoVectorChart(ctk.CTkFrame):
         self._initial_fit_done = False
         self._stand_hitboxes = []
         self._rwy_hitboxes = []
+        self._twy_hitboxes = []
         self._hovered_stand_info = None
         self._stand_ctx_modal = None
 
@@ -1920,23 +2099,22 @@ class LidoVectorChart(ctk.CTkFrame):
         self.btn_zoom_in = ctk.CTkButton(self.header_bar, text="+", width=36, command=lambda: self.zoom_by(0.75), **btn_cfg)
         self.btn_zoom_in.pack(side="right", padx=4, pady=8)
 
-        import webbrowser
-        self.btn_sceneryx_promo = ctk.CTkButton(
+        self.btn_updater = ctk.CTkButton(
             self.header_bar,
-            text="BUY SCENERY X & GET 10% DISCOUNT",
+            text="No update available",
             height=32,
-            width=238,
+            width=154,
             corner_radius=8,
-            fg_color="#132235",
-            hover_color="#1B314B",
-            border_width=1,
-            border_color="#0284C7",
-            text_color="#38BDF8",
+            fg_color="#232730",
+            hover_color="#2B303B",
+            border_width=0,
+            text_color="#64748B",
             font=ctk.CTkFont(size=11, weight="bold"),
-            command=lambda: webbrowser.open("https://sidestickpriority.gumroad.com/l/zzlsus/SCENERYX-10")
+            command=self._on_updater_click
         )
-        self.btn_sceneryx_promo.pack(side="left", padx=(4, 6), pady=8)
-        Tooltip(self.btn_sceneryx_promo, "Boost your MSFS 2020/2024 FPS & VRAM with SceneryX by Sidestick Priority — Click to claim your 10% discount on Gumroad!")
+        self.btn_updater.pack(side="left", padx=(4, 6), pady=8)
+        self._updater_tooltip = Tooltip(self.btn_updater, "GateFinder is up to date. Click to check GitHub Releases.")
+        self.sync_updater_state()
 
         # Main Vector Drawing Canvas
         self.canvas = tkinter.Canvas(self, bg="#0B1120", highlightthickness=0, cursor="arrow")
@@ -2102,42 +2280,102 @@ class LidoVectorChart(ctk.CTkFrame):
                 self.btn_agc.configure(fg_color=cam["s2"], hover_color=cam["s4"])
                 self.btn_apc.configure(fg_color="#2B303B", hover_color="#383E4C")
 
+    def _stabilize_user_aircraft(self, u_ac):
+        if not isinstance(u_ac, dict) or not u_ac.get("connected"):
+            self._stable_ac_anchor = None
+            return u_ac
+        rlat = u_ac.get("lat")
+        rlon = u_ac.get("lon")
+        if rlat is None or rlon is None:
+            self._stable_ac_anchor = None
+            return u_ac
+        flat = float(rlat)
+        flon = float(rlon)
+        fhdg = float(u_ac.get("heading") or 0.0) % 360.0
+        fgs = float(u_ac.get("gs") or 0.0)
+        if fgs < 0.45 and u_ac.get("on_ground") is not False:
+            anc = getattr(self, "_stable_ac_anchor", None)
+            if anc is not None:
+                alat, alon, ahdg = anc
+                h_diff = abs(((fhdg - ahdg + 540.0) % 360.0) - 180.0)
+                if abs(flat - alat) < 0.0000042 and abs(flon - alon) < 0.0000062 and h_diff < 0.30:
+                    out = dict(u_ac)
+                    out["lat"] = alat
+                    out["lon"] = alon
+                    if u_ac.get("heading") is not None:
+                        out["heading"] = ahdg
+                    return out
+        self._stable_ac_anchor = (flat, flon, fhdg)
+        return u_ac
+
+    def _compute_base_draw_sig(self):
+        ap = self.airport_data or {}
+        tr = ap.get("taxi_route") or {}
+        r_pts = tr.get("route_points") or []
+        is_custom_twy = bool(ap.get("custom_taxi_mode"))
+        use_hdg_up = bool(
+            self.follow_aircraft
+            and self.heading_up
+            and not self._is_airborne()
+            and self.user_aircraft
+            and self.user_aircraft.get("connected")
+            and self.user_aircraft.get("heading") is not None
+        )
+        return (
+            self.theme_mode,
+            self.phase_mode,
+            id(self.chart_data),
+            len((self.chart_data or {}).get("stands") or ()),
+            ap.get("icao"),
+            ap.get("airline_code"),
+            ap.get("gate"),
+            ap.get("lat"),
+            ap.get("lon"),
+            ap.get("heading"),
+            ap.get("selected_runway"),
+            is_custom_twy,
+            None if ap.get("atc_taxi_via") is None else tuple(ap.get("atc_taxi_via")),
+            (len(r_pts), tuple(r_pts[0]) if r_pts else None, tuple(r_pts[-1]) if r_pts else None) if is_custom_twy else None,
+            bool(self.follow_aircraft),
+            bool(self.heading_up),
+            use_hdg_up,
+            round(self._get_effective_follow_hdg(), 2) if use_hdg_up else None,
+            self.view_mode,
+            round(float(self.center_lat), 7),
+            round(float(self.center_lon), 7),
+            round(float(self.meters_per_pixel), 4),
+            getattr(self.backend, "logo_generation", 0) if self.backend else 0,
+            self.canvas.winfo_width(),
+            self.canvas.winfo_height(),
+            bool(self._drag_start),
+        )
+
     def _compute_draw_sig(self):
         ap = self.airport_data or {}
         tr = ap.get("taxi_route") or {}
         r_pts = tr.get("route_points") or []
+        roll_pts = tr.get("rollout_points") or []
         u = self.user_aircraft or {}
         u_conn = bool(u.get("connected"))
         u_og = u.get("on_ground")
-        u_lat = round(float(u["lat"]), 5) if (u_conn and u.get("lat") is not None) else None
-        u_lon = round(float(u["lon"]), 5) if (u_conn and u.get("lon") is not None) else None
-        u_hdg = round(float(u["heading"]), 1) if (u_conn and u.get("heading") is not None) else None
+        u_lat = round(float(u["lat"]), 7) if (u_conn and u.get("lat") is not None) else None
+        u_lon = round(float(u["lon"]), 7) if (u_conn and u.get("lon") is not None) else None
+        u_hdg = round(float(u["heading"]), 2) if (u_conn and u.get("heading") is not None) else None
         return (
-            self.theme_mode,
-            self.phase_mode,
-            ap.get("icao"),
-            ap.get("airline_code"),
-            ap.get("gate"),
-            ap.get("selected_runway"),
+            self._compute_base_draw_sig(),
             tr.get("live_status"),
             tr.get("detected_exit"),
+            tuple(tr.get("taxiway_sequence") or ()),
             len(r_pts),
             tuple(r_pts[0]) if r_pts else None,
             tuple(r_pts[-1]) if r_pts else None,
-            bool(self.follow_aircraft),
-            bool(self.heading_up),
-            self.view_mode,
-            round(float(self.center_lat), 6),
-            round(float(self.center_lon), 6),
-            round(float(self.meters_per_pixel), 4),
+            len(roll_pts),
+            tuple(roll_pts[0]) if roll_pts else None,
             u_conn,
             u_og,
             u_lat,
             u_lon,
             u_hdg,
-            getattr(self.backend, "logo_generation", 0) if self.backend else 0,
-            self.canvas.winfo_width(),
-            self.canvas.winfo_height()
         )
 
     def _get_tk_logo(self, code, size=16):
@@ -2162,12 +2400,20 @@ class LidoVectorChart(ctk.CTkFrame):
     def toggle_orientation(self):
         self.toggle_follow()
 
+    def _get_effective_follow_hdg(self) -> float:
+        if not self.user_aircraft or self.user_aircraft.get("heading") is None:
+            return 0.0
+        vis = getattr(self, "_follow_vis_hdg", None)
+        if vis is not None:
+            return float(vis)
+        return float(self.user_aircraft["heading"])
+
     def _apply_smart_follow_camera(self, snap=False):
         """
-        Smart Follow Camera: automatically keeps both the live aircraft and the target Gate
-        (or Runway Hold-Short point on departure) framed on screen in Heading-Up orientation,
-        dynamically adapting zoom (`meters_per_pixel`) unless the user has manually adjusted
-        zoom or pan while Follow + Hdg Up is locked.
+        Smart Follow Camera: strictly centers the camera and Heading-Up rotation pivot on the
+        live aircraft (`ac_lat`, `ac_lon`) while dynamically adapting `meters_per_pixel` using a
+        heading-invariant radial distance curve to the active stopping point (Runway Hold-Short
+        point on departure, Runway Exit on landing roll, or Assigned Stand on taxi-in).
         """
         pan_lat = float(getattr(self, "_follow_pan_lat_offset", 0.0) or 0.0)
         pan_lon = float(getattr(self, "_follow_pan_lon_offset", 0.0) or 0.0)
@@ -2182,20 +2428,62 @@ class LidoVectorChart(ctk.CTkFrame):
 
         ac_lat = float(self.user_aircraft["lat"])
         ac_lon = float(self.user_aircraft["lon"])
+
+        # Smooth angular interpolation for Heading-Up orientation (prevents 360->0 wrap jumps & discrete stepping)
+        if self.user_aircraft.get("heading") is not None:
+            raw_hdg = float(self.user_aircraft["heading"]) % 360.0
+            prev_hdg = getattr(self, "_follow_vis_hdg", None)
+            if snap or prev_hdg is None:
+                self._follow_vis_hdg = raw_hdg
+            else:
+                diff = ((raw_hdg - float(prev_hdg) + 540.0) % 360.0) - 180.0
+                if abs(diff) > 45.0 or abs(diff) < 0.12:
+                    self._follow_vis_hdg = raw_hdg
+                else:
+                    self._follow_vis_hdg = (float(prev_hdg) + 0.48 * diff) % 360.0
+
+        # Always anchor camera & Heading-Up pivot directly on the live aircraft
+        self.center_lat = ac_lat + pan_lat
+        self.center_lon = ac_lon + pan_lon
+
+        if user_zoom is not None:
+            self.meters_per_pixel = float(user_zoom)
+            return
+
         tgt_lat = self.airport_data.get("lat") if self.airport_data else None
         tgt_lon = self.airport_data.get("lon") if self.airport_data else None
 
-        if self.phase_mode == "departure" and self.airport_data:
+        if self.airport_data:
             tr = self.airport_data.get("taxi_route") or {}
             r_pts = tr.get("route_points") or []
-            if len(r_pts) >= 2:
-                tgt_lat = float(r_pts[-1][0])
-                tgt_lon = float(r_pts[-1][1])
+            roll_pts = tr.get("rollout_points") or []
+            live_st = tr.get("live_status") or ""
+            if self.phase_mode == "departure":
+                if len(r_pts) >= 2:
+                    tgt_lat = float(r_pts[-1][0])
+                    tgt_lon = float(r_pts[-1][1])
+                elif self.chart_data:
+                    sel_rwy = str(self.airport_data.get("selected_runway") or "").strip().upper()
+                    if sel_rwy:
+                        for rwy_obj in self.chart_data.get("runways", []):
+                            ends_map = rwy_obj.get("ends") or {}
+                            if sel_rwy in ends_map:
+                                end_info = ends_map[sel_rwy]
+                                if end_info.get("lat") is not None and end_info.get("lon") is not None:
+                                    tgt_lat = float(end_info["lat"])
+                                    tgt_lon = float(end_info["lon"])
+                                    break
+            else:
+                # Arrival: target the runway exit during landing rollout, then the assigned stand during taxi-in
+                if live_st == "LANDING_ROLL" and len(roll_pts) >= 2:
+                    tgt_lat = float(roll_pts[-1][0])
+                    tgt_lon = float(roll_pts[-1][1])
+                elif len(r_pts) >= 2:
+                    tgt_lat = float(r_pts[-1][0])
+                    tgt_lon = float(r_pts[-1][1])
 
         if tgt_lat is None or tgt_lon is None:
-            self.center_lat = ac_lat + pan_lat
-            self.center_lon = ac_lon + pan_lon
-            self.meters_per_pixel = float(user_zoom) if user_zoom is not None else 0.85
+            self.meters_per_pixel = 0.85
             return
 
         tgt_lat = float(tgt_lat)
@@ -2206,39 +2494,38 @@ class LidoVectorChart(ctk.CTkFrame):
         dist_m = math.hypot(dx_m, dy_m)
 
         if dist_m > 12000.0:
-            self.center_lat = ac_lat + pan_lat
-            self.center_lon = ac_lon + pan_lon
-            self.meters_per_pixel = float(user_zoom) if user_zoom is not None else 0.85
+            self.meters_per_pixel = 0.85
             return
 
-        self.center_lat = ((ac_lat + tgt_lat) / 2.0) + pan_lat
-        self.center_lon = ((ac_lon + tgt_lon) / 2.0) + pan_lon
-
-        if user_zoom is not None:
-            self.meters_per_pixel = float(user_zoom)
-            return
-
-        if self.heading_up and self.user_aircraft.get("connected") and self.user_aircraft.get("heading") is not None:
-            ang = -math.radians(float(self.user_aircraft["heading"]))
-            rx_m = dx_m * math.cos(ang) - dy_m * math.sin(ang)
-            ry_m = dx_m * math.sin(ang) + dy_m * math.cos(ang)
-        else:
-            rx_m, ry_m = dx_m, dy_m
-
+        # Heading-invariant radial Smart Zoom:
+        # Uses min(w, h) so turning the aircraft 90°/180° never causes zoom pumping,
+        # and caps max mpp at 2.65 m/px (below the 3.2 m/px LOD threshold) so stands,
+        # hold-short bars, and taxiway labels remain 100% visible while progressively
+        # zooming in down to 0.50 m/px as the aircraft approaches the stopping point.
         w = max(self.canvas.winfo_width(), 540)
         h = max(self.canvas.winfo_height(), 420)
-        span_x_m = max(95.0, abs(rx_m) * 1.48)
-        span_y_m = max(95.0, abs(ry_m) * 1.48)
-        target_mpp = max(span_x_m / max(220.0, w - 100.0), span_y_m / max(200.0, h - 100.0), 0.45)
-        target_mpp = min(12.0, target_mpp)
+        eff_dist_m = dist_m if dist_m <= 500.0 else (500.0 + (dist_m - 500.0) * 0.35)
+        radius_px = max(150.0, min(w, h) * 0.40)
+        target_mpp = max(0.50, min(2.65, eff_dist_m / radius_px))
 
-        if snap or self.meters_per_pixel <= 0.0:
+        if snap or self.meters_per_pixel <= 0.0 or abs(self.meters_per_pixel - target_mpp) < 0.003:
             self.meters_per_pixel = target_mpp
         else:
-            self.meters_per_pixel = (0.68 * self.meters_per_pixel) + (0.32 * target_mpp)
+            self.meters_per_pixel = (0.76 * self.meters_per_pixel) + (0.24 * target_mpp)
 
     def toggle_follow(self):
         if self._is_airborne():
+            return
+        pan_lat = float(getattr(self, "_follow_pan_lat_offset", 0.0) or 0.0)
+        pan_lon = float(getattr(self, "_follow_pan_lon_offset", 0.0) or 0.0)
+        user_zoom = getattr(self, "_follow_user_zoom_mpp", None)
+        if self.follow_aircraft and (user_zoom is not None or abs(pan_lat) > 1e-7 or abs(pan_lon) > 1e-7):
+            # Re-center on aircraft and restore automatic Smart Zoom when clicked after manual pan/zoom
+            self._follow_user_zoom_mpp = None
+            self._follow_pan_lat_offset = 0.0
+            self._follow_pan_lon_offset = 0.0
+            self._apply_smart_follow_camera(snap=True)
+            self.redraw()
             return
         self.follow_aircraft = not self.follow_aircraft
         self.heading_up = bool(self.follow_aircraft)
@@ -2258,7 +2545,10 @@ class LidoVectorChart(ctk.CTkFrame):
         self.airport_data = airport_data or {}
         self.chart_data = self.airport_data.get("chart_data")
         self.phase_mode = phase_mode
-        self.user_aircraft = user_aircraft
+        self.user_aircraft = self._stabilize_user_aircraft(user_aircraft)
+
+        if preserve_camera and self._drag_start is not None:
+            return
 
         live_st = (self.airport_data.get("taxi_route") or {}).get("live_status")
         prev_st = self._last_live_status
@@ -2387,29 +2677,73 @@ class LidoVectorChart(ctk.CTkFrame):
         self._update_theme_buttons()
         self.redraw()
 
-    def _adapt_header_bar_layout(self, width_px):
-        if not hasattr(self, "btn_sceneryx_promo") or not self.btn_sceneryx_promo.winfo_exists():
+    def _on_updater_click(self):
+        if self.app_ref and hasattr(self.app_ref, "on_updater_button_clicked"):
+            self.app_ref.on_updater_button_clicked()
+
+    def sync_updater_state(self):
+        if not hasattr(self, "btn_updater") or not self.btn_updater.winfo_exists():
             return
-        if width_px >= 1030:
+        app = self.app_ref
+        st = getattr(app, "_updater_state", "up_to_date") if app else "up_to_date"
+        tag = getattr(app, "_updater_tag", "") if app else ""
+        pct = int(getattr(app, "_updater_pct", 0) or 0) if app else 0
+        compact = (getattr(self, "_updater_btn_mode", "full") == "compact")
+
+        if st == "available":
+            txt = f"Update {tag}" if compact else f"Update {tag} available"
+            w_px = 126 if compact else 178
+            self.btn_updater.configure(
+                text=txt, width=w_px, state="normal",
+                fg_color="#0A86C2", hover_color="#0A6E9E", text_color="#FFFFFF"
+            )
+            if hasattr(self, "_updater_tooltip") and self._updater_tooltip:
+                self._updater_tooltip.text = f"Click to automatically download and install GateFinder {tag}."
+        elif st == "downloading":
+            txt = f"Updating {pct}%..."
+            self.btn_updater.configure(
+                text=txt, width=138 if compact else 160, state="disabled",
+                fg_color="#0A6E9E", hover_color="#0A6E9E", text_color="#FFFFFF"
+            )
+        elif st == "installing":
+            self.btn_updater.configure(
+                text="Restarting...", width=126 if compact else 148, state="disabled",
+                fg_color="#0A6E9E", hover_color="#0A6E9E", text_color="#FFFFFF"
+            )
+        elif st == "checking":
+            txt = "Checking..." if compact else "Checking updates..."
+            self.btn_updater.configure(
+                text=txt, width=116 if compact else 154, state="disabled",
+                fg_color="#232730", hover_color="#2B303B", text_color="#94A3B8"
+            )
+        else:
+            txt = "Up to date" if compact else "No update available"
+            self.btn_updater.configure(
+                text=txt, width=110 if compact else 154, state="normal",
+                fg_color="#232730", hover_color="#2B303B", text_color="#64748B"
+            )
+            if hasattr(self, "_updater_tooltip") and self._updater_tooltip:
+                self._updater_tooltip.text = "GateFinder is up to date. Click to check GitHub Releases."
+
+    def _adapt_header_bar_layout(self, width_px):
+        if not hasattr(self, "btn_updater") or not self.btn_updater.winfo_exists():
+            return
+        if width_px >= 990:
             mode = "full"
-        elif width_px >= 900:
+        elif width_px >= 860:
             mode = "compact"
         else:
             mode = "hidden"
-        if getattr(self, "_promo_btn_mode", None) == mode:
-            return
-        self._promo_btn_mode = mode
+        prev_mode = getattr(self, "_updater_btn_mode", None)
+        self._updater_btn_mode = mode
         if mode == "hidden":
-            if self.btn_sceneryx_promo.winfo_ismapped():
-                self.btn_sceneryx_promo.pack_forget()
-        elif mode == "compact":
-            self.btn_sceneryx_promo.configure(text="SCENERY X (-10%)", width=130)
-            if not self.btn_sceneryx_promo.winfo_ismapped():
-                self.btn_sceneryx_promo.pack(side="left", padx=(4, 6), pady=8)
+            if self.btn_updater.winfo_ismapped():
+                self.btn_updater.pack_forget()
         else:
-            self.btn_sceneryx_promo.configure(text="BUY SCENERY X & GET 10% DISCOUNT", width=236)
-            if not self.btn_sceneryx_promo.winfo_ismapped():
-                self.btn_sceneryx_promo.pack(side="left", padx=(4, 6), pady=8)
+            if prev_mode != mode:
+                self.sync_updater_state()
+            if not self.btn_updater.winfo_ismapped():
+                self.btn_updater.pack(side="left", padx=(4, 6), pady=8)
 
     def _deferred_resize_redraw(self):
         self._resize_redraw_after_id = None
@@ -2454,13 +2788,44 @@ class LidoVectorChart(ctk.CTkFrame):
                     self._apply_smart_follow_camera(snap=True)
                 self.redraw()
 
+    def _draw_drag_cursor(self, hx, hy):
+        self.canvas.delete("drag_cursor")
+        self.canvas.create_oval(
+            hx - 15, hy - 15, hx + 15, hy + 15,
+            fill="#0F172A", outline="#38BDF8", width=2, tags=("drag_cursor",)
+        )
+        hand_pts = [
+            hx - 5, hy + 2,
+            hx - 7, hy - 2,
+            hx - 5, hy - 4,
+            hx - 4, hy - 1,
+            hx - 4, hy - 8,
+            hx - 1, hy - 8,
+            hx - 1, hy - 1,
+            hx - 1, hy - 9,
+            hx + 2, hy - 9,
+            hx + 2, hy - 1,
+            hx + 2, hy - 8,
+            hx + 5, hy - 8,
+            hx + 5, hy - 1,
+            hx + 5, hy - 6,
+            hx + 8, hy - 6,
+            hx + 8, hy + 3,
+            hx + 5, hy + 8,
+            hx - 2, hy + 8
+        ]
+        self.canvas.create_polygon(hand_pts, fill="#F8FAFC", outline="#0F172A", width=1, tags=("drag_cursor",))
+
     def _on_drag_start(self, event):
         self._drag_start = (event.x, event.y)
         self._click_origin = (event.x, event.y)
         self._did_drag = False
+        self._pan_accum_px = 0.0
+        self._last_drag_redraw_ts = time.perf_counter()
         self._hovered_stand_info = None
         self.canvas.delete("stand_hover_tooltip")
         self.canvas.configure(cursor="hand2")
+        self._draw_drag_cursor(event.x, event.y)
         self._update_theme_buttons()
 
     def _on_drag_motion(self, event):
@@ -2472,6 +2837,8 @@ class LidoVectorChart(ctk.CTkFrame):
         dx = event.x - self._drag_start[0]
         dy = event.y - self._drag_start[1]
         self._drag_start = (event.x, event.y)
+        if dx == 0 and dy == 0:
+            return
         cos_lat = max(0.15, math.cos(math.radians(self.center_lat)))
         if (
             self.follow_aircraft
@@ -2481,7 +2848,7 @@ class LidoVectorChart(ctk.CTkFrame):
             and self.user_aircraft.get("connected")
             and self.user_aircraft.get("heading") is not None
         ):
-            ang = -math.radians(float(self.user_aircraft["heading"]))
+            ang = -math.radians(self._get_effective_follow_hdg())
             ux = dx * math.cos(ang) + dy * math.sin(ang)
             uy = -dx * math.sin(ang) + dy * math.cos(ang)
         else:
@@ -2493,7 +2860,16 @@ class LidoVectorChart(ctk.CTkFrame):
         if self.follow_aircraft:
             self._follow_pan_lat_offset = float(getattr(self, "_follow_pan_lat_offset", 0.0) or 0.0) + dlat
             self._follow_pan_lon_offset = float(getattr(self, "_follow_pan_lon_offset", 0.0) or 0.0) + dlon
-        self.redraw()
+
+        self._pan_accum_px = float(getattr(self, "_pan_accum_px", 0.0) or 0.0) + math.hypot(dx, dy)
+        now_p = time.perf_counter()
+        if self._pan_accum_px >= 145.0 and (now_p - float(getattr(self, "_last_drag_redraw_ts", 0.0))) >= 0.065:
+            self._pan_accum_px = 0.0
+            self._last_drag_redraw_ts = now_p
+            self.redraw()
+        else:
+            self.canvas.move("map_pan", dx, dy)
+            self._draw_drag_cursor(event.x, event.y)
 
     def _pick_stand_hitbox_at(self, mx, my, pad=5.0):
         if not self._stand_hitboxes:
@@ -2518,6 +2894,8 @@ class LidoVectorChart(ctk.CTkFrame):
         self._drag_start = None
         self._click_origin = None
         self._did_drag = False
+        self._pan_accum_px = 0.0
+        self.canvas.delete("drag_cursor")
         self.canvas.configure(cursor="arrow")
         if not was_drag:
             mx, my = event.x, event.y
@@ -2530,6 +2908,14 @@ class LidoVectorChart(ctk.CTkFrame):
                             self.on_runway_click(end_id)
                             return
                         break
+            if self.on_taxiway_click and self._twy_hitboxes:
+                for thb in reversed(self._twy_hitboxes):
+                    tx0, ty0, tx1, ty1, twy_ref, _, _ = thb
+                    if tx0 <= mx <= tx1 and ty0 <= my <= ty1:
+                        self._close_stand_context_modal()
+                        self.canvas.delete("stand_hover_tooltip")
+                        self.on_taxiway_click(twy_ref)
+                        return
             hb = self._pick_stand_hitbox_at(mx, my, pad=5.0)
             if hb is not None:
                 self.canvas.delete("stand_hover_tooltip")
@@ -2742,6 +3128,12 @@ class LidoVectorChart(ctk.CTkFrame):
                 hit = ("rwy", rx0, ry0, rx1, ry1, end_id, is_act)
                 break
         if hit is None:
+            for thb in reversed(self._twy_hitboxes):
+                tx0, ty0, tx1, ty1, twy_ref, is_sel_twy, sel_ord = thb
+                if tx0 <= mx <= tx1 and ty0 <= my <= ty1:
+                    hit = ("twy", tx0, ty0, tx1, ty1, twy_ref, is_sel_twy, sel_ord)
+                    break
+        if hit is None:
             hit = self._pick_stand_hitbox_at(mx, my, pad=3.0)
         if hit != self._hovered_stand_info:
             self._hovered_stand_info = hit
@@ -2762,6 +3154,12 @@ class LidoVectorChart(ctk.CTkFrame):
             hdr_line = f"RUNWAY {end_id}  {'ACTIVE RUNWAY' if is_assigned else 'SELECT RUNWAY'}"
             phase_lbl = "Departure" if self.phase_mode == "departure" else "Arrival"
             al_line = f"Active {phase_lbl} Runway" if is_assigned else f"Set RWY {end_id} as Active {phase_lbl} Runway"
+        elif self._hovered_stand_info[0] == "twy":
+            _, x0, y0, x1, y1, twy_ref, is_sel_twy, sel_ord = self._hovered_stand_info
+            cx = (x0 + x1) / 2.0
+            is_assigned = is_sel_twy
+            hdr_line = f"TAXIWAY {twy_ref}  {'SELECTED (#' + str(sel_ord) + ')' if is_sel_twy else 'INTERACTIVE ROUTE'}"
+            al_line = f"Click to remove {twy_ref} from taxi route" if is_sel_twy else f"Click to route via Taxiway {twy_ref}"
         else:
             x0, y0, x1, y1, s_ref, st_als, st_term, is_assigned = self._hovered_stand_info
             cx = (x0 + x1) / 2.0
@@ -2833,17 +3231,481 @@ class LidoVectorChart(ctk.CTkFrame):
             and self.user_aircraft.get("connected")
             and self.user_aircraft.get("heading") is not None
         ):
-            ang = -math.radians(float(self.user_aircraft["heading"]))
+            ang = -math.radians(self._get_effective_follow_hdg())
             rx = dx * math.cos(ang) - dy * math.sin(ang)
             ry = dx * math.sin(ang) + dy * math.cos(ang)
             return (w / 2.0) + rx, (h / 2.0) + ry
         return (w / 2.0) + dx, (h / 2.0) + dy
 
+    def _build_projection(self, w, h, cos_lat):
+        half_w = w * 0.5
+        half_h = h * 0.5
+        c_lat = self.center_lat
+        c_lon = self.center_lon
+        mpp = self.meters_per_pixel
+        scale_y = 111320.0 / mpp
+        scale_x = scale_y * cos_lat
+        use_hdg_up = bool(
+            self.follow_aircraft
+            and self.heading_up
+            and not self._is_airborne()
+            and self.user_aircraft
+            and self.user_aircraft.get("connected")
+        )
+        if use_hdg_up and self.user_aircraft.get("heading") is not None:
+            ac_hdg_s = self._get_effective_follow_hdg()
+            ang_r = -math.radians(ac_hdg_s)
+            cos_a = math.cos(ang_r)
+            sin_a = math.sin(ang_r)
+
+            def _proj(lat, lon):
+                dx = (lon - c_lon) * scale_x
+                dy = -(lat - c_lat) * scale_y
+                return half_w + dx * cos_a - dy * sin_a, half_h + dx * sin_a + dy * cos_a
+        else:
+            ac_hdg_s = self._get_effective_follow_hdg() if use_hdg_up else 0.0
+            cos_a = 1.0
+            sin_a = 0.0
+
+            def _proj(lat, lon):
+                return half_w + (lon - c_lon) * scale_x, half_h - (lat - c_lat) * scale_y
+
+        max_rad_px = math.hypot(half_w + 90.0, half_h + 90.0)
+        vis_dlat = max_rad_px / scale_y
+        vis_dlon = max_rad_px / scale_x
+        frustum = (c_lat - vis_dlat, c_lat + vis_dlat, c_lon - vis_dlon, c_lon + vis_dlon)
+        return _proj, use_hdg_up, ac_hdg_s, cos_a, sin_a, frustum
+
+    def _ensure_chart_render_caches(self):
+        ch = self.chart_data
+        if not isinstance(ch, dict):
+            return None
+        aprons_raw = ch.get("aprons") or ()
+        twys_raw = ch.get("taxiways") or ()
+        terms_raw = ch.get("terminals") or ()
+        stands_raw = ch.get("stands") or ()
+        hps_raw = ch.get("holding_points") or ()
+        sig = (len(aprons_raw), len(twys_raw), len(terms_raw), len(stands_raw), len(hps_raw))
+        rc = ch.get("_render_cache")
+        if rc is not None and rc.get("sig") == sig:
+            return rc
+
+        aprons_meta = []
+        for apron in aprons_raw:
+            pts = apron.get("points") or ()
+            if len(pts) >= 3:
+                lats = [p[0] for p in pts]
+                lons = [p[1] for p in pts]
+                ap_name = str(apron.get("name") or "").strip()
+                ap_u = ap_name.upper() if ap_name else ""
+                ap_lbl_u = ap_u if (ap_u and any(k in ap_u for k in ("APRON", "AIRE", "PARKING", "RAMP", "ZONE"))) else None
+                aprons_meta.append((pts, min(lats), max(lats), min(lons), max(lons), ap_lbl_u))
+
+        c_lat_ref = float(ch.get("center_lat") or 0.0)
+        c_lon_ref = float(ch.get("center_lon") or 0.0)
+        cos_ref = max(0.15, math.cos(math.radians(c_lat_ref)))
+        m_scale_x = 111320.0 * cos_ref
+        m_scale_y = 111320.0
+
+        twys_meta = []
+        seg_grid = {}
+        seg_list = []
+        cell_sz = 80.0
+
+        for twy in twys_raw:
+            pts = twy.get("points") or ()
+            n_pts = len(pts)
+            if n_pts < 2:
+                continue
+            lats = [p[0] for p in pts]
+            lons = [p[1] for p in pts]
+            is_lane = (twy.get("type") == "taxilane")
+            ref = (twy.get("ref") or "").strip()
+            ref_norm = re.sub(r'[\s_\-]+', '', ref.upper()) if ref else ""
+            if ref and len(ref) <= 7 and not is_lane:
+                cand_indices = (n_pts // 4, n_pts // 2, (3 * n_pts) // 4) if n_pts >= 8 else (n_pts // 2,)
+            else:
+                cand_indices = ()
+            twys_meta.append((pts, min(lats), max(lats), min(lons), max(lons), is_lane, ref, ref_norm, cand_indices))
+
+            if not is_lane and hps_raw:
+                for k in range(n_pts - 1):
+                    mx0 = (pts[k][1] - c_lon_ref) * m_scale_x
+                    my0 = -(pts[k][0] - c_lat_ref) * m_scale_y
+                    mx1 = (pts[k + 1][1] - c_lon_ref) * m_scale_x
+                    my1 = -(pts[k + 1][0] - c_lat_ref) * m_scale_y
+                    sdx = mx1 - mx0
+                    sdy = my1 - my0
+                    slen2 = sdx * sdx + sdy * sdy
+                    if slen2 < 0.04:
+                        continue
+                    s_idx = len(seg_list)
+                    seg_list.append((mx0, my0, sdx, sdy, slen2))
+                    gx0 = int(math.floor((min(mx0, mx1) - 70.0) / cell_sz))
+                    gx1 = int(math.floor((max(mx0, mx1) + 70.0) / cell_sz))
+                    gy0 = int(math.floor((min(my0, my1) - 70.0) / cell_sz))
+                    gy1 = int(math.floor((max(my0, my1) + 70.0) / cell_sz))
+                    for gx in range(gx0, gx1 + 1):
+                        for gy in range(gy0, gy1 + 1):
+                            seg_grid.setdefault((gx, gy), []).append(s_idx)
+
+        holding_meta = []
+        for hp in hps_raw:
+            hlat, hlon = hp.get("lat"), hp.get("lon")
+            if hlat is None or hlon is None:
+                continue
+            fhlat, fhlon = float(hlat), float(hlon)
+            hmx = (fhlon - c_lon_ref) * m_scale_x
+            hmy = -(fhlat - c_lat_ref) * m_scale_y
+            cands = seg_grid.get((int(math.floor(hmx / cell_sz)), int(math.floor(hmy / cell_sz)))) or ()
+            best_d2_m = 4900.0  # 70m^2 (> 18px * 3.8m/px)
+            best_tx_n, best_ty_n = -0.18, 0.98
+            matched = False
+            for s_idx in cands:
+                mx0, my0, sdx, sdy, slen2 = seg_list[s_idx]
+                t_p = ((hmx - mx0) * sdx + (hmy - my0) * sdy) / slen2
+                if t_p < 0.0:
+                    t_p = 0.0
+                elif t_p > 1.0:
+                    t_p = 1.0
+                d2_m = (hmx - (mx0 + t_p * sdx)) ** 2 + (hmy - (my0 + t_p * sdy)) ** 2
+                if d2_m < best_d2_m:
+                    best_d2_m = d2_m
+                    slen = math.sqrt(slen2)
+                    best_tx_n = sdx / slen
+                    best_ty_n = sdy / slen
+                    matched = True
+            holding_meta.append((fhlat, fhlon, math.sqrt(best_d2_m) if matched else 1e9, best_tx_n, best_ty_n))
+
+        terms_meta = []
+        for term in terms_raw:
+            pts = term.get("points") or ()
+            if len(pts) >= 3:
+                lats = [p[0] for p in pts]
+                lons = [p[1] for p in pts]
+                raw_tn = str(term.get("name") or "").strip()
+                parsed_tn = None
+                if raw_tn and re.search(r'terminal|term|orly\s*\d|hall|concourse|pier|sat|dock|jet[eé]e', raw_tn, re.I) and not re.search(r'sslia|pompier|fire|tower|tour\s+de|hangar|servair|fret|wfs', raw_tn, re.I):
+                    clean_tn = re.sub(r'\s*\([^)]*\)', '', raw_tn).strip()
+                    clean_tn = re.sub(r'^(?:a[eé]rogare|a[eé]roport|b[aâ]timent)\s+(?:d[\'\u2019]|de\s+|du\s+)?', '', clean_tn, flags=re.I).strip().upper()
+                    if clean_tn != "ORLY 1 ET 2":
+                        m_short = re.match(r'^((?:TERMINAL|TERM|PIER|CONCOURSE|HALL|SAT(?:ELLITE)?|DOCK|JET[EÉ]E)\s*(?:[0-9]{1,2}[A-Z]?|[A-Z]\b)?)', clean_tn)
+                        if m_short and len(clean_tn) > 16:
+                            clean_tn = m_short.group(1).strip()
+                        elif len(clean_tn) > 22:
+                            clean_tn = clean_tn[:22].strip()
+                    if clean_tn:
+                        parsed_tn = clean_tn
+                terms_meta.append((pts, min(lats), max(lats), min(lons), max(lons), parsed_tn))
+
+        stands_meta = []
+        term_acc = {}
+        apron_acc = {}
+        for st in stands_raw:
+            s_ref = str(st.get("ref", "")).strip()
+            if not s_ref or st.get("lat") is None or st.get("lon") is None:
+                continue
+            slat = float(st["lat"])
+            slon = float(st["lon"])
+            s_hdg_raw = st.get("heading")
+            f_hdg = float(s_hdg_raw) if s_hdg_raw is not None else None
+            if f_hdg is not None:
+                rad_n = math.radians(f_hdg - 90.0)
+                cr_n, sr_n = math.cos(rad_n), math.sin(rad_n)
+                is_none_h = 0
+            else:
+                cr_n, sr_n = 0.0, 0.0
+                is_none_h = 1
+
+            raw_t = str(st.get("terminal") or "").strip()
+            if raw_t:
+                t_u = re.sub(r'\s*\([^)]*\)', '', raw_t).strip().upper()
+                if t_u and t_u not in ("MAIN APRON", "OTHER", "CARGO APRON", "GENERAL AVIATION", "ORLY 1 ET 2") and not t_u.startswith("ZONE "):
+                    acc = term_acc.get(t_u)
+                    if acc is None:
+                        term_acc[t_u] = [slat, slon, cr_n, sr_n, is_none_h, 1]
+                    else:
+                        acc[0] += slat
+                        acc[1] += slon
+                        acc[2] += cr_n
+                        acc[3] += sr_n
+                        acc[4] += is_none_h
+                        acc[5] += 1
+
+            s_clean_g = re.sub(r'^(?:STAND|GATE|PARKING|RAMP|DOCK|APRON)\s*', '', s_ref.upper()).replace(" ", "")
+            m_ap = re.match(r'^([A-Z])\d{1,3}[A-Z]?$', s_clean_g)
+            if m_ap:
+                ap_letter = m_ap.group(1)
+                acc = apron_acc.get(ap_letter)
+                if acc is None:
+                    apron_acc[ap_letter] = [slat, slon, cr_n, sr_n, is_none_h, 1]
+                else:
+                    acc[0] += slat
+                    acc[1] += slon
+                    acc[2] += cr_n
+                    acc[3] += sr_n
+                    acc[4] += is_none_h
+                    acc[5] += 1
+
+            s_clean = s_ref.replace(" ", "").upper()
+            s_norm = re.sub(r'([A-Z]*)0+(\d+)', r'\1\2', s_clean)
+            s_disp = re.sub(r'^(?:STAND|GATE|PARKING|RAMP|DOCK)\s*', '', s_ref, flags=re.I).replace(" ", "").upper() or s_ref
+            st_als = tuple(st.get("airlines") or ())
+            stands_meta.append((slat, slon, s_ref, s_clean, s_norm, s_disp, f_hdg, st_als, raw_t))
+
+        term_clusters = [
+            (t_u, v[0] / v[5], v[1] / v[5], v[2], v[3], v[4], v[5])
+            for t_u, v in term_acc.items()
+            if v[5] >= 2
+        ]
+        apron_clusters = [
+            (f"APRON {ap_l}", v[0] / v[5], v[1] / v[5], v[2], v[3], v[4], v[5])
+            for ap_l, v in sorted(apron_acc.items())
+            if v[5] >= 2
+        ]
+
+        rc = {
+            "sig": sig,
+            "aprons_meta": aprons_meta,
+            "twys_meta": twys_meta,
+            "holding_meta": holding_meta,
+            "terms_meta": terms_meta,
+            "stands_meta": stands_meta,
+            "term_clusters": term_clusters,
+            "apron_clusters": apron_clusters,
+        }
+        ch["_render_cache"] = rc
+        return rc
+
+    def _compute_route_tail_sig(self, cur_base_sig):
+        tr = (self.airport_data.get("taxi_route") or {}) if self.airport_data else {}
+        r_pts = tr.get("route_points") or []
+        ro_pts = tr.get("rollout_points") or []
+        tail_pts_t = tuple(r_pts[1:]) if len(r_pts) >= 3 else ()
+        ro_pts_t = tuple(ro_pts) if len(ro_pts) >= 2 else ()
+        return (cur_base_sig, tail_pts_t, ro_pts_t)
+
+    def _draw_route_arrows_on_pts(self, pts_xy, pal, arrow_tags):
+        accum = 0.0
+        for i in range(len(pts_xy) - 1):
+            x1, y1 = pts_xy[i]
+            x2, y2 = pts_xy[i + 1]
+            seg = math.hypot(x2 - x1, y2 - y1)
+            accum += seg
+            if accum >= 70.0 and seg > 4.0:
+                accum = 0.0
+                mx, my = (x1 + x2) * 0.5, (y1 + y2) * 0.5
+                ang = math.atan2(y2 - y1, x2 - x1)
+                sz = 6.0
+                p_tip = (mx + sz * math.cos(ang), my + sz * math.sin(ang))
+                p_l = (mx + sz * math.cos(ang + 2.4), my + sz * math.sin(ang + 2.4))
+                p_r = (mx + sz * math.cos(ang - 2.4), my + sz * math.sin(ang - 2.4))
+                self.canvas.create_polygon(
+                    [p_tip[0], p_tip[1], p_l[0], p_l[1], p_r[0], p_r[1]],
+                    fill=pal["route_arrow"], outline="", tags=arrow_tags
+                )
+
+    def _draw_route_head(self, _proj, pal, head_pts):
+        if len(head_pts) < 2:
+            return []
+        p0 = _proj(head_pts[0][0], head_pts[0][1])
+        p1 = _proj(head_pts[1][0], head_pts[1][1])
+        head_xy = [p0, p1]
+        head_flat = [p0[0], p0[1], p1[0], p1[1]]
+        route_w = max(5.0, min(11.0, 14.0 / self.meters_per_pixel))
+        self.canvas.create_line(
+            head_flat, fill=pal["route_glow"], width=route_w + 4.0,
+            capstyle="round", joinstyle="round",
+            tags=("dyn_route", "dyn_route_head", "dyn_route_head_glow", "map_pan")
+        )
+        self.canvas.create_line(
+            head_flat, fill=pal["route_main"], width=route_w,
+            capstyle="round", joinstyle="round",
+            tags=("dyn_route", "dyn_route_head", "dyn_route_head_main", "dyn_route_main", "map_pan")
+        )
+        self._draw_route_arrows_on_pts(
+            head_xy, pal,
+            ("dyn_route", "dyn_route_head", "dyn_route_head_arrow", "dyn_route_over_main", "map_pan")
+        )
+        return head_xy
+
+    def _draw_route_layer(self, _proj, pal):
+        tr = (self.airport_data.get("taxi_route") or {}) if self.airport_data else {}
+        rollout_pts = tr.get("rollout_points", [])
+        route_pts = tr.get("route_points", [])
+
+        xy_pts = []
+        if len(route_pts) >= 2:
+            for p in route_pts:
+                xy_pts.append(_proj(p[0], p[1]))
+
+            route_w = max(5.0, min(11.0, 14.0 / self.meters_per_pixel))
+            head_xy = xy_pts[0:2]
+            tail_xy = xy_pts[1:] if len(xy_pts) >= 3 else []
+            head_flat = [head_xy[0][0], head_xy[0][1], head_xy[1][0], head_xy[1][1]]
+            tail_flat = []
+            for rx, ry in tail_xy:
+                tail_flat.extend((rx, ry))
+
+            # 1. Glow strokes (tail + head)
+            if len(tail_xy) >= 2:
+                self.canvas.create_line(
+                    tail_flat, fill=pal["route_glow"], width=route_w + 4.0,
+                    capstyle="round", joinstyle="round",
+                    tags=("dyn_route", "dyn_route_tail", "map_pan")
+                )
+            self.canvas.create_line(
+                head_flat, fill=pal["route_glow"], width=route_w + 4.0,
+                capstyle="round", joinstyle="round",
+                tags=("dyn_route", "dyn_route_head", "dyn_route_head_glow", "map_pan")
+            )
+
+            # 2. Main emerald strokes (tail + head)
+            if len(tail_xy) >= 2:
+                self.canvas.create_line(
+                    tail_flat, fill=pal["route_main"], width=route_w,
+                    capstyle="round", joinstyle="round",
+                    tags=("dyn_route", "dyn_route_tail", "dyn_route_main", "map_pan")
+                )
+            self.canvas.create_line(
+                head_flat, fill=pal["route_main"], width=route_w,
+                capstyle="round", joinstyle="round",
+                tags=("dyn_route", "dyn_route_head", "dyn_route_head_main", "dyn_route_main", "map_pan")
+            )
+
+            # 3. Directional chevrons (tail + head)
+            if len(tail_xy) >= 2:
+                self._draw_route_arrows_on_pts(
+                    tail_xy, pal,
+                    ("dyn_route", "dyn_route_tail", "dyn_route_over_main", "map_pan")
+                )
+            self._draw_route_arrows_on_pts(
+                head_xy, pal,
+                ("dyn_route", "dyn_route_head", "dyn_route_head_arrow", "dyn_route_over_main", "map_pan")
+            )
+
+        if len(rollout_pts) >= 2:
+            r_flat = []
+            for p in rollout_pts:
+                rx, ry = _proj(p[0], p[1])
+                r_flat.extend((rx, ry))
+            self.canvas.create_line(
+                r_flat, fill=pal["rollout"], width=3.5, dash=(10, 6),
+                capstyle="round",
+                tags=("dyn_route", "dyn_route_tail", "dyn_route_over_main", "map_pan")
+            )
+
+        return xy_pts
+
+    def _draw_aircraft_layer(self, _proj, w, h, use_hdg_up):
+        if not self._is_airborne() and self.user_aircraft and self.user_aircraft.get("connected") and self.user_aircraft.get("lat") is not None:
+            ulat = self.user_aircraft["lat"]
+            ulon = self.user_aircraft["lon"]
+            uhdg = float(self.user_aircraft.get("heading") or 0.0)
+            ax, ay = _proj(ulat, ulon)
+            if -100 <= ax <= w + 100 and -100 <= ay <= h + 100:
+                # GPS pulse ring
+                self.canvas.create_oval(
+                    ax - 18, ay - 18, ax + 18, ay + 18,
+                    outline="#38BDF8", width=2, dash=(4, 3), tags=("dyn_aircraft", "map_pan")
+                )
+                # Swept-wing jet silhouette rotated by true heading (or pointing straight up in Follow + Hdg Up mode)
+                vis_hdg = 0.0 if use_hdg_up else uhdg
+                rad = math.radians(vis_hdg - 90.0)
+                c_r = math.cos(rad)
+                s_r = math.sin(rad)
+
+                def rot(px, py):
+                    return ax + px * c_r - py * s_r, ay + px * s_r + py * c_r
+
+                jet_shape = [
+                    rot(14, 0),    # Nose
+                    rot(4, -3),
+                    rot(-2, -13),  # Left wingtip
+                    rot(-5, -13),
+                    rot(-3, -3),
+                    rot(-11, -2),
+                    rot(-13, -6),  # Left tailplane
+                    rot(-14, -6),
+                    rot(-13, 0),
+                    rot(-14, 6),   # Right tailplane
+                    rot(-13, 6),
+                    rot(-11, 2),
+                    rot(-3, 3),
+                    rot(-5, 13),   # Right wingtip
+                    rot(-2, 13),
+                    rot(4, 3)
+                ]
+                flat_jet = [coord for pt in jet_shape for coord in pt]
+                self.canvas.create_polygon(flat_jet, fill="#38BDF8", outline="", tags=("dyn_aircraft", "map_pan"))
+
+    def _redraw_dynamic_overlays_only(self, cur_base_sig):
+        w = max(self.canvas.winfo_width(), 400)
+        h = max(self.canvas.winfo_height(), 320)
+        cos_lat = max(0.15, math.cos(math.radians(self.center_lat)))
+        pal = self._get_palette()
+        _proj, use_hdg_up, _, _, _, _ = self._build_projection(w, h, cos_lat)
+
+        tail_sig = self._compute_route_tail_sig(cur_base_sig)
+        need_tail_redraw = (tail_sig != getattr(self, "_last_route_tail_sig", None))
+
+        self.canvas.delete("dyn_aircraft")
+        if need_tail_redraw:
+            self.canvas.delete("dyn_route")
+            self._draw_route_layer(_proj, pal)
+            self._last_route_tail_sig = tail_sig
+            if self.canvas.find_withtag("dyn_route"):
+                if self.canvas.find_withtag("above_route"):
+                    self.canvas.tag_lower("dyn_route", "above_route")
+                elif self.canvas.find_withtag("hud_top"):
+                    self.canvas.tag_lower("dyn_route", "hud_top")
+        else:
+            self.canvas.delete("dyn_route_head")
+            tr = (self.airport_data.get("taxi_route") or {}) if self.airport_data else {}
+            r_pts = tr.get("route_points") or []
+            if len(r_pts) >= 2:
+                self._draw_route_head(_proj, pal, r_pts[0:2])
+                top_anchor = "above_route" if self.canvas.find_withtag("above_route") else (
+                    "hud_top" if self.canvas.find_withtag("hud_top") else None
+                )
+                if self.canvas.find_withtag("dyn_route_head_arrow") and top_anchor:
+                    self.canvas.tag_lower("dyn_route_head_arrow", top_anchor)
+                main_anchor = "dyn_route_over_main" if self.canvas.find_withtag("dyn_route_over_main") else top_anchor
+                if self.canvas.find_withtag("dyn_route_head_main") and main_anchor:
+                    self.canvas.tag_lower("dyn_route_head_main", main_anchor)
+                if self.canvas.find_withtag("dyn_route_head_glow") and self.canvas.find_withtag("dyn_route_main"):
+                    self.canvas.tag_lower("dyn_route_head_glow", "dyn_route_main")
+
+        self._draw_aircraft_layer(_proj, w, h, use_hdg_up)
+        if self.canvas.find_withtag("dyn_aircraft"):
+            if self.canvas.find_withtag("hud_top"):
+                self.canvas.tag_lower("dyn_aircraft", "hud_top")
+            elif self.canvas.find_withtag("stand_hover_tooltip"):
+                self.canvas.tag_lower("dyn_aircraft", "stand_hover_tooltip")
+
     def redraw(self):
-        self._last_draw_sig = self._compute_draw_sig()
+        cur_full_sig = self._compute_draw_sig()
+        cur_base_sig = cur_full_sig[0]
+        if (
+            getattr(self, "_base_canvas_valid", False)
+            and not self._drag_start
+            and float(getattr(self, "_pan_accum_px", 0.0) or 0.0) == 0.0
+            and self.chart_data
+            and cur_base_sig == getattr(self, "_last_base_draw_sig", None)
+            and bool(self.canvas.find_withtag("hud_top"))
+        ):
+            self._last_draw_sig = cur_full_sig
+            self._redraw_dynamic_overlays_only(cur_base_sig)
+            return
+
+        self._last_draw_sig = cur_full_sig
+        self._last_base_draw_sig = cur_base_sig
+        self._last_route_tail_sig = self._compute_route_tail_sig(cur_base_sig)
+        self._pan_accum_px = 0.0
         self.canvas.delete("all")
         self._stand_hitboxes = []
         self._rwy_hitboxes = []
+        self._twy_hitboxes = []
         pal = self._get_palette()
         cam = self._get_airline_camaieu()
         if getattr(self, "_last_canvas_bg", None) != pal["bg"]:
@@ -2862,6 +3724,8 @@ class LidoVectorChart(ctk.CTkFrame):
             self.canvas.create_line(0, gy, w, gy, fill=pal["grid_line"], width=1)
 
         if not self.chart_data:
+            self._base_canvas_valid = False
+            self._last_route_tail_sig = None
             self.canvas.create_text(
                 w / 2, h / 2,
                 text="Vector Ground Chart loading or unavailable for this airport",
@@ -2869,129 +3733,155 @@ class LidoVectorChart(ctk.CTkFrame):
             )
             return
 
-        # 1. Draw Aprons (Polygon layer)
-        apron_label_candidates = []
-        for apron in self.chart_data.get("aprons", []):
-            pts = apron.get("points", [])
-            if len(pts) >= 3:
-                flat = []
-                xs, ys = [], []
-                for p in pts:
-                    x, y = self._latlon_to_xy(p[0], p[1], w, h, cos_lat)
-                    flat.extend((x, y))
-                    xs.append(x)
-                    ys.append(y)
-                self.canvas.create_polygon(flat, fill=pal["apron_fill"], outline="")
-                ap_name = str(apron.get("name") or "").strip()
-                if ap_name and (max(xs) - min(xs) >= 55 or max(ys) - min(ys) >= 55):
-                    ap_u = ap_name.upper()
-                    if any(k in ap_u for k in ("APRON", "AIRE", "PARKING", "RAMP", "ZONE")):
-                        apron_label_candidates.append((ap_u, sum(xs) / len(xs), sum(ys) / len(ys)))
+        _proj, use_hdg_up, ac_hdg_s, cos_a, sin_a, frustum = self._build_projection(w, h, cos_lat)
+        v_min_lat, v_max_lat, v_min_lon, v_max_lon = frustum
+        rc = self._ensure_chart_render_caches()
+        map_tags = ("map_pan",)
 
-        # 2. Draw Taxiways & Taxilanes (3-pass seamless pavement: Borders -> Fills -> Centerlines)
-        twy_width = max(2.5, min(14.0, 18.0 / self.meters_per_pixel))
+        # 1. Draw Aprons (Polygon layer with geographic + screen frustum culling)
+        apron_label_candidates = []
+        for pts, min_la, max_la, min_lo, max_lo, ap_lbl_u in rc["aprons_meta"]:
+            if max_la < v_min_lat or min_la > v_max_lat or max_lo < v_min_lon or min_lo > v_max_lon:
+                continue
+            flat = []
+            min_x, max_x = 1e9, -1e9
+            min_y, max_y = 1e9, -1e9
+            sum_x = 0.0
+            sum_y = 0.0
+            for p in pts:
+                x, y = _proj(p[0], p[1])
+                flat.extend((x, y))
+                sum_x += x
+                sum_y += y
+                if x < min_x:
+                    min_x = x
+                if x > max_x:
+                    max_x = x
+                if y < min_y:
+                    min_y = y
+                if y > max_y:
+                    max_y = y
+            if max_x < -60 or min_x > w + 60 or max_y < -60 or min_y > h + 60:
+                continue
+            self.canvas.create_polygon(flat, fill=pal["apron_fill"], outline="", tags=map_tags)
+            if ap_lbl_u and (max_x - min_x >= 55 or max_y - min_y >= 55):
+                n_ap = len(pts)
+                apron_label_candidates.append((ap_lbl_u, sum_x / n_ap, sum_y / n_ap))
+
+        # 2. Draw Taxiways & Taxilanes (3-pass seamless pavement: Borders -> Fills -> Centerlines, with frustum culling)
+        mpp = self.meters_per_pixel
+        twy_width = max(2.5, min(14.0, 18.0 / mpp))
         twy_border_w = twy_width + 2.0
         twy_label_positions = []
         twy_labels_by_ref = {}
         twy_draw_items = []
-        twy_screen_segs = []
+        lane_w_line = max(1.8, twy_width * 0.65)
 
-        for twy in self.chart_data.get("taxiways", []):
-            pts = twy.get("points", [])
-            if len(pts) < 2:
+        for pts, min_la, max_la, min_lo, max_lo, is_lane, ref, ref_norm, cand_indices in rc["twys_meta"]:
+            if max_la < v_min_lat or min_la > v_max_lat or max_lo < v_min_lon or min_lo > v_max_lon:
                 continue
             flat = []
-            scr_pts = []
+            min_tx, max_tx = 1e9, -1e9
+            min_ty, max_ty = 1e9, -1e9
             for p in pts:
-                x, y = self._latlon_to_xy(p[0], p[1], w, h, cos_lat)
+                x, y = _proj(p[0], p[1])
                 flat.extend((x, y))
-                scr_pts.append((x, y))
-            is_lane = (twy.get("type") == "taxilane")
-            w_line = max(1.8, twy_width * 0.65) if is_lane else twy_width
+                if x < min_tx:
+                    min_tx = x
+                if x > max_tx:
+                    max_tx = x
+                if y < min_ty:
+                    min_ty = y
+                if y > max_ty:
+                    max_ty = y
+            if max_tx < -60 or min_tx > w + 60 or max_ty < -60 or min_ty > h + 60:
+                continue
+            w_line = lane_w_line if is_lane else twy_width
             twy_draw_items.append((flat, is_lane, w_line))
-            if not is_lane:
-                for k in range(len(scr_pts) - 1):
-                    twy_screen_segs.append((scr_pts[k][0], scr_pts[k][1], scr_pts[k + 1][0], scr_pts[k + 1][1]))
 
-            ref = (twy.get("ref") or "").strip()
-            if ref and len(ref) <= 7 and not is_lane:
-                n_pts = len(pts)
-                if n_pts >= 8:
-                    cand_indices = [n_pts // 4, n_pts // 2, (3 * n_pts) // 4]
-                else:
-                    cand_indices = [n_pts // 2]
+            if cand_indices:
                 for ci in cand_indices:
-                    mx, my = scr_pts[ci]
+                    mx = flat[ci * 2]
+                    my = flat[ci * 2 + 1]
                     if 30 < mx < w - 30 and 30 < my < h - 30:
                         same_list = twy_labels_by_ref.get(ref, ())
                         if any(math.hypot(mx - px, my - py) < 155.0 for px, py in same_list):
                             continue
-                        if any(math.hypot(mx - ox, my - oy) < 32.0 for _, ox, oy in twy_label_positions):
+                        if any(math.hypot(mx - ox, my - oy) < 32.0 for _, ox, oy, _ in twy_label_positions):
                             continue
                         twy_labels_by_ref.setdefault(ref, []).append((mx, my))
-                        twy_label_positions.append((ref, mx, my))
+                        twy_label_positions.append((ref, mx, my, ref_norm))
 
-        if self.meters_per_pixel < 5.0:
+        if mpp < 5.0:
             for flat, is_lane, _ in twy_draw_items:
                 if not is_lane:
-                    self.canvas.create_line(flat, fill=pal["twy_border"], width=twy_border_w, capstyle="round", joinstyle="round")
+                    self.canvas.create_line(
+                        flat, fill=pal["twy_border"], width=twy_border_w,
+                        capstyle="round", joinstyle="round", tags=map_tags
+                    )
         for flat, _, w_line in twy_draw_items:
-            self.canvas.create_line(flat, fill=pal["twy_fill"], width=w_line, capstyle="round", joinstyle="round")
-        if self.meters_per_pixel < 3.8:
-            center_w = 1.35 if self.meters_per_pixel < 1.8 else 1.15
+            self.canvas.create_line(
+                flat, fill=pal["twy_fill"], width=w_line,
+                capstyle="round", joinstyle="round", tags=map_tags
+            )
+        if mpp < 3.8:
+            center_w = 1.35 if mpp < 1.8 else 1.15
             for flat, is_lane, _ in twy_draw_items:
                 self.canvas.create_line(
                     flat,
                     fill=pal["twy_center"],
                     width=1.0 if is_lane else center_w,
                     capstyle="round",
-                    joinstyle="round"
+                    joinstyle="round",
+                    tags=map_tags
                 )
 
         # 3. Draw Terminal Buildings (Pitch-black Lido AMM silhouettes) & collect Terminal / Pier labels
         term_poly_labels = []
         seen_term_labels = set()
-        term_screen_polys = []
-        for term in self.chart_data.get("terminals", []):
-            pts = term.get("points", [])
-            if len(pts) >= 3:
-                flat = []
-                xs, ys = [], []
-                for p in pts:
-                    x, y = self._latlon_to_xy(p[0], p[1], w, h, cos_lat)
-                    flat.extend((x, y))
-                    xs.append(x)
-                    ys.append(y)
-                self.canvas.create_polygon(flat, fill=pal["term_fill"], outline=pal["term_outline"], width=1)
-                term_screen_polys.append((xs, ys))
-                raw_tn = str(term.get("name") or "").strip()
-                if raw_tn and (max(xs) - min(xs) >= 36 or max(ys) - min(ys) >= 36):
-                    if re.search(r'terminal|term|orly\s*\d|hall|concourse|pier|sat|dock|jet[eé]e', raw_tn, re.I) and not re.search(r'sslia|pompier|fire|tower|tour\s+de|hangar|servair|fret|wfs', raw_tn, re.I):
-                        clean_tn = re.sub(r'\s*\([^)]*\)', '', raw_tn).strip()
-                        clean_tn = re.sub(r'^(?:a[eé]rogare|a[eé]roport|b[aâ]timent)\s+(?:d[\'\u2019]|de\s+|du\s+)?', '', clean_tn, flags=re.I).strip().upper()
-                        if clean_tn == "ORLY 1 ET 2":
-                            sw_x = min(xs) + 0.34 * (max(xs) - min(xs))
-                            sw_y = min(ys) + 0.68 * (max(ys) - min(ys))
-                            ne_x = min(xs) + 0.66 * (max(xs) - min(xs))
-                            ne_y = min(ys) + 0.32 * (max(ys) - min(ys))
-                            if "ORLY 1" not in seen_term_labels:
-                                term_poly_labels.append(("ORLY 1", sw_x, sw_y))
-                                seen_term_labels.add("ORLY 1")
-                            if "ORLY 2" not in seen_term_labels:
-                                term_poly_labels.append(("ORLY 2", ne_x, ne_y))
-                                seen_term_labels.add("ORLY 2")
-                        else:
-                            m_short = re.match(r'^((?:TERMINAL|TERM|PIER|CONCOURSE|HALL|SAT(?:ELLITE)?|DOCK|JET[EÉ]E)\s*(?:[0-9]{1,2}[A-Z]?|[A-Z]\b)?)', clean_tn)
-                            if m_short and len(clean_tn) > 16:
-                                clean_tn = m_short.group(1).strip()
-                            elif len(clean_tn) > 22:
-                                clean_tn = clean_tn[:22].strip()
-                            if clean_tn and clean_tn not in seen_term_labels:
-                                term_poly_labels.append((clean_tn, sum(xs) / len(xs), sum(ys) / len(ys)))
-                                seen_term_labels.add(clean_tn)
+        for pts, min_la, max_la, min_lo, max_lo, clean_tn in rc["terms_meta"]:
+            if max_la < v_min_lat or min_la > v_max_lat or max_lo < v_min_lon or min_lo > v_max_lon:
+                continue
+            flat = []
+            min_x, max_x = 1e9, -1e9
+            min_y, max_y = 1e9, -1e9
+            sum_x = 0.0
+            sum_y = 0.0
+            for p in pts:
+                x, y = _proj(p[0], p[1])
+                flat.extend((x, y))
+                sum_x += x
+                sum_y += y
+                if x < min_x:
+                    min_x = x
+                if x > max_x:
+                    max_x = x
+                if y < min_y:
+                    min_y = y
+                if y > max_y:
+                    max_y = y
+            if max_x < -60 or min_x > w + 60 or max_y < -60 or min_y > h + 60:
+                continue
+            self.canvas.create_polygon(flat, fill=pal["term_fill"], outline=pal["term_outline"], width=1, tags=map_tags)
+            if clean_tn and (max_x - min_x >= 36 or max_y - min_y >= 36):
+                if clean_tn == "ORLY 1 ET 2":
+                    sw_x = min_x + 0.34 * (max_x - min_x)
+                    sw_y = min_y + 0.68 * (max_y - min_y)
+                    ne_x = min_x + 0.66 * (max_x - min_x)
+                    ne_y = min_y + 0.32 * (max_y - min_y)
+                    if "ORLY 1" not in seen_term_labels:
+                        term_poly_labels.append(("ORLY 1", sw_x, sw_y))
+                        seen_term_labels.add("ORLY 1")
+                    if "ORLY 2" not in seen_term_labels:
+                        term_poly_labels.append(("ORLY 2", ne_x, ne_y))
+                        seen_term_labels.add("ORLY 2")
+                elif clean_tn not in seen_term_labels:
+                    n_t = len(pts)
+                    term_poly_labels.append((clean_tn, sum_x / n_t, sum_y / n_t))
+                    seen_term_labels.add(clean_tn)
 
         # 4. Draw Runways (Authentic Lido AMM / Navigraph Runway Surface, Edge Stripes, Piano Keys, Aiming Points & Crisp Vector Centerline)
-        rwy_w = max(8.0, min(34.0, 45.0 / self.meters_per_pixel))
+        rwy_w = max(8.0, min(34.0, 45.0 / mpp))
         active_rwy = (self.airport_data.get("selected_runway") or "").upper() if self.airport_data else ""
         rwy_threshold_badges = []
 
@@ -3002,14 +3892,20 @@ class LidoVectorChart(ctk.CTkFrame):
             flat = []
             screen_rwy_pts = []
             for p in pts:
-                x, y = self._latlon_to_xy(p[0], p[1], w, h, cos_lat)
+                x, y = _proj(p[0], p[1])
                 flat.extend((x, y))
                 screen_rwy_pts.append((x, y))
             is_selected_rwy = active_rwy in rwy.get("ends", {})
             outline_col = pal["rwy_circle_ring"] if is_selected_rwy else pal["rwy_outline"]
             border_extra = 3.2 if is_selected_rwy else 2.2
-            self.canvas.create_line(flat, fill=outline_col, width=rwy_w + border_extra, capstyle="butt", joinstyle="miter")
-            self.canvas.create_line(flat, fill=pal["rwy_fill"], width=rwy_w, capstyle="butt", joinstyle="miter")
+            self.canvas.create_line(
+                flat, fill=outline_col, width=rwy_w + border_extra,
+                capstyle="butt", joinstyle="miter", tags=map_tags
+            )
+            self.canvas.create_line(
+                flat, fill=pal["rwy_fill"], width=rwy_w,
+                capstyle="butt", joinstyle="miter", tags=map_tags
+            )
 
             p_start = screen_rwy_pts[0]
             p_end = screen_rwy_pts[-1]
@@ -3038,13 +3934,13 @@ class LidoVectorChart(ctk.CTkFrame):
                         ep1 = _rwy_pt(rwy_px_len - e_pad, side_sign * edge_off)
                         self.canvas.create_line(
                             ep0[0], ep0[1], ep1[0], ep1[1],
-                            fill=pal.get("rwy_edge", mark_col), width=1.0, capstyle="butt"
+                            fill=pal.get("rwy_edge", mark_col), width=1.0, capstyle="butt", tags=map_tags
                         )
 
                 # 4b. Threshold "Piano Keys" (Peignes de seuil) at both ends
                 if rwy_w >= 9.0 and rwy_px_len > 75.0:
                     pk_start = 17.5
-                    pk_len = max(5.5, min(13.0, 26.0 / self.meters_per_pixel))
+                    pk_len = max(5.5, min(13.0, 26.0 / mpp))
                     n_pairs = 3 if rwy_w < 16.0 else 4
                     max_lat_off = (rwy_w * 0.5) - 2.4
                     min_lat_off = max(1.3, rwy_w * 0.08)
@@ -3053,48 +3949,46 @@ class LidoVectorChart(ctk.CTkFrame):
                         t_frac = i_pk / float(max(1, n_pairs - 1)) if n_pairs > 1 else 0.5
                         lat_d = min_lat_off + t_frac * (max_lat_off - min_lat_off)
                         for side_s in (-1.0, 1.0):
-                            # Start threshold piano key
                             k0 = _rwy_pt(pk_start, side_s * lat_d)
                             k1 = _rwy_pt(pk_start + pk_len, side_s * lat_d)
-                            self.canvas.create_line(k0[0], k0[1], k1[0], k1[1], fill=mark_col, width=stripe_w, capstyle="butt")
-                            # End threshold piano key
+                            self.canvas.create_line(k0[0], k0[1], k1[0], k1[1], fill=mark_col, width=stripe_w, capstyle="butt", tags=map_tags)
                             ke0 = _rwy_pt(rwy_px_len - pk_start - pk_len, side_s * lat_d)
                             ke1 = _rwy_pt(rwy_px_len - pk_start, side_s * lat_d)
-                            self.canvas.create_line(ke0[0], ke0[1], ke1[0], ke1[1], fill=mark_col, width=stripe_w, capstyle="butt")
+                            self.canvas.create_line(ke0[0], ke0[1], ke1[0], ke1[1], fill=mark_col, width=stripe_w, capstyle="butt", tags=map_tags)
 
                 # 4c. Aiming Point Blocks (~300m from threshold) & Touchdown Zone (TDZ) Bars
                 if rwy_w >= 10.0 and rwy_px_len > 140.0:
-                    aim_d = min(rwy_px_len * 0.22, max(36.0, 290.0 / self.meters_per_pixel))
-                    aim_len = max(6.5, min(16.0, 42.0 / self.meters_per_pixel))
+                    aim_d = min(rwy_px_len * 0.22, max(36.0, 290.0 / mpp))
+                    aim_len = max(6.5, min(16.0, 42.0 / mpp))
                     aim_lat = rwy_w * 0.22
                     aim_w = max(1.8, min(3.6, rwy_w * 0.13))
                     for side_s in (-1.0, 1.0):
                         a0 = _rwy_pt(aim_d, side_s * aim_lat)
                         a1 = _rwy_pt(aim_d + aim_len, side_s * aim_lat)
-                        self.canvas.create_line(a0[0], a0[1], a1[0], a1[1], fill=mark_col, width=aim_w, capstyle="butt")
+                        self.canvas.create_line(a0[0], a0[1], a1[0], a1[1], fill=mark_col, width=aim_w, capstyle="butt", tags=map_tags)
                         ae0 = _rwy_pt(rwy_px_len - aim_d - aim_len, side_s * aim_lat)
                         ae1 = _rwy_pt(rwy_px_len - aim_d, side_s * aim_lat)
-                        self.canvas.create_line(ae0[0], ae0[1], ae1[0], ae1[1], fill=mark_col, width=aim_w, capstyle="butt")
+                        self.canvas.create_line(ae0[0], ae0[1], ae1[0], ae1[1], fill=mark_col, width=aim_w, capstyle="butt", tags=map_tags)
 
-                    if self.meters_per_pixel <= 3.2 and rwy_px_len > 220.0:
-                        tdz_len = max(4.5, min(10.0, 20.0 / self.meters_per_pixel))
+                    if mpp <= 3.2 and rwy_px_len > 220.0:
+                        tdz_len = max(4.5, min(10.0, 20.0 / mpp))
                         tdz_w = max(1.2, min(2.2, rwy_w * 0.08))
                         for tdz_d in (aim_d * 0.58, aim_d * 1.42):
                             if 30.0 < tdz_d < (rwy_px_len * 0.42):
                                 for side_s in (-1.0, 1.0):
                                     t0 = _rwy_pt(tdz_d, side_s * aim_lat)
                                     t1 = _rwy_pt(tdz_d + tdz_len, side_s * aim_lat)
-                                    self.canvas.create_line(t0[0], t0[1], t1[0], t1[1], fill=mark_col, width=tdz_w, capstyle="butt")
+                                    self.canvas.create_line(t0[0], t0[1], t1[0], t1[1], fill=mark_col, width=tdz_w, capstyle="butt", tags=map_tags)
                                     te0 = _rwy_pt(rwy_px_len - tdz_d - tdz_len, side_s * aim_lat)
                                     te1 = _rwy_pt(rwy_px_len - tdz_d, side_s * aim_lat)
-                                    self.canvas.create_line(te0[0], te0[1], te1[0], te1[1], fill=mark_col, width=tdz_w, capstyle="butt")
+                                    self.canvas.create_line(te0[0], te0[1], te1[0], te1[1], fill=mark_col, width=tdz_w, capstyle="butt", tags=map_tags)
 
                 # 4d. Crisp Vector Long Runway Centerline Dashes (no broken Windows GDI dots)
                 cl_margin = min(rwy_px_len * 0.42, 34.0 if rwy_w >= 9.0 else 20.0)
                 cl_span = rwy_px_len - (2.0 * cl_margin)
                 if cl_span > 12.0:
-                    dash_len = max(13.0, min(26.0, 32.0 / self.meters_per_pixel))
-                    gap_len = max(8.5, min(17.0, 20.0 / self.meters_per_pixel))
+                    dash_len = max(13.0, min(26.0, 32.0 / mpp))
+                    gap_len = max(8.5, min(17.0, 20.0 / mpp))
                     step_len = dash_len + gap_len
                     cl_w = 1.6 if rwy_w >= 12.0 else 1.25
                     cur_d = cl_margin
@@ -3105,122 +3999,81 @@ class LidoVectorChart(ctk.CTkFrame):
                             c1 = _rwy_pt(seg_end, 0.0)
                             self.canvas.create_line(
                                 c0[0], c0[1], c1[0], c1[1],
-                                fill=pal["rwy_center"], width=cl_w, capstyle="butt"
+                                fill=pal["rwy_center"], width=cl_w, capstyle="butt", tags=map_tags
                             )
                         cur_d += step_len
 
             for end_id, end_info in rwy.get("ends", {}).items():
-                ex, ey = self._latlon_to_xy(end_info["lat"], end_info["lon"], w, h, cos_lat)
+                ex, ey = _proj(end_info["lat"], end_info["lon"])
                 is_act = (end_id == active_rwy)
                 rwy_hdg = float(end_info.get("heading") or 0.0)
                 rwy_threshold_badges.append((ex, ey, end_id, is_act, rwy_hdg))
 
         # 4e. Draw Perpendicular ICAO Hold-Short Bars across taxiways at holding points
-        if self.meters_per_pixel <= 3.8:
+        if mpp <= 3.8:
             hb_half = max(3.6, min(8.0, twy_width * 0.52))
-            for hp in self.chart_data.get("holding_points", []):
-                hlat, hlon = hp.get("lat"), hp.get("lon")
-                if hlat is not None and hlon is not None:
-                    hx, hy = self._latlon_to_xy(hlat, hlon, w, h, cos_lat)
-                    if 10 < hx < w - 10 and 10 < hy < h - 10:
-                        best_d2 = 324.0  # 18px radius
+            max_hold_dist_m = 18.0 * mpp
+            hb_border_col = pal.get("hold_bar_border", "#090D16")
+            hb_col = pal["hold_bar"]
+            for hlat, hlon, best_dist_m, tx_n, ty_n in rc["holding_meta"]:
+                if hlat < v_min_lat or hlat > v_max_lat or hlon < v_min_lon or hlon > v_max_lon:
+                    continue
+                hx, hy = _proj(hlat, hlon)
+                if 10 < hx < w - 10 and 10 < hy < h - 10:
+                    if best_dist_m < max_hold_dist_m:
+                        if use_hdg_up:
+                            best_tx = tx_n * cos_a - ty_n * sin_a
+                            best_ty = tx_n * sin_a + ty_n * cos_a
+                        else:
+                            best_tx, best_ty = tx_n, ty_n
+                        best_nx = -best_ty
+                        best_ny = best_tx
+                    else:
                         best_nx, best_ny = 0.98, 0.18
                         best_tx, best_ty = -0.18, 0.98
-                        for sx0, sy0, sx1, sy1 in twy_screen_segs:
-                            sdx = sx1 - sx0
-                            sdy = sy1 - sy0
-                            slen2 = sdx * sdx + sdy * sdy
-                            if slen2 < 1.0:
-                                continue
-                            t_p = max(0.0, min(1.0, ((hx - sx0) * sdx + (hy - sy0) * sdy) / slen2))
-                            px_s = sx0 + t_p * sdx
-                            py_s = sy0 + t_p * sdy
-                            d2 = (hx - px_s) ** 2 + (hy - py_s) ** 2
-                            if d2 < best_d2:
-                                best_d2 = d2
-                                slen = math.sqrt(slen2)
-                                best_tx = sdx / slen
-                                best_ty = sdy / slen
-                                best_nx = -best_ty
-                                best_ny = best_tx
-                        hx0 = hx - best_nx * hb_half
-                        hy0 = hy - best_ny * hb_half
-                        hx1 = hx + best_nx * hb_half
-                        hy1 = hy + best_ny * hb_half
+                    hx0 = hx - best_nx * hb_half
+                    hy0 = hy - best_ny * hb_half
+                    hx1 = hx + best_nx * hb_half
+                    hy1 = hy + best_ny * hb_half
+                    self.canvas.create_line(
+                        hx0, hy0, hx1, hy1,
+                        fill=hb_border_col, width=3.4, capstyle="butt", tags=map_tags
+                    )
+                    self.canvas.create_line(
+                        hx0, hy0, hx1, hy1,
+                        fill=hb_col, width=1.9, capstyle="butt", tags=map_tags
+                    )
+                    if mpp <= 1.8:
+                        off_t = 2.4
                         self.canvas.create_line(
-                            hx0, hy0, hx1, hy1,
-                            fill=pal.get("hold_bar_border", "#090D16"), width=3.4, capstyle="butt"
+                            hx0 + best_tx * off_t, hy0 + best_ty * off_t,
+                            hx1 + best_tx * off_t, hy1 + best_ty * off_t,
+                            fill=hb_col, width=1.4, capstyle="butt", tags=map_tags
                         )
-                        self.canvas.create_line(
-                            hx0, hy0, hx1, hy1,
-                            fill=pal["hold_bar"], width=1.9, capstyle="butt"
-                        )
-                        if self.meters_per_pixel <= 1.8:
-                            off_t = 2.4
-                            self.canvas.create_line(
-                                hx0 + best_tx * off_t, hy0 + best_ty * off_t,
-                                hx1 + best_tx * off_t, hy1 + best_ty * off_t,
-                                fill=pal["hold_bar"], width=1.4, capstyle="butt"
-                            )
 
         # 5. Draw Stands (Authentic Lido AMM Oriented Pentagonal / Triangular-Nose Stand Tags)
-        #    and aggregate Terminal / Pier / Apron labels from stand groups
         assigned_gate = str(self.airport_data.get("gate", "")).replace(" ", "").upper() if self.airport_data else ""
         assigned_norm = re.sub(r'([A-Z]*)0+(\d+)', r'\1\2', assigned_gate)
         assigned_digits = "".join(c for c in assigned_gate if c.isdigit())
         gx_pin, gy_pin = None, None
         if self.airport_data and self.airport_data.get("lat") is not None and self.airport_data.get("lon") is not None:
-            gx_pin, gy_pin = self._latlon_to_xy(float(self.airport_data["lat"]), float(self.airport_data["lon"]), w, h, cos_lat)
+            gx_pin, gy_pin = _proj(float(self.airport_data["lat"]), float(self.airport_data["lon"]))
 
-        use_hdg_up = bool(
-            self.follow_aircraft
-            and self.heading_up
-            and not self._is_airborne()
-            and self.user_aircraft
-            and self.user_aircraft.get("connected")
-        )
-        ac_hdg_s = float(self.user_aircraft.get("heading") or 0.0) if use_hdg_up else 0.0
+        all_stands_meta = rc["stands_meta"]
 
-        # Gather terminal/pier clusters and lettered Apron clusters from stands
-        stand_term_groups = {}   # term_upper -> list of (sx, sy, cos_r, sin_r)
-        stand_apron_groups = {}  # letter_prefix -> list of (sx, sy, cos_r, sin_r)
-        all_stands_list = self.chart_data.get("stands", [])
-
-        for st in all_stands_list:
-            s_ref = str(st.get("ref", "")).strip()
-            if not s_ref or st.get("lat") is None or st.get("lon") is None:
-                continue
-            sx_g, sy_g = self._latlon_to_xy(st["lat"], st["lon"], w, h, cos_lat)
-            s_hdg_g = st.get("heading")
-            vis_hdg_g = ((float(s_hdg_g) - ac_hdg_s) if use_hdg_up else float(s_hdg_g)) if s_hdg_g is not None else 0.0
-            rad_g = math.radians(vis_hdg_g - 90.0)
-            cr_g, sr_g = math.cos(rad_g), math.sin(rad_g)
-
-            raw_t = str(st.get("terminal") or "").strip()
-            if raw_t:
-                t_u = re.sub(r'\s*\([^)]*\)', '', raw_t).strip().upper()
-                if t_u and t_u not in ("MAIN APRON", "OTHER", "CARGO APRON", "GENERAL AVIATION", "ORLY 1 ET 2") and not t_u.startswith("ZONE "):
-                    stand_term_groups.setdefault(t_u, []).append((sx_g, sy_g, cr_g, sr_g))
-
-            s_clean_g = re.sub(r'^(?:STAND|GATE|PARKING|RAMP|DOCK|APRON)\s*', '', s_ref.upper()).replace(" ", "")
-            m_ap = re.match(r'^([A-Z])\d{1,3}[A-Z]?$', s_clean_g)
-            if m_ap:
-                ap_letter = m_ap.group(1)
-                stand_apron_groups.setdefault(ap_letter, []).append((sx_g, sy_g, cr_g, sr_g))
-
-        def _draw_lido_stand_tag(sx, sy, s_disp, vis_hdg, fill_col, border_col, fg_col, sc_mult=1.0, border_w=1.6, logo_codes=None):
+        def _draw_lido_stand_tag(sx, sy, s_disp, vis_hdg, fill_col, border_col, fg_col, sc_mult=1.0, border_w=1.6, logo_codes=None, item_tags=map_tags):
             s_rad = math.radians(vis_hdg - 90.0)
             cos_r, sin_r = math.cos(s_rad), math.sin(s_rad)
             perp_x, perp_y = -sin_r, cos_r
 
-            sc = max(0.70, min(1.38, (1.05 / (max(0.24, self.meters_per_pixel) ** 0.28)) * sc_mult))
+            sc = max(0.70, min(1.38, (1.05 / (max(0.24, mpp) ** 0.28)) * sc_mult))
             font_sz = 9 if sc >= 1.02 else (8 if sc >= 0.82 else 7)
             half_w = max(6.8, min(12.0, 8.4 * sc))
             text_len = max(17.0, len(s_disp) * (font_sz * 0.72) + 7.5)
             body_back = text_len * 0.52
             body_front = text_len * 0.48
             nose_len = max(7.0, min(13.5, 9.2 * sc))
-            tail_line = body_back + max(5.0, min(16.0, 8.0 / max(0.35, self.meters_per_pixel)))
+            tail_line = body_back + max(5.0, min(16.0, 8.0 / max(0.35, mpp)))
 
             def _pt(along, across):
                 return (
@@ -3231,7 +4084,7 @@ class LidoVectorChart(ctk.CTkFrame):
             # 1. Yellow/Amber stand lead-in line from taxilane into rear of stand tag
             t0x, t0y = _pt(-tail_line, 0.0)
             t1x, t1y = _pt(-body_back, 0.0)
-            self.canvas.create_line(t0x, t0y, t1x, t1y, fill=pal["twy_center"], width=1.4, capstyle="round")
+            self.canvas.create_line(t0x, t0y, t1x, t1y, fill=pal["twy_center"], width=1.4, capstyle="round", tags=item_tags)
 
             # 2. Rectangular body of the Lido AMM stand tag
             b_rl = _pt(-body_back, -half_w)
@@ -3240,14 +4093,14 @@ class LidoVectorChart(ctk.CTkFrame):
             b_rr = _pt(-body_back, +half_w)
             self.canvas.create_polygon(
                 [b_rl[0], b_rl[1], b_fl[0], b_fl[1], b_fr[0], b_fr[1], b_rr[0], b_rr[1]],
-                fill=fill_col, outline=border_col, width=border_w, joinstyle="miter"
+                fill=fill_col, outline=border_col, width=border_w, joinstyle="miter", tags=item_tags
             )
 
             # 3. Triangular directional nose cone sharing the front edge of the tag body
             n_tip = _pt(body_front + nose_len, 0.0)
             self.canvas.create_polygon(
                 [b_fl[0], b_fl[1], n_tip[0], n_tip[1], b_fr[0], b_fr[1]],
-                fill=fill_col, outline=border_col, width=border_w, joinstyle="miter"
+                fill=fill_col, outline=border_col, width=border_w, joinstyle="miter", tags=item_tags
             )
 
             # 4. Rotated stand designator text (always right-side-up)
@@ -3264,21 +4117,20 @@ class LidoVectorChart(ctk.CTkFrame):
                 text=s_disp,
                 fill=fg_col,
                 font=("Arial", font_sz, "bold"),
-                angle=txt_angle
+                angle=txt_angle,
+                tags=item_tags
             )
 
             all_x = [b_rl[0], b_fl[0], b_fr[0], b_rr[0], n_tip[0]]
             all_y = [b_rl[1], b_fl[1], b_fr[1], b_rr[1], n_tip[1]]
 
             # 5. Airline icon(s) displayed right in front of the triangular tip ("devant la pointe des markers")
-            #    Applies a progressive scale multiplier (up to 1.45x) when the user zooms in to maximum zoom
-            if logo_codes and self.backend and self.meters_per_pixel <= 2.6:
-                logo_zoom_mult = 1.0 + 0.45 * max(0.0, min(1.0, (0.85 - self.meters_per_pixel) / 0.65))
+            if logo_codes and self.backend and (sc_mult > 1.05 or mpp <= 3.2):
+                logo_zoom_mult = 1.0 + 0.45 * max(0.0, min(1.0, (0.85 - mpp) / 0.65))
                 raw_lh = (18.0 if sc_mult > 1.05 else 13.5) * sc * logo_zoom_mult
                 max_lh_cap = 34 if sc_mult > 1.05 else 28
                 logo_h = max(12, min(max_lh_cap, int(round(raw_lh / 2.0)) * 2))
-                logo_w = int(round(logo_h * 1.16))
-                max_logos = 2 if (self.meters_per_pixel <= 0.85 and sc_mult <= 1.05) else 1
+                max_logos = 2 if (mpp <= 0.85 and sc_mult <= 1.05) else 1
                 logo_imgs = []
                 for al_c in logo_codes:
                     tk_l = self._get_tk_logo(al_c, size=logo_h)
@@ -3290,75 +4142,74 @@ class LidoVectorChart(ctk.CTkFrame):
                 for idx_l, tk_l in enumerate(logo_imgs):
                     l_along = tip_along + 2.8 + (logo_h * 0.56) + idx_l * (logo_h + 2.0)
                     lx, ly = _pt(l_along, 0.0)
-                    self.canvas.create_image(lx, ly, image=tk_l)
+                    self.canvas.create_image(lx, ly, image=tk_l, tags=item_tags)
 
             return min(all_x), min(all_y), max(all_x), max(all_y)
 
-        # Dynamic LOD: Hide individual neighboring stands when zoomed out in global view (> 1.55 m/px)
-        # so only terminal names, main taxiways, runways, and the assigned stand remain visible.
+        # Dynamic LOD: Hide individual neighboring stands when zoomed out in global view
         drawn_stand_boxes = []
-        if self.meters_per_pixel <= 1.55:
-            for st in all_stands_list:
-                s_ref = str(st.get("ref", "")).strip()
-                if not s_ref:
+        n_total_stands = len(self.chart_data.get("stands") or ())
+        is_sparse_airport = n_total_stands <= 15
+        max_stand_lod_mpp = 5.5 if n_total_stands <= 65 else 3.2
+        pin_cull_px = 6.0 if is_sparse_airport else 16.0
+        if mpp <= max_stand_lod_mpp:
+            if is_sparse_airport:
+                lat_thr = 6.0
+                lon_thr = 8.0
+            else:
+                lat_thr = 11.5 if mpp < 1.2 else (14.5 if mpp <= 2.0 else 20.0)
+                lon_thr = 22.0 if mpp < 1.2 else 28.0
+            for slat, slon, s_ref, s_clean, s_norm, s_disp, s_hdg, st_als, st_term in all_stands_meta:
+                if slat < v_min_lat or slat > v_max_lat or slon < v_min_lon or slon > v_max_lon:
                     continue
-                s_clean = s_ref.replace(" ", "").upper()
-                s_norm = re.sub(r'([A-Z]*)0+(\d+)', r'\1\2', s_clean)
                 if s_clean == assigned_gate or s_norm == assigned_norm or (assigned_digits and s_clean == assigned_digits):
                     continue
-                sx, sy = self._latlon_to_xy(st["lat"], st["lon"], w, h, cos_lat)
+                sx, sy = _proj(slat, slon)
                 if not (14 < sx < w - 14 and 14 < sy < h - 14):
                     continue
-                if gx_pin is not None and math.hypot(sx - gx_pin, sy - gy_pin) < 16:
+                if gx_pin is not None and math.hypot(sx - gx_pin, sy - gy_pin) < pin_cull_px:
                     continue
 
-                s_hdg = st.get("heading")
-                vis_s_hdg = ((float(s_hdg) - ac_hdg_s) if use_hdg_up else float(s_hdg)) if s_hdg is not None else 0.0
+                vis_s_hdg = ((s_hdg - ac_hdg_s) if use_hdg_up else s_hdg) if s_hdg is not None else 0.0
                 s_rad = math.radians(vis_s_hdg - 90.0)
                 cos_r, sin_r = math.cos(s_rad), math.sin(s_rad)
                 perp_x, perp_y = -sin_r, cos_r
 
-                # Oriented overlap check so side-by-side parallel stands (like C01, C02, C03) never cull each other
                 too_close = False
-                lat_thr = 11.5 if self.meters_per_pixel < 1.2 else (14.5 if self.meters_per_pixel <= 2.0 else 20.0)
-                lon_thr = 22.0 if self.meters_per_pixel < 1.2 else 28.0
                 for ox, oy in drawn_stand_boxes:
                     ddx, ddy = sx - ox, sy - oy
-                    d_along = abs(ddx * cos_r + ddy * sin_r)
-                    d_across = abs(ddx * perp_x + ddy * perp_y)
-                    if d_across < lat_thr and d_along < lon_thr:
+                    if abs(ddx * perp_x + ddy * perp_y) < lat_thr and abs(ddx * cos_r + ddy * sin_r) < lon_thr:
                         too_close = True
                         break
                 if too_close:
                     continue
                 drawn_stand_boxes.append((sx, sy))
 
-                s_disp = re.sub(r'^(?:STAND|GATE|PARKING|RAMP|DOCK)\s*', '', s_ref, flags=re.I).replace(" ", "").upper() or s_ref
-                st_als = st.get("airlines") or []
-                st_term = str(st.get("terminal") or "")
                 bx0, by0, bx1, by1 = _draw_lido_stand_tag(
                     sx, sy, s_disp, vis_s_hdg,
                     fill_col=pal["stand_bg"],
                     border_col=pal["stand_border"],
                     fg_col=pal["stand_fg"],
-                    logo_codes=st_als
+                    logo_codes=st_als,
+                    item_tags=map_tags
                 )
-                self._stand_hitboxes.append((bx0, by0, bx1, by1, s_ref, tuple(st_als), st_term, False))
+                self._stand_hitboxes.append((bx0, by0, bx1, by1, s_ref, st_als, st_term, False))
 
         # 5b. Draw Terminal / Pier Names & Apron Names (ORLY 3, ORLY 4, APRON B, APRON C, etc.)
         drawn_area_labels = []
-        if self.meters_per_pixel <= 6.5:
-            # Combine OSM terminal polygon names + inferred stand terminal/pier groups
+        if mpp <= 6.5:
             all_term_labels = list(term_poly_labels)
-            for t_name, grp in stand_term_groups.items():
-                if len(grp) < 2:
-                    continue
-                avg_x = sum(item[0] for item in grp) / len(grp)
-                avg_y = sum(item[1] for item in grp) / len(grp)
-                avg_cr = sum(item[2] for item in grp) / len(grp)
-                avg_sr = sum(item[3] for item in grp) / len(grp)
+            shift_px = max(24.0, min(52.0, 36.0 / max(0.4, mpp)))
+            for t_name, avg_lat, avg_lon, sum_cr_n, sum_sr_n, n_none_h, cnt in rc["term_clusters"]:
+                avg_x, avg_y = _proj(avg_lat, avg_lon)
+                if use_hdg_up:
+                    rot_cr = sum_cr_n * cos_a - sum_sr_n * sin_a
+                    rot_sr = sum_cr_n * sin_a + sum_sr_n * cos_a
+                else:
+                    rot_cr, rot_sr = sum_cr_n, sum_sr_n
+                avg_cr = rot_cr / cnt
+                avg_sr = (rot_sr - n_none_h) / cnt
                 norm_len = math.hypot(avg_cr, avg_sr) or 1.0
-                shift_px = max(24.0, min(52.0, 36.0 / max(0.4, self.meters_per_pixel)))
                 tx_lbl = avg_x + (avg_cr / norm_len) * shift_px
                 ty_lbl = avg_y + (avg_sr / norm_len) * shift_px
                 all_term_labels.append((t_name, tx_lbl, ty_lbl))
@@ -3372,24 +4223,23 @@ class LidoVectorChart(ctk.CTkFrame):
                 ):
                     continue
                 drawn_area_labels.append((t_lbl, tx_l, ty_l))
-                self.canvas.create_text(tx_l + 1, ty_l + 1, text=t_lbl, fill="#000000", font=("Arial", 10, "bold"))
-                self.canvas.create_text(tx_l, ty_l, text=t_lbl, fill=pal["term_text"], font=("Arial", 10, "bold"))
+                self.canvas.create_text(tx_l + 1, ty_l + 1, text=t_lbl, fill="#000000", font=("Arial", 10, "bold"), tags=map_tags)
+                self.canvas.create_text(tx_l, ty_l, text=t_lbl, fill=pal["term_text"], font=("Arial", 10, "bold"), tags=map_tags)
 
-        if self.meters_per_pixel <= 3.0:
-            for ap_letter, grp in sorted(stand_apron_groups.items()):
-                if len(grp) < 2:
-                    continue
-                ap_lbl = f"APRON {ap_letter}"
-                avg_x = sum(item[0] for item in grp) / len(grp)
-                avg_y = sum(item[1] for item in grp) / len(grp)
-                avg_cr = sum(item[2] for item in grp) / len(grp)
-                avg_sr = sum(item[3] for item in grp) / len(grp)
+        if mpp <= 3.0:
+            back_px = max(22.0, min(44.0, 28.0 / max(0.45, mpp)))
+            for ap_lbl, avg_lat, avg_lon, sum_cr_n, sum_sr_n, n_none_h, cnt in rc["apron_clusters"]:
+                avg_x, avg_y = _proj(avg_lat, avg_lon)
+                if use_hdg_up:
+                    rot_cr = sum_cr_n * cos_a - sum_sr_n * sin_a
+                    rot_sr = sum_cr_n * sin_a + sum_sr_n * cos_a
+                else:
+                    rot_cr, rot_sr = sum_cr_n, sum_sr_n
+                avg_cr = rot_cr / cnt
+                avg_sr = (rot_sr - n_none_h) / cnt
                 norm_len = math.hypot(avg_cr, avg_sr) or 1.0
-                # Offset behind the stands toward the apron taxilane (just like APRON B, C, D, E, F in Lido AMM)
-                back_px = max(22.0, min(44.0, 28.0 / max(0.45, self.meters_per_pixel)))
                 ax_l = avg_x - (avg_cr / norm_len) * back_px
                 ay_l = avg_y - (avg_sr / norm_len) * back_px
-                # Nudge if colliding with a drawn stand box
                 for ox, oy in drawn_stand_boxes:
                     if math.hypot(ax_l - ox, ay_l - oy) < 20.0:
                         ax_l -= (avg_cr / norm_len) * 16.0
@@ -3406,58 +4256,67 @@ class LidoVectorChart(ctk.CTkFrame):
                 ):
                     continue
                 drawn_area_labels.append((ap_lbl, ax_l, ay_l))
-                self.canvas.create_text(ax_l + 1, ay_l + 1, text=ap_lbl, fill="#090D14", font=("Arial", 8, "bold"))
-                self.canvas.create_text(ax_l, ay_l, text=ap_lbl, fill=pal["apron_text"], font=("Arial", 8, "bold"))
+                self.canvas.create_text(ax_l + 1, ay_l + 1, text=ap_lbl, fill="#090D14", font=("Arial", 8, "bold"), tags=map_tags)
+                self.canvas.create_text(ax_l, ay_l, text=ap_lbl, fill=pal["apron_text"], font=("Arial", 8, "bold"), tags=map_tags)
 
         # 6. Draw Active A* Taxi Route & Rollout Line
-        tr = (self.airport_data.get("taxi_route") or {}) if self.airport_data else {}
-        rollout_pts = tr.get("rollout_points", [])
-        if len(rollout_pts) >= 2:
-            r_flat = []
-            for p in rollout_pts:
-                rx, ry = self._latlon_to_xy(p[0], p[1], w, h, cos_lat)
-                r_flat.extend((rx, ry))
-            self.canvas.create_line(r_flat, fill=pal["rollout"], width=3.5, dash=(10, 6), capstyle="round")
+        xy_pts = self._draw_route_layer(_proj, pal)
 
-        route_pts = tr.get("route_points", [])
-        if len(route_pts) >= 2:
-            rt_flat = []
-            xy_pts = []
-            for p in route_pts:
-                rx, ry = self._latlon_to_xy(p[0], p[1], w, h, cos_lat)
-                rt_flat.extend((rx, ry))
-                xy_pts.append((rx, ry))
-            route_w = max(5.0, min(11.0, 14.0 / self.meters_per_pixel))
-            self.canvas.create_line(rt_flat, fill=pal["route_glow"], width=route_w + 4.0, capstyle="round", joinstyle="round")
-            self.canvas.create_line(rt_flat, fill=pal["route_main"], width=route_w, capstyle="round", joinstyle="round")
-
-            # Draw directional arrows along the taxi route every ~75 pixels
-            accum = 0.0
-            for i in range(len(xy_pts) - 1):
-                x1, y1 = xy_pts[i]
-                x2, y2 = xy_pts[i + 1]
-                seg = math.hypot(x2 - x1, y2 - y1)
-                accum += seg
-                if accum >= 70.0 and seg > 4.0:
-                    accum = 0.0
-                    mx, my = (x1 + x2) / 2.0, (y1 + y2) / 2.0
-                    ang = math.atan2(y2 - y1, x2 - x1)
-                    sz = 6.0
-                    p_tip = (mx + sz * math.cos(ang), my + sz * math.sin(ang))
-                    p_l = (mx + sz * math.cos(ang + 2.4), my + sz * math.sin(ang + 2.4))
-                    p_r = (mx + sz * math.cos(ang - 2.4), my + sz * math.sin(ang - 2.4))
-                    self.canvas.create_polygon([p_tip[0], p_tip[1], p_l[0], p_l[1], p_r[0], p_r[1]], fill=pal["route_arrow"], outline="")
-
-        # 7. Draw Taxiway Labels (Authentic Aviation Amber-Yellow EFB Sign Badges) on top of the taxiways
-        if self.meters_per_pixel < 5.2:
+        # 7. Draw Taxiway Labels (Authentic Aviation Amber-Yellow EFB Sign Badges + Route-Directional Selection Highlight)
+        above_tags = ("above_route", "map_pan")
+        if mpp < 8.5:
             lbl_border = pal.get("twy_label_border", "#0B111A")
-            for ref, mx, my in twy_label_positions:
+            is_custom_twy = bool((self.airport_data or {}).get("custom_taxi_mode"))
+            custom_via_raw = (self.airport_data or {}).get("atc_taxi_via") or []
+            custom_via_norms = [re.sub(r'[\s_\-]+', '', str(t).upper()) for t in custom_via_raw if t]
+
+            vis_twy_badges = []
+            for ref, mx, my, ref_norm in twy_label_positions:
                 if any(math.hypot(mx - rx, my - ry) < 25.0 for rx, ry, _, _, _ in rwy_threshold_badges):
                     continue
+                vis_twy_badges.append((ref, mx, my, ref_norm))
+
+            def _dist_to_route_px(px, py):
+                if len(xy_pts) < 2:
+                    return 0.0
+                best_d = float("inf")
+                for i_s in range(len(xy_pts) - 1):
+                    x1, y1 = xy_pts[i_s]
+                    x2, y2 = xy_pts[i_s + 1]
+                    dx, dy = x2 - x1, y2 - y1
+                    l_sq = dx * dx + dy * dy
+                    if l_sq <= 1e-6:
+                        d_s = math.hypot(px - x1, py - y1)
+                    else:
+                        t_proj = max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / l_sq))
+                        d_s = math.hypot(px - (x1 + t_proj * dx), py - (y1 + t_proj * dy))
+                    if d_s < best_d:
+                        best_d = d_s
+                return best_d
+
+            selected_badge_indices = set()
+            if is_custom_twy and custom_via_norms:
+                for req_n in set(custom_via_norms):
+                    cands = [
+                        (idx_b, _dist_to_route_px(b_mx, b_my))
+                        for idx_b, (_, b_mx, b_my, b_rn) in enumerate(vis_twy_badges)
+                        if b_rn == req_n
+                    ]
+                    if not cands:
+                        continue
+                    on_route_idxs = [idx_b for idx_b, d_px in cands if d_px <= 13.0]
+                    if on_route_idxs:
+                        selected_badge_indices.update(on_route_idxs)
+                    else:
+                        nearest_idx = min(cands, key=lambda item: item[1])[0]
+                        selected_badge_indices.add(nearest_idx)
+
+            for idx_b, (ref, mx, my, ref_norm) in enumerate(vis_twy_badges):
+                is_sel_twy = (idx_b in selected_badge_indices)
+                sel_ord = (custom_via_norms.index(ref_norm) + 1) if (is_sel_twy and ref_norm in custom_via_norms) else 0
                 rw = max(8.5, len(ref) * 3.8 + 4.5)
                 rh = 6.5
                 c_cut = 2.0
-                # Beveled capsule polygon for a crisp EFB taxiway sign look
                 self.canvas.create_polygon(
                     [
                         mx - rw + c_cut, my - rh,
@@ -3469,11 +4328,19 @@ class LidoVectorChart(ctk.CTkFrame):
                         mx - rw, my + rh - c_cut,
                         mx - rw, my - rh + c_cut
                     ],
-                    fill=pal["twy_label_bg"],
-                    outline=lbl_border,
-                    width=1.2
+                    fill="#10B981" if is_sel_twy else pal["twy_label_bg"],
+                    outline="#A7F3D0" if is_sel_twy else lbl_border,
+                    width=1.8 if is_sel_twy else 1.2,
+                    tags=above_tags
                 )
-                self.canvas.create_text(mx, my, text=ref, fill=pal["twy_label_fg"], font=("Arial", 8, "bold"))
+                self.canvas.create_text(
+                    mx, my,
+                    text=ref,
+                    fill="#FFFFFF" if is_sel_twy else pal["twy_label_fg"],
+                    font=("Arial", 8, "bold"),
+                    tags=above_tags
+                )
+                self._twy_hitboxes.append((mx - rw - 3, my - rh - 3, mx + rw + 3, my + rh + 3, ref, is_sel_twy, sel_ord))
 
         # 7b. Draw Interactive Circular Runway Badges (Lido AMM Cyan-Ringed Circles) on top of the runway & taxi route
         for ex, ey, end_id, is_act, rwy_hdg in rwy_threshold_badges:
@@ -3483,11 +4350,11 @@ class LidoVectorChart(ctk.CTkFrame):
             if is_act:
                 self.canvas.create_oval(
                     ex - (rad_c + 4), ey - (rad_c + 4), ex + (rad_c + 4), ey + (rad_c + 4),
-                    fill="", outline=ring_c, width=1.5
+                    fill="", outline=ring_c, width=1.5, tags=above_tags
                 )
             self.canvas.create_oval(
                 ex - rad_c, ey - rad_c, ex + rad_c, ey + rad_c,
-                fill=fill_c, outline=ring_c, width=2.5
+                fill=fill_c, outline=ring_c, width=2.5, tags=above_tags
             )
             vis_r_hdg = (rwy_hdg - ac_hdg_s) if use_hdg_up else rwy_hdg
             r_rad = math.radians(vis_r_hdg - 90.0)
@@ -3503,43 +4370,39 @@ class LidoVectorChart(ctk.CTkFrame):
                 text=str(end_id),
                 fill="#FFFFFF",
                 font=("Arial", 10, "bold"),
-                angle=r_ang
+                angle=r_ang,
+                tags=above_tags
             )
             self._rwy_hitboxes.append((ex - rad_c, ey - rad_c, ex + rad_c, ey + rad_c, end_id, is_act))
 
         # 8. Draw Assigned Gate Marker (Highlighted Lido AMM Directional Stand Tag + Airline Icon in front of tip)
         if self.airport_data and self.airport_data.get("lat") is not None and self.airport_data.get("lon") is not None:
-            gx, gy = self._latlon_to_xy(float(self.airport_data["lat"]), float(self.airport_data["lon"]), w, h, cos_lat)
+            gx, gy = _proj(float(self.airport_data["lat"]), float(self.airport_data["lon"]))
             gate_lbl = str(self.airport_data.get("gate") or "GATE")
             g_disp = re.sub(r'^(?:STAND|GATE|PARKING|RAMP|DOCK)\s*', '', gate_lbl, flags=re.I).replace(" ", "").upper() or gate_lbl
             g_hdg = self.airport_data.get("heading")
-            if g_hdg is None and self.chart_data:
-                for st in self.chart_data.get("stands", []):
-                    if st.get("heading") is None:
+            if g_hdg is None:
+                for _, _, _, s_clean, s_norm, _, st_hdg, _, _ in all_stands_meta:
+                    if st_hdg is None:
                         continue
-                    s_ref = str(st.get("ref", "")).replace(" ", "").upper()
-                    s_norm = re.sub(r'([A-Z]*)0+(\d+)', r'\1\2', s_ref)
-                    if s_ref == assigned_gate or s_norm == assigned_norm or (assigned_digits and s_ref == assigned_digits):
-                        g_hdg = st["heading"]
+                    if s_clean == assigned_gate or s_norm == assigned_norm or (assigned_digits and s_clean == assigned_digits):
+                        g_hdg = st_hdg
                         break
             vis_g_hdg = ((float(g_hdg) - ac_hdg_s) if use_hdg_up else float(g_hdg)) if g_hdg is not None else 0.0
             hero_al = str(self.airport_data.get("airline_code") or "").strip().upper()
             hero_als_list = [hero_al] if hero_al else []
             assigned_term = str(self.airport_data.get("terminal") or "")
-            if self.chart_data:
-                for st in self.chart_data.get("stands", []):
-                    s_ref = str(st.get("ref", "")).replace(" ", "").upper()
-                    s_norm = re.sub(r'([A-Z]*)0+(\d+)', r'\1\2', s_ref)
-                    if s_ref == assigned_gate or s_norm == assigned_norm:
-                        als = [str(a).upper() for a in (st.get("airlines") or []) if a]
-                        if not hero_al and als:
-                            hero_al = als[0]
-                        for a_c in als:
-                            if a_c not in hero_als_list:
-                                hero_als_list.append(a_c)
-                        if not assigned_term and st.get("terminal"):
-                            assigned_term = str(st.get("terminal"))
-                        break
+            for _, _, _, s_clean, s_norm, _, _, st_als, st_term in all_stands_meta:
+                if s_clean == assigned_gate or s_norm == assigned_norm:
+                    als = [str(a).upper() for a in st_als if a]
+                    if not hero_al and als:
+                        hero_al = als[0]
+                    for a_c in als:
+                        if a_c not in hero_als_list:
+                            hero_als_list.append(a_c)
+                    if not assigned_term and st_term:
+                        assigned_term = st_term
+                    break
 
             gx0, gy0, gx1, gy1 = _draw_lido_stand_tag(
                 gx, gy, g_disp, vis_g_hdg,
@@ -3548,80 +4411,27 @@ class LidoVectorChart(ctk.CTkFrame):
                 fg_col="#FFFFFF",
                 sc_mult=1.22,
                 border_w=2.4,
-                logo_codes=[hero_al] if hero_al else hero_als_list
+                logo_codes=[hero_al] if hero_al else hero_als_list,
+                item_tags=above_tags
             )
             self._stand_hitboxes.append((gx0, gy0, gx1, gy1, gate_lbl, tuple(hero_als_list), assigned_term, True))
 
         # 9. Draw Live SimConnect User Aircraft Icon (only on ground and within airport area)
-        if not self._is_airborne() and self.user_aircraft and self.user_aircraft.get("connected") and self.user_aircraft.get("lat") is not None:
-            ulat = self.user_aircraft["lat"]
-            ulon = self.user_aircraft["lon"]
-            uhdg = float(self.user_aircraft.get("heading") or 0.0)
-            ax, ay = self._latlon_to_xy(ulat, ulon, w, h, cos_lat)
-            if -100 <= ax <= w + 100 and -100 <= ay <= h + 100:
-                # GPS pulse ring
-                self.canvas.create_oval(ax - 18, ay - 18, ax + 18, ay + 18, outline="#38BDF8", width=2, dash=(4, 3))
-                # Swept-wing jet silhouette rotated by true heading (or pointing straight up in Follow + Hdg Up mode)
-                vis_hdg = 0.0 if use_hdg_up else uhdg
-                rad = math.radians(vis_hdg - 90.0)
-                def rot(px, py):
-                    rx = px * math.cos(rad) - py * math.sin(rad)
-                    ry = px * math.sin(rad) + py * math.cos(rad)
-                    return ax + rx, ay + ry
-                jet_shape = [
-                    rot(14, 0),    # Nose
-                    rot(4, -3),
-                    rot(-2, -13),  # Left wingtip
-                    rot(-5, -13),
-                    rot(-3, -3),
-                    rot(-11, -2),
-                    rot(-13, -6),  # Left tailplane
-                    rot(-14, -6),
-                    rot(-13, 0),
-                    rot(-14, 6),   # Right tailplane
-                    rot(-13, 6),
-                    rot(-11, 2),
-                    rot(-3, 3),
-                    rot(-5, 13),   # Right wingtip
-                    rot(-2, 13),
-                    rot(4, 3)
-                ]
-                flat_jet = [coord for pt in jet_shape for coord in pt]
-                self.canvas.create_polygon(flat_jet, fill="#38BDF8", outline="")
+        self._draw_aircraft_layer(_proj, w, h, use_hdg_up)
 
         # 10. Bottom-Right Lido Legend & Status Overlay
-        self.canvas.create_rectangle(w - 225, h - 28, w - 8, h - 6, fill="#0F172A", outline="")
+        self.canvas.create_rectangle(w - 225, h - 28, w - 8, h - 6, fill="#0F172A", outline="", tags=("hud_top",))
         self.canvas.create_text(
             w - 116, h - 17,
             text="Scroll: Zoom  |  Drag: Pan  |  Lido Vector",
-            fill="#94A3B8", font=("Arial", 9, "bold")
+            fill="#94A3B8", font=("Arial", 9, "bold"), tags=("hud_top",)
         )
+
+        self._base_canvas_valid = True
 
         # 11. Grabbing Hand Icon at cursor when Left-Click + Hold is active
         if self._drag_start:
-            hx, hy = self._drag_start
-            self.canvas.create_oval(hx - 15, hy - 15, hx + 15, hy + 15, fill="#0F172A", outline="#38BDF8", width=2)
-            hand_pts = [
-                hx - 5, hy + 2,
-                hx - 7, hy - 2,
-                hx - 5, hy - 4,
-                hx - 4, hy - 1,
-                hx - 4, hy - 8,
-                hx - 1, hy - 8,
-                hx - 1, hy - 1,
-                hx - 1, hy - 9,
-                hx + 2, hy - 9,
-                hx + 2, hy - 1,
-                hx + 2, hy - 8,
-                hx + 5, hy - 8,
-                hx + 5, hy - 1,
-                hx + 5, hy - 6,
-                hx + 8, hy - 6,
-                hx + 8, hy + 3,
-                hx + 5, hy + 8,
-                hx - 2, hy + 8
-            ]
-            self.canvas.create_polygon(hand_pts, fill="#F8FAFC", outline="#0F172A", width=1)
+            self._draw_drag_cursor(self._drag_start[0], self._drag_start[1])
         elif self._hovered_stand_info:
             self._draw_stand_hover_tooltip()
 
@@ -3681,6 +4491,66 @@ class GUIApp(ctk.CTk):
             "subcard_bg": "#1B1E24",
         }
 
+    def _get_dpi_work_area(self):
+        """
+        Returns (win_scale, work_left_phys, work_top_phys, work_w_phys, work_h_phys, logical_w, logical_h)
+        accounting for Windows High-DPI scaling (e.g. 4K TVs at 200%, 250%, 300%) and the Windows taskbar.
+        CustomTkinter's geometry('WxH+X+Y') multiplies W and H by win_scale, while +X+Y is in physical pixels.
+        """
+        try:
+            win_scale = float(self._get_window_scaling())
+            if win_scale <= 0.1:
+                win_scale = 1.0
+        except Exception:
+            win_scale = 1.0
+
+        phys_w = max(800, int(self.winfo_screenwidth()))
+        phys_h = max(600, int(self.winfo_screenheight()))
+        work_left, work_top, work_w, work_h = 0, 0, phys_w, phys_h
+        try:
+            import ctypes
+            from ctypes import wintypes
+            rect = wintypes.RECT()
+            if ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):
+                rw = int(rect.right - rect.left)
+                rh = int(rect.bottom - rect.top)
+                if rw >= 640 and rh >= 480:
+                    work_left = int(rect.left)
+                    work_top = int(rect.top)
+                    work_w = rw
+                    work_h = rh
+        except Exception:
+            pass
+
+        titlebar_phys = int(round(32 * win_scale))
+        logical_w = max(800, int(work_w / win_scale))
+        logical_h = max(500, int(max(460, work_h - titlebar_phys) / win_scale))
+        return win_scale, work_left, work_top, work_w, work_h, logical_w, logical_h
+
+    def _center_toplevel(self, dlg, dlg_w: int, dlg_h: int, on_screen: bool = False):
+        """Centers a CTkToplevel in DPI-aware coordinates and clamps dimensions to fit 4K High-DPI screens."""
+        try:
+            win_scale, work_left, work_top, work_w, work_h, logical_w, logical_h = self._get_dpi_work_area()
+            eff_w = min(int(dlg_w), max(320, logical_w - 24))
+            eff_h = min(int(dlg_h), max(160, logical_h - 24))
+            phys_dlg_w = int(round(eff_w * win_scale))
+            phys_dlg_h = int(round(eff_h * win_scale))
+            self.update_idletasks()
+            if on_screen or self.state() == "withdrawn":
+                x = work_left + max(0, (work_w - phys_dlg_w) // 2)
+                y = work_top + max(0, (work_h - phys_dlg_h) // 2)
+            else:
+                x = self.winfo_rootx() + (self.winfo_width() - phys_dlg_w) // 2
+                y = self.winfo_rooty() + (self.winfo_height() - phys_dlg_h) // 2
+                x = max(work_left, min(x, work_left + work_w - phys_dlg_w))
+                y = max(work_top, min(y, work_top + work_h - phys_dlg_h))
+            dlg.geometry(f"{eff_w}x{eff_h}+{max(0, int(x))}+{max(0, int(y))}")
+        except Exception:
+            try:
+                dlg.geometry(f"{int(dlg_w)}x{int(dlg_h)}")
+            except Exception:
+                pass
+
     def __init__(self, config, autostart, backend):
         super().__init__()
         self.config = config
@@ -3690,16 +4560,20 @@ class GUIApp(ctk.CTk):
         self._geom_save_after_id = None
 
         self.configure(fg_color="#121418")
-        self.title("MSFS 2024 - GateFinder V2.0.4")
-        screen_w = self.winfo_screenwidth()
-        screen_h = self.winfo_screenheight()
+        self.title("MSFS 2024 - GateFinder V2.0.6")
+        win_scale, work_left, work_top, work_w_phys, work_h_phys, logical_w, logical_h = self._get_dpi_work_area()
 
-        min_w = min(1180, int(screen_w * 0.80))
-        min_h = min(700, int(screen_h * 0.68))
-        win_w = min(1600, int(screen_w * 0.84))
-        win_h = min(870, int(screen_h * 0.80))
-        win_x = max(0, (screen_w - win_w) // 2)
-        win_y = max(10, (screen_h - win_h - 40) // 2)
+        min_w = min(1180, max(860, int(logical_w * 0.78)))
+        min_h = min(700, max(500, int(logical_h * 0.68)))
+        self._min_logical_w = min_w
+        self._min_logical_h = min_h
+        win_w = min(1600, max(min_w, int(logical_w * 0.88)))
+        win_h = min(870, max(min_h, int(logical_h * 0.88)))
+        phys_win_w = int(round(win_w * win_scale))
+        phys_win_h = int(round(win_h * win_scale))
+        titlebar_phys = int(round(32 * win_scale))
+        win_x = work_left + max(0, (work_w_phys - phys_win_w) // 2)
+        win_y = work_top + max(6, (work_h_phys - phys_win_h - titlebar_phys) // 2)
 
         self._restore_zoomed = False
         saved_geom = self.config.settings.get("window_geometry")
@@ -3711,8 +4585,12 @@ class GUIApp(ctk.CTk):
                 sy_val = saved_geom.get("y")
                 self._restore_zoomed = bool(saved_geom.get("zoomed", False))
                 if sw_val >= min_w and sh_val >= min_h:
-                    win_w = min(sw_val, max(min_w, screen_w))
-                    win_h = min(sh_val, max(min_h, screen_h - 30))
+                    win_w = min(sw_val, max(min_w, logical_w))
+                    win_h = min(sh_val, max(min_h, logical_h))
+                    phys_win_w = int(round(win_w * win_scale))
+                    phys_win_h = int(round(win_h * win_scale))
+                    win_x = work_left + max(0, (work_w_phys - phys_win_w) // 2)
+                    win_y = work_top + max(6, (work_h_phys - phys_win_h - titlebar_phys) // 2)
                 if sx_val is not None and sy_val is not None:
                     sx_i = int(sx_val)
                     sy_i = int(sy_val)
@@ -3724,12 +4602,12 @@ class GUIApp(ctk.CTk):
                         vw = int(u32.GetSystemMetrics(78))
                         vh = int(u32.GetSystemMetrics(79))
                         if vw <= 0 or vh <= 0:
-                            vx, vy, vw, vh = 0, 0, screen_w, screen_h
+                            vx, vy, vw, vh = work_left, work_top, work_w_phys, work_h_phys
                     except Exception:
-                        vx, vy, vw, vh = 0, 0, screen_w, screen_h
-                    if (vx - 80) <= sx_i <= (vx + vw - 160) and (vy - 20) <= sy_i <= (vy + vh - 120):
-                        win_x = sx_i
-                        win_y = max(vy, sy_i)
+                        vx, vy, vw, vh = work_left, work_top, work_w_phys, work_h_phys
+                    if (vx - 40) <= sx_i <= (vx + vw - phys_win_w + 40) and (vy - 10) <= sy_i <= (vy + vh - phys_win_h + 40):
+                        win_x = max(vx, min(sx_i, vx + vw - phys_win_w))
+                        win_y = max(vy, min(sy_i, vy + vh - phys_win_h - titlebar_phys))
             except Exception:
                 pass
 
@@ -3745,18 +4623,17 @@ class GUIApp(ctk.CTk):
                 has_recent_session = True
         except Exception:
             pass
+        self._silent_hidden_mode = bool("--silent" in sys.argv)
+        self._current_import_step_msg = "Initializing GateFinder..."
         has_sb_user = bool(self.config.settings.get("simbrief_username", "").strip())
-        will_show_startup_splash = bool(
-            "--silent" not in sys.argv
-            and has_sb_user
-            and (self.config.settings.get("auto_fetch", True) or has_recent_session)
-        )
+        will_auto_fetch = bool(has_sb_user and (self.config.settings.get("auto_fetch", True) or has_recent_session))
+        will_show_startup_splash = bool((not self._silent_hidden_mode) and will_auto_fetch)
 
-        # Only start withdrawn if launched silently or if the startup splash screen will be shown
-        if "--silent" in sys.argv or will_show_startup_splash:
+        # Start withdrawn if launched silently or if auto-fetching on startup
+        if self._silent_hidden_mode or will_auto_fetch:
             self.withdraw()
         if will_show_startup_splash:
-            self._create_startup_splash_window(initial_step="Initializing GateFinder...")
+            self._create_startup_splash_window(initial_step=self._current_import_step_msg)
             self.update()
             
         self.active_phase = "departure"  # "departure" or "arrival"
@@ -3769,11 +4646,19 @@ class GUIApp(ctk.CTk):
         self.bind("<FocusIn>", self._on_window_focus_in)
         self.bind("<Configure>", self._on_root_configure)
         
+        self._updater_state = "up_to_date"
+        self._updater_tag = ""
+        self._updater_download_url = ""
+        self._updater_html_url = ""
+        self._updater_asset_type = ""
+        self._updater_pct = 0
+
         self.create_widgets()
         
         self.last_flight_data = None
         self._last_rendered_signature = None
         self._is_importing_ofp = False
+        self._startup_init_running = bool(will_auto_fetch)
         self._last_prompted_ofp_id = None
         self._ofp_check_in_progress = False
         self._ofp_modal_open = False
@@ -3787,6 +4672,7 @@ class GUIApp(ctk.CTk):
         self._just_touched_down_latch = False
         self._airborne_toast_timer = None
         self._live_stand_modal_dlg = None
+        self._mismatch_modal_dlg = None
         self.check_sync_loop()
         
         # Check for updates in background
@@ -3795,20 +4681,21 @@ class GUIApp(ctk.CTk):
         
         # Check if setup is needed
         if not has_sb_user:
+            self._startup_init_running = False
             self.show_settings()
-            if "--silent" not in sys.argv:
+            if not self._silent_hidden_mode:
                 self.deiconify()
                 self.after(80, self.show_main_window)
         else:
             self._startup_init_running = True
             self.show_main_view()
-            self._startup_init_running = False
-            if self.config.settings.get("auto_fetch", True) or has_recent_session:
+            if will_auto_fetch:
                 self.after(10, lambda keep=has_recent_session: self.fetch_simbrief(turnaround_keep_gate=True if keep else None, startup_splash=True))
-                if "--silent" not in sys.argv:
+                if not self._silent_hidden_mode:
                     self.after(12000, self._ensure_window_visible_after_splash)
             else:
-                if "--silent" not in sys.argv:
+                self._startup_init_running = False
+                if not self._silent_hidden_mode:
                     self.deiconify()
                     self.after(80, self.show_main_window)
 
@@ -3817,9 +4704,12 @@ class GUIApp(ctk.CTk):
         if getattr(self, "_is_importing_ofp", False):
             self.after(5000, self._ensure_window_visible_after_splash)
             return
-        if "--silent" not in sys.argv and self.state() == "withdrawn":
+        if not getattr(self, "_silent_hidden_mode", False) and self.state() == "withdrawn":
             self._close_startup_splash()
             self.show_main_window()
+
+    def _is_cockpit_popup_suppressed(self):
+        return bool(self.config.settings.get("suppress_popups_in_cockpit", False))
 
     def _on_window_focus_in(self, event=None):
         """Immediately check SimBrief when the user switches focus back to GateFinder (e.g. from their browser)."""
@@ -3832,10 +4722,25 @@ class GUIApp(ctk.CTk):
 
     def check_sync_loop(self):
         next_delay_ms = 200
+        _t_loop_start = time.perf_counter()
         try:
             if getattr(self.backend, "show_window_requested", False):
                 self.backend.show_window_requested = False
                 self.show_main_window()
+            if getattr(self.backend, "_gui_close_mismatch_modal", False):
+                self.backend._gui_close_mismatch_modal = False
+                mm_dlg = getattr(self, "_mismatch_modal_dlg", None)
+                if mm_dlg is not None:
+                    try:
+                        if mm_dlg.winfo_exists():
+                            mm_dlg.destroy()
+                    except Exception:
+                        pass
+                    self._mismatch_modal_dlg = None
+                    self._ofp_modal_open = False
+            if getattr(self.backend, "_gui_sync_needed", False):
+                self.backend._gui_sync_needed = False
+                self._last_rendered_signature = None
             if getattr(self, "_is_importing_ofp", False):
                 return
             fd = self.backend.get_dynamic_flight_data()
@@ -3860,6 +4765,17 @@ class GUIApp(ctk.CTk):
                         self._live_stand_modal_dlg = None
                         self._ofp_modal_open = False
                         self.backend.pending_live_stand_prompt = None
+
+                mm_dlg_open = getattr(self, "_mismatch_modal_dlg", None)
+                if mm_dlg_open is not None and (is_airborne or float(u_ac.get("gs") or 0.0) > 10.0):
+                    try:
+                        if mm_dlg_open.winfo_exists():
+                            mm_dlg_open.destroy()
+                    except Exception:
+                        pass
+                    self._mismatch_modal_dlg = None
+                    self._ofp_modal_open = False
+                    self.backend.pending_simbrief_mismatch = None
 
                 if is_airborne:
                     self.user_manual_phase_override = False
@@ -3936,6 +4852,41 @@ class GUIApp(ctk.CTk):
                     self._last_ofp_poll_time = now_ts
                     self._poll_simbrief_for_new_ofp(engine_cut_trigger=False)
 
+                # Live MSFS vs SimBrief Tarmac Mismatch Monitor:
+                # Only triggers once the aircraft is genuinely parked on the tarmac after clicking 'Start Flight'
+                # (CAMERA STATE in cockpit/external/walkaround, stable >= 4.5s) and either at a different airport
+                # or in an aircraft type that does not match SimBrief.
+                if (
+                    u_ac.get("connected")
+                    and u_ac.get("on_ground") is True
+                    and float(u_ac.get("gs") or 0.0) <= 10.0
+                    and not getattr(self, "_ofp_modal_open", False)
+                    and not getattr(self, "_is_importing_ofp", False)
+                    and not getattr(self, "_mismatch_check_in_progress", False)
+                    and (now_ts - getattr(self, "_last_mismatch_check_time", 0.0) >= 0.8)
+                ):
+                    self._last_mismatch_check_time = now_ts
+                    self._mismatch_check_in_progress = True
+
+                    def _bg_check_mismatch():
+                        try:
+                            mm = self.backend.check_simbrief_vs_msfs_mismatch()
+                            def _on_mm():
+                                self._mismatch_check_in_progress = False
+                                if (
+                                    mm
+                                    and not self._is_cockpit_popup_suppressed()
+                                    and not getattr(self, "_ofp_modal_open", False)
+                                    and not getattr(self, "_is_importing_ofp", False)
+                                ):
+                                    self._show_msfs_simbrief_mismatch_modal(mm)
+                            self.after(0, _on_mm)
+                        except Exception:
+                            self._mismatch_check_in_progress = False
+
+                    import threading
+                    threading.Thread(target=_bg_check_mismatch, daemon=True).start()
+
                 # Live MSFS Parked Stand Monitor: if aircraft is parked on the ground at a stand different from dep['gate']
                 # (and AI ATC has not already overridden the departure stand), auto-sync GateFinder to the live stand!
                 dep_gate_src = str(dep.get("gate_source") or "").upper()
@@ -4006,15 +4957,24 @@ class GUIApp(ctk.CTk):
 
                 sig = (
                     fd.get("aircraft"), fd.get("airline"),
-                    dep.get("icao"), dep.get("gate"), dep.get("gate_source"), dep.get("atc_runway_source"), dep.get("selected_runway"), dep.get("atc_runway"), tuple(dep.get("atc_taxi_via") or ()), dep.get("bypassed_summary"),
-                    arr.get("icao"), arr.get("gate"), arr.get("gate_source"), arr.get("atc_runway_source"), arr.get("selected_runway"), arr.get("atc_runway"), tuple(arr.get("atc_taxi_via") or ()), arr.get("bypassed_summary"),
+                    dep.get("icao"), dep.get("gate"), dep.get("gate_source"), dep.get("atc_runway_source"), dep.get("selected_runway"), dep.get("atc_runway"), bool(dep.get("custom_taxi_mode")), None if dep.get("atc_taxi_via") is None else tuple(dep.get("atc_taxi_via")), dep.get("bypassed_summary"),
+                    arr.get("icao"), arr.get("gate"), arr.get("gate_source"), arr.get("atc_runway_source"), arr.get("selected_runway"), arr.get("atc_runway"), bool(arr.get("custom_taxi_mode")), None if arr.get("atc_taxi_via") is None else tuple(arr.get("atc_taxi_via")), arr.get("bypassed_summary"),
                     self.active_phase, eff_map_hib, show_maps_cfg, is_airborne
                 )
                 self.last_flight_data = fd
                 if sig != self._last_rendered_signature:
                     active_apt = dep if self.active_phase == "departure" else arr
-                    cur_route_key = (self.active_phase, active_apt.get("icao"), active_apt.get("gate"), active_apt.get("selected_runway"), tuple(active_apt.get("atc_taxi_via") or ()))
-                    preserve_cam = (getattr(self, "_last_route_cam_key", None) == cur_route_key)
+                    cur_route_key = (self.active_phase, active_apt.get("icao"), active_apt.get("gate"), active_apt.get("selected_runway"), bool(active_apt.get("custom_taxi_mode")), None if active_apt.get("atc_taxi_via") is None else tuple(active_apt.get("atc_taxi_via")))
+                    prev_rk = getattr(self, "_last_route_cam_key", None)
+                    preserve_cam = (
+                        prev_rk == cur_route_key
+                        or bool(
+                            self.vector_chart
+                            and self.vector_chart.follow_aircraft
+                            and prev_rk is not None
+                            and prev_rk[:2] == cur_route_key[:2]
+                        )
+                    )
                     self._last_route_cam_key = cur_route_key
                     self._last_rendered_signature = sig
                     self.render_results(fd, preserve_camera=preserve_cam)
@@ -4027,11 +4987,54 @@ class GUIApp(ctk.CTk):
 
                 self._check_and_show_gate_toast()
 
-                next_delay_ms = 800 if eff_map_hib else 200
+                try:
+                    hz_cfg = int(self.config.settings.get("map_follow_refresh_hz", 10) or 10)
+                except Exception:
+                    hz_cfg = 10
+                active_delay_ms = max(45, int(round(1000.0 / max(2, min(25, hz_cfg)))))
+                next_delay_ms = 800 if eff_map_hib else active_delay_ms
+            else:
+                now_ts = time.time()
+                sc = getattr(self.backend, "simconnect_manager", None)
+                if (
+                    sc
+                    and sc.connected
+                    and not getattr(sc, "in_menu", False)
+                    and sc.user_on_ground is True
+                    and float(sc.user_gs or 0.0) <= 15.0
+                    and not getattr(self, "_startup_init_running", False)
+                    and not getattr(self, "_ofp_modal_open", False)
+                    and not getattr(self, "_is_importing_ofp", False)
+                    and not getattr(self, "_mismatch_check_in_progress", False)
+                    and (now_ts - getattr(self, "_last_mismatch_check_time", 0.0) >= 3.0)
+                ):
+                    self._last_mismatch_check_time = now_ts
+                    self._mismatch_check_in_progress = True
+
+                    def _bg_check_no_ofp():
+                        try:
+                            mm = self.backend.check_simbrief_vs_msfs_mismatch()
+                            def _on_mm():
+                                self._mismatch_check_in_progress = False
+                                if (
+                                    mm
+                                    and not self._is_cockpit_popup_suppressed()
+                                    and not getattr(self, "_ofp_modal_open", False)
+                                    and not getattr(self, "_is_importing_ofp", False)
+                                ):
+                                    self._show_msfs_simbrief_mismatch_modal(mm)
+                            self.after(0, _on_mm)
+                        except Exception:
+                            self._mismatch_check_in_progress = False
+
+                    import threading
+                    threading.Thread(target=_bg_check_no_ofp, daemon=True).start()
         except Exception as e:
             print(f"[GUI] check_sync_loop recovered from error: {e}")
         finally:
-            self.after(next_delay_ms, self.check_sync_loop)
+            tick_ms = int((time.perf_counter() - _t_loop_start) * 1000.0)
+            eff_delay_ms = max(45, next_delay_ms, min(180, tick_ms) if tick_ms > 60 else 45)
+            self.after(eff_delay_ms, self.check_sync_loop)
 
     def _check_and_show_gate_toast(self):
         try:
@@ -4082,7 +5085,9 @@ class GUIApp(ctk.CTk):
             if w_map and "pill_exit" in w_map:
                 exit_str = f"EXIT : {det_exit}" if det_exit else ""
                 if exit_str:
-                    w_map["lbl_exit"].configure(text=exit_str, text_color="#FFFFFF")
+                    if getattr(w_map["lbl_exit"], "_last_exit_txt", None) != exit_str:
+                        w_map["lbl_exit"]._last_exit_txt = exit_str
+                        w_map["lbl_exit"].configure(text=exit_str, text_color="#FFFFFF")
                     if not w_map["pill_exit"].winfo_ismapped():
                         w_map["pill_exit"].pack(side="left", padx=(8, 0))
                 else:
@@ -4102,7 +5107,8 @@ class GUIApp(ctk.CTk):
         if hasattr(self, "lbl_live_status_pill") and self.lbl_live_status_pill and self.lbl_live_status_pill.winfo_exists():
             if st_text:
                 if not self.lbl_live_status_pill.winfo_ismapped():
-                    self.lbl_live_status_pill.pack(fill="x", padx=14, pady=(12, 6), before=self._sb_clearance_hdr_lbl)
+                    hdr_anchor = getattr(self, "_sb_clearance_hdr_row", None) or self._sb_clearance_hdr_lbl
+                    self.lbl_live_status_pill.pack(fill="x", padx=14, pady=(12, 6), before=hdr_anchor)
                 if getattr(self, "_last_st_pill_val", None) != (st_text, st_col):
                     self._last_st_pill_val = (st_text, st_col)
                     self.lbl_live_status_pill.configure(text=st_text, text_color="#FFFFFF")
@@ -4130,13 +5136,19 @@ class GUIApp(ctk.CTk):
 
         if self.active_phase == "arrival" and hasattr(self, "_sb_gsx_pill") and self._sb_gsx_pill and self._sb_gsx_pill.winfo_exists():
             gsx_st = airport_data.get("gsx_status") or {}
-            if not gsx_st.get("visible", True):
-                self._sb_gsx_pill.grid_remove()
+            vis_gsx = bool(gsx_st.get("visible", True))
+            if not vis_gsx:
+                if getattr(self._sb_gsx_pill, "_last_gsx_render_state", None) != (False, "", ""):
+                    self._sb_gsx_pill._last_gsx_render_state = (False, "", "")
+                    self._sb_gsx_pill.grid_remove()
             else:
                 short_gsx, tip_gsx = self._format_gsx_pill_info(gsx_st, airport_data.get("gate", ""))
-                self._sb_gsx_lbl.configure(text=short_gsx, text_color="#FFFFFF")
-                self._sb_gsx_tip.text = tip_gsx
-                self._sb_gsx_pill.grid(row=1, column=1, sticky="ew", padx=(4, 0), pady=(0, 0))
+                gsx_state_tup = (True, short_gsx, tip_gsx)
+                if getattr(self._sb_gsx_pill, "_last_gsx_render_state", None) != gsx_state_tup:
+                    self._sb_gsx_pill._last_gsx_render_state = gsx_state_tup
+                    self._sb_gsx_lbl.configure(text=short_gsx, text_color="#FFFFFF")
+                    self._sb_gsx_tip.text = tip_gsx
+                    self._sb_gsx_pill.grid(row=1, column=1, sticky="ew", padx=(4, 0), pady=(0, 0))
 
     def _on_root_configure(self, event=None):
         if event is not None and event.widget != self:
@@ -4147,7 +5159,9 @@ class GUIApp(ctk.CTk):
                 return
             if st == "normal":
                 w, h, x, y = self._parse_geometry_string(self.geometry())
-                if w is not None and h is not None and w >= 900 and h >= 550:
+                min_lw = min(900, int(getattr(self, "_min_logical_w", 900)))
+                min_lh = min(550, int(getattr(self, "_min_logical_h", 500)))
+                if w is not None and h is not None and w >= min_lw and h >= min_lh:
                     self._last_normal_geom = {
                         "w": int(w),
                         "h": int(h),
@@ -4171,7 +5185,9 @@ class GUIApp(ctk.CTk):
             st = self.state()
             if st == "normal":
                 w, h, x, y = self._parse_geometry_string(self.geometry())
-                if w is not None and h is not None and w >= 900 and h >= 550:
+                min_lw = min(900, int(getattr(self, "_min_logical_w", 900)))
+                min_lh = min(550, int(getattr(self, "_min_logical_h", 500)))
+                if w is not None and h is not None and w >= min_lw and h >= min_lh:
                     self._last_normal_geom = {
                         "w": int(w),
                         "h": int(h),
@@ -4207,6 +5223,17 @@ class GUIApp(ctk.CTk):
         self.withdraw()
 
     def show_main_window(self):
+        self._silent_hidden_mode = False
+        if getattr(self, "_is_importing_ofp", False):
+            try:
+                if self.state() != "withdrawn":
+                    self.withdraw()
+                self._create_startup_splash_window(
+                    initial_step=getattr(self, "_current_import_step_msg", "Loading flight plan...")
+                )
+            except Exception:
+                pass
+            return
         try:
             self.deiconify()
             if getattr(self, "_restore_zoomed", False):
@@ -4222,51 +5249,283 @@ class GUIApp(ctk.CTk):
         except Exception:
             pass
 
-    def check_for_updates(self):
+    def _refresh_updater_buttons(self):
+        has_chart = bool(getattr(self, "vector_chart", None) and self.vector_chart.winfo_exists())
+        if has_chart and hasattr(self.vector_chart, "sync_updater_state"):
+            self.vector_chart.sync_updater_state()
+        hdr_btn = getattr(self, "btn_header_updater", None)
+        if hdr_btn and hdr_btn.winfo_exists():
+            st = getattr(self, "_updater_state", "up_to_date")
+            tag = getattr(self, "_updater_tag", "")
+            pct = int(getattr(self, "_updater_pct", 0) or 0)
+            if not has_chart and st in ("available", "downloading", "installing"):
+                if st == "available":
+                    hdr_btn.configure(
+                        text=f"Update {tag} available", state="normal",
+                        fg_color="#0A86C2", hover_color="#0A6E9E", text_color="#FFFFFF"
+                    )
+                elif st == "downloading":
+                    hdr_btn.configure(
+                        text=f"Updating {pct}%...", state="disabled",
+                        fg_color="#0A6E9E", hover_color="#0A6E9E", text_color="#FFFFFF"
+                    )
+                else:
+                    hdr_btn.configure(
+                        text="Restarting...", state="disabled",
+                        fg_color="#0A6E9E", hover_color="#0A6E9E", text_color="#FFFFFF"
+                    )
+                if not hdr_btn.winfo_ismapped():
+                    hdr_btn.pack(side="right", padx=6, pady=12)
+            else:
+                if hdr_btn.winfo_ismapped():
+                    hdr_btn.pack_forget()
+
+    def on_updater_button_clicked(self):
+        st = getattr(self, "_updater_state", "up_to_date")
+        if st in ("checking", "downloading", "installing"):
+            return
+        if st == "available":
+            self.start_github_self_update()
+            return
+        import threading
+        self._updater_state = "checking"
+        self._refresh_updater_buttons()
+        threading.Thread(target=lambda: self.check_for_updates(manual=True), daemon=True).start()
+
+    def check_for_updates(self, manual=False):
         import urllib.request
         import json
-        current_ver = "v2.0.4"
+        current_ver = "2.0.6"
+        t0 = time.monotonic()
+        found_update = False
+        found_tag = ""
+        dl_url = ""
+        asset_kind = ""
+        html_url = "https://github.com/wildbill75/gsx-gatefinder/releases/latest"
+
+        def _parse_ver(v_str):
+            m = re.findall(r"\d+", str(v_str or ""))
+            if not m:
+                return (0,)
+            return tuple(int(x) for x in m[:4])
+
         try:
             req = urllib.request.Request(
                 "https://api.github.com/repos/wildbill75/gsx-gatefinder/releases/latest",
-                headers={'User-Agent': 'GateFinder-Updater'}
+                headers={
+                    "User-Agent": "GateFinder-Updater/2.0.6",
+                    "Accept": "application/vnd.github+json",
+                },
             )
-            with urllib.request.urlopen(req, timeout=5) as response:
-                data = json.loads(response.read().decode())
-                latest_tag = data.get("tag_name", "").strip()
-                html_url = data.get("html_url", "https://github.com/wildbill75/gsx-gatefinder/releases")
-                
-                def parse_version(v_str):
-                    cleaned = "".join(c for c in v_str if c.isdigit() or c == '.')
-                    try:
-                        return tuple(map(int, cleaned.split('.')))
-                    except Exception:
-                        return (0,)
-                
-                if parse_version(latest_tag) > parse_version(current_ver):
-                    self.after(0, lambda url=html_url, tag=latest_tag: self.show_update_banner(url, tag))
+            with urllib.request.urlopen(req, timeout=6) as response:
+                data = json.loads(response.read().decode("utf-8", errors="ignore"))
+                latest_tag = str(data.get("tag_name") or "").strip()
+                html_url = str(data.get("html_url") or html_url).strip()
+                if latest_tag and _parse_ver(latest_tag) > _parse_ver(current_ver):
+                    found_update = True
+                    found_tag = latest_tag if latest_tag.upper().startswith("V") else f"V{latest_tag}"
+                    assets = data.get("assets") or []
+                    for a in assets:
+                        aname = str(a.get("name") or "").lower()
+                        burl = str(a.get("browser_download_url") or "").strip()
+                        if burl and aname.endswith(".zip"):
+                            dl_url = burl
+                            asset_kind = "zip"
+                            break
+                    if not dl_url:
+                        for a in assets:
+                            aname = str(a.get("name") or "").lower()
+                            burl = str(a.get("browser_download_url") or "").strip()
+                            if burl and aname.endswith(".exe"):
+                                dl_url = burl
+                                asset_kind = "exe"
+                                break
         except Exception as e:
             print("Update check failed:", e)
 
-    def show_update_banner(self, url, tag):
-        self.update_banner_container.pack(fill="x", padx=20, pady=(0, 8), after=self.header_frame)
-        banner_frame = ctk.CTkFrame(self.update_banner_container, fg_color="#10B981", corner_radius=8)
-        banner_frame.pack(fill="x")
-        
-        lbl = ctk.CTkLabel(
-            banner_frame, 
-            text=f"Update Available: Click here to download {tag}", 
-            text_color="white",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            cursor="hand2"
-        )
-        lbl.pack(expand=True, fill="both", pady=6)
-        
-        def open_link(event):
+        if manual:
+            elapsed = time.monotonic() - t0
+            if elapsed < 0.45:
+                time.sleep(0.45 - elapsed)
+
+        def _apply_ui():
+            if found_update:
+                self._updater_state = "available"
+                self._updater_tag = found_tag
+                self._updater_download_url = dl_url
+                self._updater_asset_type = asset_kind
+                self._updater_html_url = html_url
+            else:
+                self._updater_state = "up_to_date"
+                self._updater_tag = ""
+                self._updater_download_url = ""
+                self._updater_asset_type = ""
+            self._refresh_updater_buttons()
+
+        self.after(0, _apply_ui)
+
+    def start_github_self_update(self):
+        if getattr(self, "_updater_state", "") in ("downloading", "installing"):
+            return
+        dl_url = str(getattr(self, "_updater_download_url", "") or "").strip()
+        html_url = str(getattr(self, "_updater_html_url", "") or "https://github.com/wildbill75/gsx-gatefinder/releases/latest").strip()
+        asset_kind = str(getattr(self, "_updater_asset_type", "") or "").strip()
+
+        if not dl_url:
             import webbrowser
-            webbrowser.open(url)
-            
-        lbl.bind("<Button-1>", open_link)
+            webbrowser.open(html_url)
+            return
+
+        if not getattr(sys, "frozen", False):
+            messagebox.showinfo(
+                "Development Mode",
+                "Self-updating binary replacement is active in the compiled GateFinder.exe build.\nOpening release page in browser."
+            )
+            import webbrowser
+            webbrowser.open(html_url)
+            return
+
+        self._updater_state = "downloading"
+        self._updater_pct = 0
+        self._refresh_updater_buttons()
+
+        import threading
+
+        def _dl_worker():
+            import tempfile
+            import zipfile
+            import shutil
+            import subprocess
+            import urllib.request
+
+            staging_dir = os.path.join(tempfile.gettempdir(), f"GateFinder_Update_{os.getpid()}")
+            try:
+                if os.path.exists(staging_dir):
+                    shutil.rmtree(staging_dir, ignore_errors=True)
+                os.makedirs(staging_dir, exist_ok=True)
+
+                dl_file = os.path.join(staging_dir, "release_pkg.zip" if asset_kind == "zip" else "GateFinder.exe")
+                req = urllib.request.Request(dl_url, headers={"User-Agent": "GateFinder-Updater/2.0.6"})
+                with urllib.request.urlopen(req, timeout=30) as resp, open(dl_file, "wb") as out_f:
+                    total_sz = int(resp.headers.get("Content-Length") or 0)
+                    read_sz = 0
+                    last_ui_pct = -1
+                    while True:
+                        chunk = resp.read(65536)
+                        if not chunk:
+                            break
+                        out_f.write(chunk)
+                        read_sz += len(chunk)
+                        if total_sz > 0:
+                            pct = min(99, int((read_sz * 100) / total_sz))
+                            if pct != last_ui_pct and (pct - last_ui_pct >= 2 or pct >= 99):
+                                last_ui_pct = pct
+                                self._updater_pct = pct
+                                self.after(0, self._refresh_updater_buttons)
+
+                payload_dir = os.path.join(staging_dir, "payload")
+                os.makedirs(payload_dir, exist_ok=True)
+
+                if asset_kind == "zip":
+                    with zipfile.ZipFile(dl_file, "r") as zf:
+                        bad_member = zf.testzip()
+                        if bad_member is not None:
+                            raise RuntimeError(f"Corrupted archive entry: {bad_member}")
+                        zf.extractall(payload_dir)
+                    # Unwrap single top-level directory if present (e.g. GateFinder_V2.0.6/GateFinder.exe)
+                    if not os.path.isfile(os.path.join(payload_dir, "GateFinder.exe")):
+                        for root_d, _dirs, files in os.walk(payload_dir):
+                            if "GateFinder.exe" in files:
+                                payload_dir = root_d
+                                break
+                else:
+                    shutil.copy2(dl_file, os.path.join(payload_dir, "GateFinder.exe"))
+
+                new_exe_candidate = os.path.join(payload_dir, "GateFinder.exe")
+                if not os.path.isfile(new_exe_candidate) or os.path.getsize(new_exe_candidate) < 1024 * 1024:
+                    raise RuntimeError("Update package does not contain a valid GateFinder.exe.")
+
+                # Strictly protect user configuration & session files
+                for protected_name in ("settings.json", "last_flight_session.json"):
+                    prot_p = os.path.join(payload_dir, protected_name)
+                    if os.path.exists(prot_p):
+                        try:
+                            os.remove(prot_p)
+                        except Exception:
+                            pass
+
+                # Sync updated MSFS In-Game Panel to installed Community folders if present
+                staged_panel = os.path.join(payload_dir, "MSFS_Package", "gatefinder-ingame-panel")
+                if not os.path.isdir(staged_panel):
+                    staged_panel = os.path.join(payload_dir, "gatefinder-ingame-panel")
+                if os.path.isdir(staged_panel):
+                    for cfg_k in ("msfs_community_path", "msfs_community2024_path"):
+                        comm_dir = str(self.config.settings.get(cfg_k) or "").strip()
+                        if comm_dir and os.path.isdir(comm_dir):
+                            target_panel = os.path.join(comm_dir, "gatefinder-ingame-panel")
+                            if os.path.isdir(target_panel):
+                                try:
+                                    shutil.copytree(staged_panel, target_panel, dirs_exist_ok=True)
+                                except Exception:
+                                    pass
+
+                install_dir = os.path.dirname(os.path.abspath(sys.executable))
+                exe_name = os.path.basename(sys.executable) or "GateFinder.exe"
+                bat_path = os.path.join(staging_dir, "apply_update.bat")
+                bat_content = (
+                    "@echo off\r\n"
+                    "setlocal\r\n"
+                    "set \"SRC=%~1\"\r\n"
+                    "set \"DST=%~2\"\r\n"
+                    "set \"EXE=%~3\"\r\n"
+                    "set /a TRIES=0\r\n"
+                    ":WAITLOCK\r\n"
+                    "set /a TRIES+=1\r\n"
+                    "copy /Y \"%SRC%\\GateFinder.exe\" \"%DST%\\%EXE%\" >nul 2>&1\r\n"
+                    "if errorlevel 1 (\r\n"
+                    "    if %TRIES% LSS 45 (\r\n"
+                    "        ping 127.0.0.1 -n 2 >nul\r\n"
+                    "        goto WAITLOCK\r\n"
+                    "    )\r\n"
+                    ")\r\n"
+                    "robocopy \"%SRC%\" \"%DST%\" /E /XF settings.json last_flight_session.json GateFinder.exe >nul 2>&1\r\n"
+                    "start \"\" \"%DST%\\%EXE%\"\r\n"
+                    "start /b \"\" cmd /c \"ping 127.0.0.1 -n 3 >nul & rmdir /S /Q \"\"%~dp0\"\"\"\r\n"
+                    "exit /b 0\r\n"
+                )
+                with open(bat_path, "w", encoding="utf-8") as bf:
+                    bf.write(bat_content)
+
+                def _launch_swap_and_exit():
+                    self._updater_state = "installing"
+                    self._refresh_updater_buttons()
+                    self.update_idletasks()
+                    try:
+                        self._save_window_geometry()
+                    except Exception:
+                        pass
+                    subprocess.Popen(
+                        ["cmd.exe", "/c", bat_path, payload_dir, install_dir, exe_name],
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) | getattr(subprocess, "DETACHED_PROCESS", 0x00000008),
+                        close_fds=True,
+                    )
+                    try:
+                        t_icon = getattr(self, "_tray_icon", None)
+                        if t_icon is not None:
+                            t_icon.stop()
+                    except Exception:
+                        pass
+                    self.after(120, lambda: os._exit(0))
+
+                self.after(0, _launch_swap_and_exit)
+            except Exception as err_upd:
+                def _on_upd_err(msg=str(err_upd)):
+                    self._updater_state = "available"
+                    self._refresh_updater_buttons()
+                    messagebox.showerror("Update Failed", f"Automatic update could not complete:\n{msg}")
+                self.after(0, _on_upd_err)
+
+        threading.Thread(target=_dl_worker, daemon=True).start()
 
     def create_widgets(self):
         # Sleek EFB Top Navigation & SimBrief Dispatch Header Bar (Zero borders)
@@ -4291,12 +5550,20 @@ class GUIApp(ctk.CTk):
         )
         self.btn_import.pack(side="right", padx=6, pady=12)
 
+        self.btn_header_updater = ctk.CTkButton(
+            self.header_frame, text="Update available", width=180, height=46,
+            fg_color="#0A86C2", hover_color="#0A6E9E", border_width=0,
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            command=self.on_updater_button_clicked
+        )
+
         # Left/Center SimBrief OFP Summary Pill Container (fixed 46px height when empty so header never stretches vertically)
         self.flight_strip_frame = ctk.CTkFrame(self.header_frame, fg_color="transparent", height=46, width=1)
         self.flight_strip_frame.pack(side="left", padx=(16, 8), pady=12)
         ctk.CTkLabel(
             self.flight_strip_frame,
-            text="GATEFINDER V2.0.4  •  SIMBRIEF EFB DISPATCH",
+            text="GATEFINDER V2.0.6  •  SIMBRIEF EFB DISPATCH",
             height=46,
             fg_color="#2B303B",
             text_color="#94A3B8",
@@ -4649,6 +5916,8 @@ class GUIApp(ctk.CTk):
         if hasattr(self, "settings_view") and hasattr(self.settings_view, "refresh_dynamic_statuses"):
             self.settings_view.refresh_dynamic_statuses()
         self.settings_view.pack(fill="both", expand=True, padx=0, pady=0)
+        if hasattr(self, "settings_view") and hasattr(self.settings_view, "_sync_settings_scroll_layout"):
+            self.after(20, self.settings_view._sync_settings_scroll_layout)
 
     def show_main_view(self):
         self.settings_view.pack_forget()
@@ -4793,7 +6062,7 @@ class GUIApp(ctk.CTk):
         _render_blue_gradient_bar(0.06)
 
         lbl_ver_ftr = ctk.CTkLabel(
-            prog_card, text="V2.0.4 • © 2026 Sidestick Priority",
+            prog_card, text="V2.0.6 • © 2026 Sidestick Priority",
             font=ctk.CTkFont(size=11), text_color="#475569"
         )
         lbl_ver_ftr.place(relx=1.0, rely=1.0, x=-20, y=-12, anchor="se")
@@ -4806,13 +6075,11 @@ class GUIApp(ctk.CTk):
             return sp
         sp_w, sp_h = 520, 330
         splash = ctk.CTkToplevel(self)
-        splash.title("GateFinder V2.0.4")
+        splash.title("GateFinder V2.0.6")
         splash.overrideredirect(True)
         splash.configure(fg_color="#0B0E14")
         self._apply_window_icon(splash)
-        sw = self.winfo_screenwidth()
-        sh = self.winfo_screenheight()
-        splash.geometry(f"{sp_w}x{sp_h}+{max(0, (sw - sp_w) // 2)}+{max(0, (sh - sp_h) // 2)}")
+        self._center_toplevel(splash, sp_w, sp_h, on_screen=True)
         try:
             splash.attributes("-topmost", True)
         except Exception:
@@ -4827,7 +6094,7 @@ class GUIApp(ctk.CTk):
         self._populate_progress_card(prog_card, initial_step=initial_step)
         return splash
 
-    def fetch_simbrief(self, turnaround_keep_gate=None, startup_splash=False):
+    def fetch_simbrief(self, turnaround_keep_gate=None, startup_splash=False, silent_bg=False):
         if getattr(self, "_is_importing_ofp", False):
             return
         # Always sync the live SimBrief entry from Settings if the user typed it there without clicking Save yet
@@ -4839,49 +6106,48 @@ class GUIApp(ctk.CTk):
 
         username = self.config.settings.get("simbrief_username", "").strip()
         if not username:
+            self._startup_init_running = False
             self._close_startup_splash()
-            if "--silent" not in sys.argv:
+            if not getattr(self, "_silent_hidden_mode", False) and not silent_bg:
                 self.deiconify()
-            messagebox.showerror("Error", "Please configure your Simbrief Username or Pilot ID in Settings.")
+                messagebox.showerror("Error", "Please configure your Simbrief Username or Pilot ID in Settings.")
             self.show_settings()
             return
             
         self._is_importing_ofp = True
+        is_quiet_import = bool(getattr(self, "_silent_hidden_mode", False) or silent_bg)
+        if not startup_splash and not silent_bg:
+            self._silent_hidden_mode = False
+            is_quiet_import = False
+        self._current_import_step_msg = "Fetching SimBrief flight plan..."
         # Ensure we are on the Main View when importing
         self.show_main_view()
         self.btn_import.configure(text="Importing OFP...", state="disabled")
 
-        # Build Sleek EFB On-the-Fly Airport Construction Progress Card
         self._last_clearance_val = None
         self._last_traffic_pills_val = None
         self._last_rendered_signature = None
-        for w in self.results_frame.winfo_children():
-            w.destroy()
 
-        use_splash = bool((startup_splash or getattr(self, "last_flight_data", None) is None) and "--silent" not in sys.argv)
-        sp_w, sp_h = 520, 330
-        if use_splash:
+        if not is_quiet_import:
             if self.state() != "withdrawn":
+                try:
+                    self._restore_zoomed = (self.state() == "zoomed")
+                    self._save_window_geometry()
+                except Exception:
+                    pass
                 self.withdraw()
-            self._create_startup_splash_window(initial_step="Fetching SimBrief flight plan...")
-        else:
-            prog_card = ctk.CTkFrame(
-                self.results_frame, fg_color="#0B0E14", corner_radius=12,
-                border_width=1, border_color="#1E2532", width=sp_w, height=sp_h
-            )
-            prog_card.place(relx=0.5, rely=0.5, anchor="center")
-            prog_card.pack_propagate(False)
-            self._populate_progress_card(prog_card, initial_step="Fetching SimBrief flight plan...")
-
-        _render_blue_gradient_bar = getattr(self, "_render_blue_gradient_bar", lambda v: None)
-        _render_blue_gradient_bar(0.08)
-
-        self.update()
+            self._create_startup_splash_window(initial_step=self._current_import_step_msg)
+            _render_blue_gradient_bar = getattr(self, "_render_blue_gradient_bar", lambda v: None)
+            _render_blue_gradient_bar(0.08)
+            self.update()
 
         import threading
         def _on_progress(pct, step_msg):
+            self._current_import_step_msg = step_msg
             def _upd():
-                _render_blue_gradient_bar(pct)
+                bar_fn = getattr(self, "_render_blue_gradient_bar", None)
+                if callable(bar_fn):
+                    bar_fn(pct)
                 if hasattr(self, "lbl_import_step") and self.lbl_import_step.winfo_exists():
                     self.lbl_import_step.configure(text=step_msg)
             self.after(0, _upd)
@@ -4889,9 +6155,11 @@ class GUIApp(ctk.CTk):
         prompted_stand_holder = [None]
         chose_new_stand_holder = [bool(turnaround_keep_gate is False)]
         def thread_safe_turnaround_check(prev_gate, origin="", destination="", origin_rwy="", dest_rwy="", reason="turnaround_arrival"):
+            prompted_stand_holder[0] = (str(origin or "").strip().upper(), str(prev_gate or "").strip())
+            if is_quiet_import or self._is_cockpit_popup_suppressed():
+                return True
             evt = threading.Event()
             ans_holder = [True]
-            prompted_stand_holder[0] = (str(origin or "").strip().upper(), str(prev_gate or "").strip())
             def ask_on_main():
                 try:
                     ans_holder[0] = self.on_turnaround_check(prev_gate, origin, destination, origin_rwy, dest_rwy, reason=reason)
@@ -4914,6 +6182,7 @@ class GUIApp(ctk.CTk):
                 dyn_result = self.backend.get_dynamic_flight_data()
                 def _on_ok():
                     self._is_importing_ofp = False
+                    self._startup_init_running = False
                     self.user_manual_phase_override = False
                     ofp_id_val = str(dyn_result.get("ofp_id") or "")
                     self._last_prompted_ofp_id = ofp_id_val
@@ -4949,22 +6218,24 @@ class GUIApp(ctk.CTk):
                     self.render_results(dyn_result, preserve_camera=False)
                     self.btn_import.configure(text="Import SimBrief", state="normal")
                     self._close_startup_splash()
-                    if "--silent" not in sys.argv and self.state() == "withdrawn":
+                    if not is_quiet_import and self.state() == "withdrawn":
                         self.show_main_window()
-                    if chose_new_stand_holder[0]:
+                    if chose_new_stand_holder[0] and not is_quiet_import and not self._is_cockpit_popup_suppressed():
                         self.after(120, lambda: self._open_manual_stand_picker_modal(phase="departure"))
                 self.after(0, _on_ok)
             except Exception as e:
                 err_str = str(e)
                 def _on_err():
                     self._is_importing_ofp = False
+                    self._startup_init_running = False
                     self._close_startup_splash()
-                    if "--silent" not in sys.argv and self.state() == "withdrawn":
+                    if not is_quiet_import and self.state() == "withdrawn":
                         self.show_main_window()
                     if self.last_flight_data:
                         self._last_rendered_signature = None
                         self.render_results(self.last_flight_data, preserve_camera=True)
-                    messagebox.showerror("Simbrief Error", f"Unable to fetch flight plan.\nCheck your ID.\n{err_str}")
+                    if not is_quiet_import and not self._is_cockpit_popup_suppressed():
+                        messagebox.showerror("Simbrief Error", f"Unable to fetch flight plan.\nCheck your ID.\n{err_str}")
                     self.btn_import.configure(text="Import SimBrief", state="normal")
                 self.after(0, _on_err)
 
@@ -5011,20 +6282,7 @@ class GUIApp(ctk.CTk):
             except Exception:
                 pass
         dlg.grab_set()
-
-        try:
-            self.update_idletasks()
-            if is_root_hidden:
-                sw = self.winfo_screenwidth()
-                sh = self.winfo_screenheight()
-                x = (sw - dlg_w) // 2
-                y = (sh - dlg_h) // 2
-            else:
-                x = self.winfo_rootx() + (self.winfo_width() - dlg_w) // 2
-                y = self.winfo_rooty() + (self.winfo_height() - dlg_h) // 2
-            dlg.geometry(f"{dlg_w}x{dlg_h}+{max(0, x)}+{max(0, y)}")
-        except Exception:
-            pass
+        self._center_toplevel(dlg, dlg_w, dlg_h, on_screen=is_root_hidden)
 
         card = ctk.CTkFrame(dlg, fg_color="#111827", corner_radius=10, border_width=0)
         card.pack(fill="both", expand=True, padx=12, pady=12)
@@ -5094,6 +6352,13 @@ class GUIApp(ctk.CTk):
 
     def _show_live_msfs_stand_mismatch_modal(self, dep_icao, live_stand, cur_gate):
         """Concise borderless modal when SimConnect detects the aircraft parked at a different stand."""
+        if self._is_cockpit_popup_suppressed():
+            self.backend.pending_live_stand_prompt = {
+                "icao": dep_icao,
+                "live_stand": live_stand,
+                "current_gate": cur_gate,
+            }
+            return
         if getattr(self, "_ofp_modal_open", False) or getattr(self, "_is_importing_ofp", False):
             return
         self._ofp_modal_open = True
@@ -5110,14 +6375,7 @@ class GUIApp(ctk.CTk):
         dlg.configure(fg_color="#0F172A")
         dlg.transient(self)
         dlg.grab_set()
-
-        try:
-            self.update_idletasks()
-            x = self.winfo_rootx() + (self.winfo_width() - dlg_w) // 2
-            y = self.winfo_rooty() + (self.winfo_height() - dlg_h) // 2
-            dlg.geometry(f"{dlg_w}x{dlg_h}+{max(0, x)}+{max(0, y)}")
-        except Exception:
-            pass
+        self._center_toplevel(dlg, dlg_w, dlg_h)
 
         card = ctk.CTkFrame(dlg, fg_color="#111827", corner_radius=10, border_width=0)
         card.pack(fill="both", expand=True, padx=12, pady=12)
@@ -5192,6 +6450,326 @@ class GUIApp(ctk.CTk):
         btn_stay.pack(side="right", expand=True, fill="x", padx=(6, 0))
         Tooltip(btn_stay, f"Keep GateFinder's assigned Stand {cur_gate}.")
 
+    def _show_msfs_simbrief_mismatch_modal(self, mismatch_info):
+        """
+        Displays a sleek, minimalist borderless modal when SimConnect detects that the spawned
+        MSFS aircraft and/or departure airport does not match the SimBrief OFP.
+        """
+        if self._is_cockpit_popup_suppressed():
+            return
+        if getattr(self, "_ofp_modal_open", False) or getattr(self, "_is_importing_ofp", False):
+            return
+        self._ofp_modal_open = True
+        if self.last_flight_data is not None and not getattr(self, "_silent_hidden_mode", False):
+            self.show_main_window()
+
+        live_icao = str(mismatch_info.get("live_icao") or "").strip().upper()
+        live_stand = str(mismatch_info.get("live_stand") or "").strip()
+        m_reason = str(mismatch_info.get("mismatch_reason") or "airport").strip()
+        peek_only = bool(mismatch_info.get("peek_only", False))
+        orig_ofp_id = str(mismatch_info.get("ofp_id") or "").strip()
+        sb_orig = str(mismatch_info.get("simbrief_origin") or "").strip().upper()
+        sb_dest = str(mismatch_info.get("simbrief_dest") or "").strip().upper()
+        sb_ac = str(mismatch_info.get("simbrief_aircraft") or mismatch_info.get("simbrief_aircraft_icao") or "").strip()
+        mismatch_key = mismatch_info.get("mismatch_key")
+        ac_prof = mismatch_info.get("live_aircraft") or {}
+        ac_icao_live = str(ac_prof.get("icao") or "").strip()
+        ac_lbl = str(ac_prof.get("name") or ac_icao_live or "MSFS Aircraft").strip()
+        ac_al = str(ac_prof.get("airline") or "").strip().upper()
+        if ac_al and ac_al not in ("GA", "BIZ", "PAX"):
+            ac_disp = f"{ac_lbl} ({ac_al})"
+        else:
+            ac_disp = ac_lbl
+
+        cam = self._get_active_camaieu()
+        dlg = ctk.CTkToplevel(self)
+        self._mismatch_modal_dlg = dlg
+        self._apply_window_icon(dlg)
+        dlg.title(f"SimBrief / MSFS Mismatch ({live_icao})" if sb_orig else f"MSFS Live Flight ({live_icao})")
+        dlg_w, dlg_h = 540, (246 if sb_orig else 224)
+        dlg.geometry(f"{dlg_w}x{dlg_h}")
+        dlg.resizable(False, False)
+        dlg.configure(fg_color="#0F172A")
+        is_root_hidden = bool(self.state() == "withdrawn" or getattr(self, "_startup_splash", None) is not None)
+        if not is_root_hidden:
+            dlg.transient(self)
+        else:
+            try:
+                dlg.attributes("-topmost", True)
+            except Exception:
+                pass
+        dlg.grab_set()
+        self._center_toplevel(dlg, dlg_w, dlg_h, on_screen=is_root_hidden)
+
+        card = ctk.CTkFrame(dlg, fg_color="#111827", corner_radius=10, border_width=0)
+        card.pack(fill="both", expand=True, padx=12, pady=12)
+
+        hdr_txt = "SIMBRIEF / MSFS MISMATCH" if sb_orig else "MSFS LIVE FLIGHT"
+        lbl_hdr = ctk.CTkLabel(
+            card,
+            text=hdr_txt,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=cam["accent"],
+        )
+        lbl_hdr.pack(anchor="w", padx=16, pady=(14, 6))
+
+        stand_txt = f" (Stand {live_stand})" if live_stand else ""
+        if sb_orig:
+            summary_txt = (
+                f"MSFS :  {live_icao}{stand_txt}  |  {ac_disp}\n"
+                f"SimBrief :  {sb_orig} -> {sb_dest}  |  {sb_ac or 'Unknown'}"
+            )
+            if m_reason == "both":
+                sub_txt = "Aircraft and departure airport do not match your SimBrief OFP."
+            elif m_reason == "aircraft":
+                sub_txt = "Spawned aircraft does not match your SimBrief OFP."
+            else:
+                sub_txt = "Departure airport does not match your SimBrief OFP."
+            keep_btn_txt = "Keep SimBrief OFP"
+        else:
+            summary_txt = f"MSFS :  {live_icao}{stand_txt}  |  {ac_disp}"
+            sub_txt = "No matching SimBrief OFP found."
+            keep_btn_txt = "Dismiss"
+
+        lbl_msg = ctk.CTkLabel(
+            card,
+            text=summary_txt,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color="#FFFFFF",
+            wraplength=490,
+            justify="left",
+        )
+        lbl_msg.pack(anchor="w", padx=16, pady=(0, 3))
+
+        lbl_sub = ctk.CTkLabel(
+            card,
+            text=sub_txt,
+            font=ctk.CTkFont(size=11.5),
+            text_color="#94A3B8",
+            wraplength=490,
+            justify="left",
+        )
+        lbl_sub.pack(anchor="w", padx=16, pady=(0, 10))
+
+        dest_row = ctk.CTkFrame(card, fg_color="transparent")
+        dest_row.pack(fill="x", padx=16, pady=(0, 12))
+        ctk.CTkLabel(
+            dest_row,
+            text="Arrival ICAO (optional):",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color="#94A3B8",
+        ).pack(side="left", padx=(0, 10))
+        dest_entry = ctk.CTkEntry(
+            dest_row,
+            placeholder_text=f"e.g. LFPG (blank = {live_icao})",
+            height=30,
+            border_width=0,
+            fg_color="#1E293B",
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(family="Consolas", size=12, weight="bold"),
+        )
+        dest_entry.pack(side="left", fill="x", expand=True)
+
+        btn_row = ctk.CTkFrame(card, fg_color="transparent")
+        btn_row.pack(fill="x", padx=16, pady=(0, 12))
+
+        sb_dispatched_state = [False]
+        sb_watch_running = [False]
+
+        def _close_dlg_clean():
+            sb_dispatched_state[0] = False
+            self._ofp_modal_open = False
+            self._mismatch_modal_dlg = None
+            try:
+                if dlg.winfo_exists():
+                    dlg.destroy()
+            except Exception:
+                pass
+
+        def _import_fresh_simbrief():
+            _close_dlg_clean()
+            self.backend._cached_mismatch_sb_peek = None
+            self.backend._mismatch_check_memo = None
+            self.backend.pending_simbrief_mismatch = None
+            self.fetch_simbrief(turnaround_keep_gate=None)
+
+        def _poll_for_updated_simbrief():
+            if not sb_dispatched_state[0] or not dlg.winfo_exists() or sb_watch_running[0]:
+                return
+            sb_user = self.config.settings.get("simbrief_username", "").strip()
+            if not sb_user:
+                return
+            sb_watch_running[0] = True
+
+            import threading
+
+            def _pk_worker():
+                try:
+                    pk = self.backend.peek_latest_simbrief_ofp(sb_user)
+                    new_id = str((pk or {}).get("ofp_id") or "").strip()
+
+                    def _after_pk():
+                        sb_watch_running[0] = False
+                        if not sb_dispatched_state[0] or not dlg.winfo_exists():
+                            return
+                        if new_id and new_id != orig_ofp_id:
+                            _import_fresh_simbrief()
+                        else:
+                            dlg.after(3500, _poll_for_updated_simbrief)
+
+                    self.after(0, _after_pk)
+                except Exception:
+                    sb_watch_running[0] = False
+                    if sb_dispatched_state[0] and dlg.winfo_exists():
+                        self.after(4000, _poll_for_updated_simbrief)
+
+            threading.Thread(target=_pk_worker, daemon=True).start()
+
+        def _on_simbrief_btn():
+            if not sb_dispatched_state[0]:
+                import webbrowser
+                webbrowser.open("https://dispatch.simbrief.com/home")
+                sb_dispatched_state[0] = True
+                if btn_sb.winfo_exists():
+                    btn_sb.configure(text="Import New OFP")
+                if lbl_sub.winfo_exists():
+                    lbl_sub.configure(text="SimBrief opened in browser. Generate your OFP or click Import New OFP.")
+                dlg.after(3500, _poll_for_updated_simbrief)
+            else:
+                _import_fresh_simbrief()
+
+        def _use_live_msfs(*_):
+            dest_val = re.sub(r"[^A-Z0-9]", "", dest_entry.get().strip().upper())[:4]
+            _close_dlg_clean()
+            self.backend.dismiss_simbrief_msfs_mismatch(mismatch_key)
+            self.load_live_msfs_flight_ui(live_icao, dest_val or live_icao)
+
+        def _keep_simbrief():
+            _close_dlg_clean()
+            self.backend.dismiss_simbrief_msfs_mismatch(mismatch_key)
+            if sb_orig and (peek_only or self.last_flight_data is None):
+                self.fetch_simbrief(turnaround_keep_gate=None)
+
+        dest_entry.bind("<Return>", _use_live_msfs)
+        dlg.protocol("WM_DELETE_WINDOW", _keep_simbrief)
+
+        btn_sb = ctk.CTkButton(
+            btn_row,
+            text="Open SimBrief",
+            fg_color="#0A86C2",
+            hover_color="#0A6E9E",
+            border_width=0,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            height=34,
+            command=_on_simbrief_btn,
+        )
+        btn_sb.pack(side="left", expand=True, fill="x", padx=(0, 5))
+        Tooltip(btn_sb, "Open SimBrief Dispatch in your browser to generate a matching OFP, then import it.")
+
+        btn_live = ctk.CTkButton(
+            btn_row,
+            text="Use MSFS Aircraft",
+            fg_color=cam["s2"],
+            hover_color=cam["s1"],
+            border_width=0,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            height=34,
+            command=_use_live_msfs,
+        )
+        btn_live.pack(side="left", expand=True, fill="x", padx=5)
+        Tooltip(btn_live, f"Ignore SimBrief OFP and use your live MSFS aircraft at {live_icao}.")
+
+        btn_keep = ctk.CTkButton(
+            btn_row,
+            text=keep_btn_txt,
+            fg_color="#2B303B",
+            hover_color="#383E4C",
+            border_width=0,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            height=34,
+            command=_keep_simbrief,
+        )
+        btn_keep.pack(side="right", expand=True, fill="x", padx=(5, 0))
+        Tooltip(btn_keep, f"Keep the SimBrief OFP ({sb_orig} -> {sb_dest}) despite the mismatch." if sb_orig else "Dismiss this prompt.")
+
+    def load_live_msfs_flight_ui(self, origin_icao, dest_icao=""):
+        if getattr(self, "_is_importing_ofp", False):
+            return
+        orig_u = str(origin_icao or "").strip().upper()
+        dest_u = str(dest_icao or "").strip().upper() or orig_u
+        if not orig_u:
+            return
+
+        self._is_importing_ofp = True
+        self._silent_hidden_mode = False
+        self._current_import_step_msg = f"Loading Live MSFS Flight ({orig_u} -> {dest_u})..."
+        self.show_main_view()
+        self.btn_import.configure(text="Loading MSFS...", state="disabled")
+
+        self._last_clearance_val = None
+        self._last_traffic_pills_val = None
+        self._last_rendered_signature = None
+
+        if self.state() != "withdrawn":
+            try:
+                self._restore_zoomed = (self.state() == "zoomed")
+                self._save_window_geometry()
+            except Exception:
+                pass
+            self.withdraw()
+        self._create_startup_splash_window(initial_step=self._current_import_step_msg)
+        _render_blue_gradient_bar = getattr(self, "_render_blue_gradient_bar", lambda v: None)
+        _render_blue_gradient_bar(0.12)
+        self.update()
+
+        import threading
+        def _on_progress(pct, step_msg):
+            self._current_import_step_msg = step_msg
+            def _upd():
+                bar_fn = getattr(self, "_render_blue_gradient_bar", None)
+                if callable(bar_fn):
+                    bar_fn(pct)
+                if hasattr(self, "lbl_import_step") and self.lbl_import_step.winfo_exists():
+                    self.lbl_import_step.configure(text=step_msg)
+            self.after(0, _upd)
+
+        def _worker():
+            try:
+                self.backend.load_live_msfs_flight(orig_u, dest_u, progress_callback=_on_progress)
+                dyn_result = self.backend.get_dynamic_flight_data()
+                def _on_ok():
+                    self._is_importing_ofp = False
+                    self._startup_init_running = False
+                    self.user_manual_phase_override = False
+                    self._was_engines_running_at_arr = False
+                    self.active_phase = "departure"
+                    self.last_flight_data = dyn_result
+                    self._last_clearance_val = None
+                    self._last_traffic_pills_val = None
+                    self._last_rendered_signature = None
+                    self.render_results(dyn_result, preserve_camera=False)
+                    self.btn_import.configure(text="Import SimBrief", state="normal")
+                    self._close_startup_splash()
+                    if not getattr(self, "_silent_hidden_mode", False) and self.state() == "withdrawn":
+                        self.show_main_window()
+                self.after(0, _on_ok)
+            except Exception as e:
+                err_str = str(e)
+                def _on_err():
+                    self._is_importing_ofp = False
+                    self._startup_init_running = False
+                    self._close_startup_splash()
+                    if not getattr(self, "_silent_hidden_mode", False) and self.state() == "withdrawn":
+                        self.show_main_window()
+                    if self.last_flight_data:
+                        self._last_rendered_signature = None
+                        self.render_results(self.last_flight_data, preserve_camera=True)
+                    messagebox.showerror("Live MSFS Flight Error", f"Unable to load live MSFS airport {orig_u}:\n{err_str}")
+                    self.btn_import.configure(text="Import SimBrief", state="normal")
+                self.after(0, _on_err)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
     def _poll_simbrief_for_new_ofp(self, engine_cut_trigger=False):
         if getattr(self, "_is_importing_ofp", False) or getattr(self, "_ofp_modal_open", False) or getattr(self, "_ofp_check_in_progress", False):
             return
@@ -5213,9 +6791,13 @@ class GUIApp(ctk.CTk):
                         new_id = str(peek["ofp_id"])
                         if new_id != str(getattr(self, "_last_prompted_ofp_id", "") or ""):
                             self._last_prompted_ofp_id = new_id
-                            self._show_new_ofp_turnaround_modal(peek)
+                            if self._is_cockpit_popup_suppressed():
+                                keep_auto = True if self.config.settings.get("auto_lock_turnaround", True) else None
+                                self.fetch_simbrief(turnaround_keep_gate=keep_auto, silent_bg=True)
+                            else:
+                                self._show_new_ofp_turnaround_modal(peek)
                             return
-                    if engine_cut_trigger:
+                    if engine_cut_trigger and not self._is_cockpit_popup_suppressed():
                         arr = (self.last_flight_data or {}).get("arrival") or {}
                         if arr.get("icao") and arr.get("gate"):
                             self._show_engine_shutdown_turnaround_modal(arr.get("icao"), arr.get("gate"))
@@ -5255,14 +6837,7 @@ class GUIApp(ctk.CTk):
         dlg.configure(fg_color="#0F172A")
         dlg.transient(self)
         dlg.grab_set()
-
-        try:
-            self.update_idletasks()
-            x = self.winfo_rootx() + (self.winfo_width() - dlg_w) // 2
-            y = self.winfo_rooty() + (self.winfo_height() - dlg_h) // 2
-            dlg.geometry(f"{dlg_w}x{dlg_h}+{max(0, x)}+{max(0, y)}")
-        except Exception:
-            pass
+        self._center_toplevel(dlg, dlg_w, dlg_h)
 
         card = ctk.CTkFrame(dlg, fg_color="#111827", corner_radius=10, border_width=0)
         card.pack(fill="both", expand=True, padx=12, pady=12)
@@ -5399,14 +6974,7 @@ class GUIApp(ctk.CTk):
         dlg.configure(fg_color="#0F172A")
         dlg.transient(self)
         dlg.grab_set()
-
-        try:
-            self.update_idletasks()
-            x = self.winfo_rootx() + (self.winfo_width() - dlg_w) // 2
-            y = self.winfo_rooty() + (self.winfo_height() - dlg_h) // 2
-            dlg.geometry(f"{dlg_w}x{dlg_h}+{max(0, x)}+{max(0, y)}")
-        except Exception:
-            pass
+        self._center_toplevel(dlg, dlg_w, dlg_h)
 
         card = ctk.CTkFrame(dlg, fg_color="#111827", corner_radius=10, border_width=0)
         card.pack(fill="both", expand=True, padx=12, pady=12)
@@ -5523,6 +7091,21 @@ class GUIApp(ctk.CTk):
         else:
             _apply_change()
 
+    def _on_taxiway_selected(self, twy_ref=None, phase=None, action=None, remove_twy=None):
+        if not self.last_flight_data or not hasattr(self, "backend") or not self.backend:
+            return
+        target_phase = phase or self.active_phase
+        self.backend.set_custom_taxi_via(
+            target_phase,
+            action=action,
+            toggle_twy=twy_ref,
+            remove_twy=remove_twy
+        )
+        self.last_flight_data = self.backend.get_dynamic_flight_data()
+        self._last_rendered_signature = None
+        self._last_clearance_val = None
+        self.render_results(self.last_flight_data, preserve_camera=True)
+
     def _show_atc_runway_override_modal(self, atc_src, icao, atc_rwy, new_rwy, on_confirm, on_cancel):
         cam = self._get_active_camaieu()
         dlg = ctk.CTkToplevel(self)
@@ -5534,14 +7117,7 @@ class GUIApp(ctk.CTk):
         dlg.configure(fg_color="#0F172A")
         dlg.transient(self)
         dlg.grab_set()
-
-        try:
-            self.update_idletasks()
-            x = self.winfo_rootx() + (self.winfo_width() - dlg_w) // 2
-            y = self.winfo_rooty() + (self.winfo_height() - dlg_h) // 2
-            dlg.geometry(f"{dlg_w}x{dlg_h}+{max(0, x)}+{max(0, y)}")
-        except Exception:
-            pass
+        self._center_toplevel(dlg, dlg_w, dlg_h)
 
         card = ctk.CTkFrame(dlg, fg_color="#111827", corner_radius=10, border_width=0)
         card.pack(fill="both", expand=True, padx=12, pady=12)
@@ -5656,14 +7232,7 @@ class GUIApp(ctk.CTk):
         dlg.configure(fg_color="#0F172A")
         dlg.transient(self)
         dlg.grab_set()
-
-        try:
-            self.update_idletasks()
-            x = self.winfo_rootx() + (self.winfo_width() - dlg_w) // 2
-            y = self.winfo_rooty() + (self.winfo_height() - dlg_h) // 2
-            dlg.geometry(f"{dlg_w}x{dlg_h}+{max(0, x)}+{max(0, y)}")
-        except Exception:
-            pass
+        self._center_toplevel(dlg, dlg_w, dlg_h)
 
         card = ctk.CTkFrame(dlg, fg_color="#111827", corner_radius=12, border_width=0)
         card.pack(fill="both", expand=True, padx=12, pady=12)
@@ -5757,7 +7326,14 @@ class GUIApp(ctk.CTk):
                 continue
             key_u = s_ref.replace(" ", "").upper()
             st_term = _clean_terminal_label(st.get("terminal") or "")
-            st_als = st.get("airlines") or []
+            if not st_term:
+                if st.get("is_military"):
+                    st_term = "Military Apron (Mil)"
+                elif st.get("is_cargo"):
+                    st_term = "Cargo Apron"
+            st_als = list(st.get("airlines") or [])
+            if st.get("is_military") and "MIL" not in [str(x).upper() for x in st_als]:
+                st_als.insert(0, "MIL")
             if key_u in stand_dict:
                 if st_term and not stand_dict[key_u][1]:
                     stand_dict[key_u][1] = st_term
@@ -6212,11 +7788,46 @@ class GUIApp(ctk.CTk):
         )
         self.lbl_live_status_pill.pack(fill="x", padx=14, pady=(12, 6))
 
+        self._sb_clearance_hdr_row = ctk.CTkFrame(route_card, fg_color="transparent", border_width=0)
+        self._sb_clearance_hdr_row.pack(fill="x", padx=14, pady=(12, 8))
+
         self._sb_clearance_hdr_lbl = ctk.CTkLabel(
-            route_card, text="ATC TAXI CLEARANCE",
+            self._sb_clearance_hdr_row, text="ATC TAXI CLEARANCE",
             font=ctk.CTkFont(size=13, weight="bold"), text_color="#FFFFFF"
         )
-        self._sb_clearance_hdr_lbl.pack(anchor="w", padx=14, pady=(12, 8))
+        self._sb_clearance_hdr_lbl.pack(side="left", anchor="w")
+
+        self._btn_taxi_auto = ctk.CTkButton(
+            self._sb_clearance_hdr_row,
+            text="Auto",
+            width=48,
+            height=22,
+            corner_radius=6,
+            fg_color="#2B303B",
+            hover_color="#383E4C",
+            border_width=0,
+            text_color="#E2E8F0",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            command=lambda: self._on_taxiway_selected(action="auto")
+        )
+        self._btn_taxi_auto.pack(side="right", padx=(4, 0))
+        Tooltip(self._btn_taxi_auto, "Restore automatic GateFinder A* taxi routing")
+
+        self._btn_taxi_clear = ctk.CTkButton(
+            self._sb_clearance_hdr_row,
+            text="Clear",
+            width=48,
+            height=22,
+            corner_radius=6,
+            fg_color="#2B303B",
+            hover_color="#383E4C",
+            border_width=0,
+            text_color="#E2E8F0",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            command=lambda: self._on_taxiway_selected(action="clear")
+        )
+        self._btn_taxi_clear.pack(side="right")
+        Tooltip(self._btn_taxi_clear, "Clear taxiway route and click taxiway badges on the map to build your custom ATC route")
 
         self.clearance_pills_frame = ctk.CTkFrame(route_card, fg_color="transparent", border_width=0)
         self.clearance_pills_frame.pack(fill="x", expand=False, padx=14, pady=(0, 12))
@@ -6241,6 +7852,43 @@ class GUIApp(ctk.CTk):
             scrollbar_button_hover_color="#578DA8"
         )
         self.traffic_pills_frame.pack(fill="both", expand=True, padx=(10, 4), pady=(0, 10))
+
+        def _on_sidebar_height_configure(event=None):
+            try:
+                if not sidebar.winfo_exists():
+                    return
+                win_scale = float(self._get_window_scaling() or 1.0)
+                sb_logical_h = sidebar.winfo_height() / max(0.5, win_scale)
+                is_compact = (sb_logical_h > 100 and sb_logical_h < 560)
+                if getattr(self, "_sb_is_compact_h", None) == is_compact:
+                    return
+                self._sb_is_compact_h = is_compact
+                if is_compact:
+                    gate_card.pack_configure(pady=(0, 6))
+                    route_card.pack_configure(pady=(0, 6))
+                    self._sb_icao_title_lbl.pack_configure(pady=(8, 2))
+                    if self._sb_city_lbl.winfo_ismapped():
+                        self._sb_city_lbl.pack_configure(pady=(0, 6))
+                    self._sb_gate_pill_lbl.pack_configure(pady=(2, 8))
+                    self._sb_pills_grid.pack_configure(pady=(0, 8))
+                    self._sb_clearance_hdr_row.pack_configure(pady=(8, 6))
+                    self.clearance_pills_frame.pack_configure(pady=(0, 8))
+                    self._sb_traffic_hdr_lbl.pack_configure(pady=(8, 4))
+                else:
+                    gate_card.pack_configure(pady=(0, 10))
+                    route_card.pack_configure(pady=(0, 10))
+                    self._sb_icao_title_lbl.pack_configure(pady=(16, 4))
+                    if self._sb_city_lbl.winfo_ismapped():
+                        self._sb_city_lbl.pack_configure(pady=(0, 14))
+                    self._sb_gate_pill_lbl.pack_configure(pady=(4, 18))
+                    self._sb_pills_grid.pack_configure(pady=(0, 14))
+                    self._sb_clearance_hdr_row.pack_configure(pady=(12, 8))
+                    self.clearance_pills_frame.pack_configure(pady=(0, 12))
+                    self._sb_traffic_hdr_lbl.pack_configure(pady=(12, 6))
+            except Exception:
+                pass
+
+        sidebar.bind("<Configure>", _on_sidebar_height_configure, add="+")
 
     def _apply_sidebar_width(self, new_w: int, is_dragging: bool = False):
         self._sidebar_width = int(new_w)
@@ -6269,6 +7917,17 @@ class GUIApp(ctk.CTk):
             return
         if cam is None:
             cam = self._get_active_camaieu()
+        fast_c_sig = (
+            clearance_str,
+            cam.get("s1"),
+            sel_rwy,
+            det_exit,
+            self.active_phase,
+            int(getattr(self, "_sidebar_width", 356) or 356),
+        )
+        if getattr(self.clearance_pills_frame, "_fast_c_sig", None) == fast_c_sig and self.clearance_pills_frame.winfo_children():
+            return
+        self.clearance_pills_frame._fast_c_sig = fast_c_sig
         raw_parts = [p.strip() for p in re.split(r'\s*(?:->|➔)\s*', str(clearance_str or "")) if p.strip()]
         tokens = []
         for p in raw_parts:
@@ -6501,6 +8160,11 @@ class GUIApp(ctk.CTk):
                         self._clearance_rwy_tooltip = t_obj
                 else:
                     is_stand_pill = bool(re.match(r'^(?:STAND|GATE|PARKING|RAMP|DOCK)\b', str(tok or ""), flags=re.IGNORECASE))
+                    is_twy_pill = bool(
+                        kind == "NORMAL"
+                        and not is_stand_pill
+                        and str(tok or "").upper() not in ("ENTERED", "DIRECT", "APRON", "CLICK TAXIWAYS", "CLICK TAXIWAYS ON MAP", "ROUTE READY", "TAXI MONITORING STOPPED")
+                    )
                     lbl_p = ctk.CTkLabel(
                         cur_row,
                         text=tok,
@@ -6512,12 +8176,15 @@ class GUIApp(ctk.CTk):
                         font=ctk.CTkFont(size=14, weight="bold"),
                         padx=16,
                         pady=8,
-                        cursor="hand2" if is_stand_pill else ""
+                        cursor="hand2" if (is_stand_pill or is_twy_pill) else ""
                     )
                     lbl_p.pack(side="left", padx=(0, 7))
                     if is_stand_pill:
                         lbl_p.bind("<Button-1>", lambda e: self._open_manual_stand_picker_modal())
                         Tooltip(lbl_p, f"{tok} - Click to open Terminal/Gate Selector")
+                    elif is_twy_pill:
+                        lbl_p.bind("<Button-1>", lambda e, t_val=tok: self._on_taxiway_selected(remove_twy=t_val))
+                        Tooltip(lbl_p, f"Taxiway {tok} - Click to remove from route (or click taxiway badges on the map)")
                     elif tip_txt:
                         Tooltip(lbl_p, tip_txt)
 
@@ -6685,10 +8352,30 @@ class GUIApp(ctk.CTk):
         has_jetway = airport_data.get("has_jetway")
         if has_jetway is None:
             has_jetway = (airport_data.get("type", "GATE") in ("GATE", "DOCK"))
-        is_cargo_disp = "CARGO" in term_str or airport_data.get("is_cargo")
-        boarding_text = "Cargo Jetway/Ramp" if (is_cargo_disp and has_jetway) else (
-            "Cargo Ramp" if is_cargo_disp else ("Jetway boarding" if has_jetway else "Walk/Bus boarding")
+        is_mil_disp = (
+            bool(airport_data.get("is_military"))
+            or "MILITARY" in term_str.upper()
+            or bool(result.get("is_military_flight"))
         )
+        is_cargo_disp = (
+            "CARGO" in term_str.upper()
+            or bool(airport_data.get("is_cargo"))
+            or bool(result.get("is_cargo_flight"))
+        )
+        is_ga_disp = (
+            bool(airport_data.get("is_ga"))
+            or "GENERAL AVIATION" in term_str.upper()
+            or "BUSINESS AVIATION" in term_str.upper()
+            or bool(result.get("is_ga_flight"))
+        )
+        if is_mil_disp:
+            boarding_text = "Military Stand (Mil)" if airport_data.get("is_mil_stand_tagged") else "Military Ramp"
+        elif is_cargo_disp:
+            boarding_text = "Cargo Jetway/Ramp" if has_jetway else "Cargo / Freighter Ramp"
+        elif is_ga_disp and not has_jetway:
+            boarding_text = "GA / FBO Ramp"
+        else:
+            boarding_text = "Jetway boarding" if has_jetway else "Walk/Bus boarding"
         self._sb_boarding_pill.configure(fg_color=cam["s2"])
         self._sb_boarding_lbl.configure(text=boarding_text, text_color="#FFFFFF")
         self._sb_boarding_tip.text = f"{boarding_text}  {term_str}"
@@ -6714,15 +8401,15 @@ class GUIApp(ctk.CTk):
         raw_rwy_src = str(airport_data.get("atc_runway_source") or airport_data.get("runway_source") or "").strip()
         src_u = raw_gate_src.upper()
         rwy_src_u = raw_rwy_src.upper()
-        if "MANUAL" in src_u:
-            clean_src = "Manual Selection"
-            src_tip = "Manual Selection: Stand manually chosen by you on the ground chart or stand list."
-        elif "BEYOND" in src_u or "BEYOND" in rwy_src_u:
+        if "BEYOND" in src_u or "BEYOND" in rwy_src_u:
             clean_src = "BeyondATC"
             src_tip = "BeyondATC: Active clearance / stand synchronized with BeyondATC."
         elif "SAYINTENTIONS" in src_u or "SAYINTENTIONS" in rwy_src_u:
             clean_src = "SayIntentions.AI"
             src_tip = "SayIntentions.AI: Active clearance / stand synchronized with SayIntentions.AI."
+        elif "MANUAL" in src_u:
+            clean_src = "Manual Selection"
+            src_tip = "Manual Selection: Stand manually chosen by you on the ground chart or stand list."
         elif "REASSIGNED" in src_u:
             clean_src = "VATSIM / IVAO"
             src_tip = "VATSIM / IVAO: Stand dynamically reassigned to avoid online traffic conflict."
@@ -6764,10 +8451,23 @@ class GUIApp(ctk.CTk):
         if st_text:
             self.lbl_live_status_pill.configure(text=st_text, text_color="#FFFFFF", fg_color="#2B303B")
             if not self.lbl_live_status_pill.winfo_ismapped():
-                self.lbl_live_status_pill.pack(fill="x", padx=14, pady=(12, 6), before=self._sb_clearance_hdr_lbl)
+                hdr_anchor = getattr(self, "_sb_clearance_hdr_row", None) or self._sb_clearance_hdr_lbl
+                self.lbl_live_status_pill.pack(fill="x", padx=14, pady=(12, 6), before=hdr_anchor)
         else:
             if self.lbl_live_status_pill.winfo_ismapped():
                 self.lbl_live_status_pill.pack_forget()
+
+        is_cust_twy = bool(airport_data.get("custom_taxi_mode"))
+        if hasattr(self, "_btn_taxi_auto") and self._btn_taxi_auto and self._btn_taxi_auto.winfo_exists():
+            self._btn_taxi_auto.configure(
+                fg_color=cam["s1"] if not is_cust_twy else "#2B303B",
+                text_color="#FFFFFF" if not is_cust_twy else "#CBD5E1"
+            )
+        if hasattr(self, "_btn_taxi_clear") and self._btn_taxi_clear and self._btn_taxi_clear.winfo_exists():
+            self._btn_taxi_clear.configure(
+                fg_color="#10B981" if is_cust_twy else "#2B303B",
+                text_color="#FFFFFF" if is_cust_twy else "#CBD5E1"
+            )
 
         clearance_str = (tr.get("clearance_text") or f"Stand {gate_val} -> RWY {sel_rwy}").replace("➔", "->")
         self._render_clearance_pills(clearance_str, cam=cam, sel_rwy=sel_rwy, det_exit=det_exit)
@@ -6935,8 +8635,8 @@ class GUIApp(ctk.CTk):
         # Keep sync loop signature up-to-date so check_sync_loop never double-renders 200ms after a click
         self._last_rendered_signature = (
             result.get("aircraft"), result.get("airline"),
-            dep.get("icao"), dep.get("gate"), dep.get("gate_source"), dep.get("atc_runway_source"), dep.get("selected_runway"), dep.get("atc_runway"), tuple(dep.get("atc_taxi_via") or ()), dep.get("bypassed_summary"),
-            arr.get("icao"), arr.get("gate"), arr.get("gate_source"), arr.get("atc_runway_source"), arr.get("selected_runway"), arr.get("atc_runway"), tuple(arr.get("atc_taxi_via") or ()), arr.get("bypassed_summary"),
+            dep.get("icao"), dep.get("gate"), dep.get("gate_source"), dep.get("atc_runway_source"), dep.get("selected_runway"), dep.get("atc_runway"), bool(dep.get("custom_taxi_mode")), None if dep.get("atc_taxi_via") is None else tuple(dep.get("atc_taxi_via")), dep.get("bypassed_summary"),
+            arr.get("icao"), arr.get("gate"), arr.get("gate_source"), arr.get("atc_runway_source"), arr.get("selected_runway"), arr.get("atc_runway"), bool(arr.get("custom_taxi_mode")), None if arr.get("atc_taxi_via") is None else tuple(arr.get("atc_taxi_via")), arr.get("bypassed_summary"),
             self.active_phase, eff_map_hib, show_maps_cfg, is_airborne
         )
         self._last_route_cam_key = (
@@ -6944,7 +8644,8 @@ class GUIApp(ctk.CTk):
             airport_data.get("icao"),
             airport_data.get("gate"),
             airport_data.get("selected_runway"),
-            tuple(airport_data.get("atc_taxi_via") or ())
+            bool(airport_data.get("custom_taxi_mode")),
+            None if airport_data.get("atc_taxi_via") is None else tuple(airport_data.get("atc_taxi_via"))
         )
 
         if not airport_data:
@@ -7044,15 +8745,19 @@ class GUIApp(ctk.CTk):
                 initial_theme=initial_theme,
                 backend=self.backend,
                 on_stand_click=self._on_manual_stand_selected,
-                on_runway_click=self._on_runway_selected
+                on_runway_click=self._on_runway_selected,
+                on_taxiway_click=self._on_taxiway_selected,
+                app_ref=self
             )
             self.vector_chart.grid(row=0, column=1, sticky="nsew", padx=(6, 0), pady=0)
+            self._refresh_updater_buttons()
         else:
             if not preserve_camera:
                 self.vector_chart.follow_aircraft = False
                 self.vector_chart.heading_up = False
                 self.vector_chart.view_mode = "route"
                 self.vector_chart._update_theme_buttons()
+            self._refresh_updater_buttons()
 
         self.vector_chart.set_simconnect_status(getattr(self, "_current_simconnect_status_txt", "SimConnect Standby"))
 
