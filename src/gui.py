@@ -5475,6 +5475,15 @@ class GUIApp(ctk.CTk):
                 bat_content = (
                     "@echo off\r\n"
                     "setlocal\r\n"
+                    "set \"_PYI_APPLICATION_HOME_DIR=\"\r\n"
+                    "set \"_PYI_ARCHIVE_FILE=\"\r\n"
+                    "set \"_PYI_PARENT_PROCESS_LEVEL=\"\r\n"
+                    "set \"_PYI_SPLASH_IPC=\"\r\n"
+                    "set \"_MEIPASS=\"\r\n"
+                    "set \"_MEIPASS2=\"\r\n"
+                    "set \"TCL_LIBRARY=\"\r\n"
+                    "set \"TK_LIBRARY=\"\r\n"
+                    "set \"PYINSTALLER_RESET_ENVIRONMENT=1\"\r\n"
                     "set \"SRC=%~1\"\r\n"
                     "set \"DST=%~2\"\r\n"
                     "set \"EXE=%~3\"\r\n"
@@ -5489,7 +5498,7 @@ class GUIApp(ctk.CTk):
                     "    )\r\n"
                     ")\r\n"
                     "robocopy \"%SRC%\" \"%DST%\" /E /XF settings.json last_flight_session.json GateFinder.exe >nul 2>&1\r\n"
-                    "start \"\" \"%DST%\\%EXE%\"\r\n"
+                    "start \"\" /D \"%DST%\" \"%DST%\\%EXE%\"\r\n"
                     "start /b \"\" cmd /c \"ping 127.0.0.1 -n 3 >nul & rmdir /S /Q \"\"%~dp0\"\"\"\r\n"
                     "exit /b 0\r\n"
                 )
@@ -5504,8 +5513,30 @@ class GUIApp(ctk.CTk):
                         self._save_window_geometry()
                     except Exception:
                         pass
+                    clean_env = {}
+                    old_mei = os.path.normcase(str(getattr(sys, "_MEIPASS", "") or "")).rstrip("\\/")
+                    for ek, ev in os.environ.items():
+                        eku = ek.upper()
+                        if eku.startswith(("_PYI", "_MEI", "PYINSTALLER_")) or eku in ("TCL_LIBRARY", "TK_LIBRARY"):
+                            continue
+                        if eku == "PATH" and old_mei:
+                            parts = [
+                                p for p in str(ev).split(os.pathsep)
+                                if p and os.path.normcase(p.rstrip("\\/")) != old_mei
+                            ]
+                            clean_env[ek] = os.pathsep.join(parts)
+                        else:
+                            clean_env[ek] = ev
+                    clean_env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+                    try:
+                        import ctypes
+                        ctypes.windll.kernel32.SetDllDirectoryW(None)
+                    except Exception:
+                        pass
                     subprocess.Popen(
                         ["cmd.exe", "/c", bat_path, payload_dir, install_dir, exe_name],
+                        cwd=install_dir,
+                        env=clean_env,
                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) | getattr(subprocess, "DETACHED_PROCESS", 0x00000008),
                         close_fds=True,
                     )
