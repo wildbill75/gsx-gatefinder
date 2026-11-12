@@ -1,5 +1,5 @@
 /**
- * GateFinderEfbApp.js - MSFS 2024 Native EFB App for GateFinder V2.0.6
+ * GateFinderEfbApp.js - MSFS 2024 Native EFB App for GateFinder V2.0.7
  *
  * Registers "GateFinder" in the MSFS 2024 EFB OS (window.EFB_API) and renders
  * the interactive Lido ground radar & stand/ATC interface inside a sandboxed
@@ -13,7 +13,7 @@
     }
 
     var APP_ROOT = "coui://html_ui/efb_ui/efb_apps/GateFinderEfbApp";
-    var FRAME_URL = "coui://html_ui/ingamePanels/GateFinderPanel/GateFinderEfbFrame.html?v=206";
+    var FRAME_URL = "coui://html_ui/ingamePanels/GateFinderPanel/GateFinderEfbFrame.html?v=207";
 
     var BootMode = { COLD: 0, WARM: 1, HOT: 2 };
     var SuspendMode = { SLEEP: 0, TERMINATE: 1 };
@@ -182,7 +182,7 @@
         get favoriteIndex() { return this._favoriteIndex; }
         set favoriteIndex(value) { this._favoriteIndex = value; }
 
-        getVersion() { return "2.0.6"; }
+        getVersion() { return "2.0.7"; }
         getIsSearchable() { return this.options.isSearchable !== false; }
         getIsFavoritable() { return this.options.isFavoritable !== false; }
         get compatibleAircraftModels() { return undefined; }

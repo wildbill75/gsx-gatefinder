@@ -127,7 +127,8 @@ if __name__ == "__main__":
         if not already_alive:
             try:
                 hwnd = (
-                    ctypes.windll.user32.FindWindowW(None, "MSFS 2024 - GateFinder V2.0.6")
+                    ctypes.windll.user32.FindWindowW(None, "MSFS 2024 - GateFinder V2.0.7")
+                    or ctypes.windll.user32.FindWindowW(None, "MSFS 2024 - GateFinder V2.0.6")
                     or ctypes.windll.user32.FindWindowW(None, "MSFS 2024 - GateFinder V2.0.5")
                     or ctypes.windll.user32.FindWindowW(None, "MSFS 2024 - GateFinder V2.0.4")
                     or ctypes.windll.user32.FindWindowW(None, "MSFS 2024 - GateFinder V2.0.3")

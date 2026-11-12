@@ -1,8 +1,8 @@
-# GateFinder V2.0.6 — User Manual (MSFS 2020 & MSFS 2024)
+# GateFinder V2.0.7 — User Manual (MSFS 2020 & MSFS 2024)
 
-**GateFinder V2.0.6** is an all-in-one airport surface navigation, intelligent stand assignment, GSX Pro integration, and AI ATC ground companion for **Microsoft Flight Simulator 2020 & 2024**. It operates as:
+**GateFinder V2.0.7** is an all-in-one airport surface navigation, intelligent stand assignment, GSX Pro integration, and AI ATC ground companion for **Microsoft Flight Simulator 2020 & 2024**. It operates as:
 - A standalone **Desktop Application** (with 4K / high-DPI support, scrollable Settings, and persistent window geometry),
-- A native **MSFS 2024 Tablet EFB App** & **MSFS 2020/2024 In-Game Toolbar Panel (`GATEFINDER V2.0.6`)** optimized for 2D monitors and **Virtual Reality (VR)**,
+- A native **MSFS 2024 Tablet EFB App** & **MSFS 2020/2024 In-Game Toolbar Panel (`GATEFINDER V2.0.7`)** optimized for 2D monitors and **Virtual Reality (VR)**,
 - A native **Fenix A319 / A320 / A321 Cockpit EFB App** (on both Captain and First Officer tablets),
 - A **Live Web EFB** accessible on any iPad, Android tablet, or smartphone via QR code.
 
@@ -19,7 +19,7 @@
 7. [ATC Taxi Clearance & Interactive Taxiway Route Editing (VATSIM / IVAO / VR)](#7-atc-taxi-clearance--interactive-taxiway-route-editing-vatsim--ivao--vr)
 8. [Interactive Lido Surface Chart & `Follow + Hdg Up` Smart Zoom](#8-interactive-lido-surface-chart--follow--hdg-up-smart-zoom)
 9. [Live Traffic, Multi-Column Stand Status & MARS Stand Protection](#9-live-traffic-multi-column-stand-status--mars-stand-protection)
-10. [MSFS 2024 EFB App, In-Game Toolbar Panel (`GATEFINDER V2.0.6`), VR & Fenix EFB](#10-msfs-2024-efb-app-in-game-toolbar-panel-gatefinder-v206-vr--fenix-efb)
+10. [MSFS 2024 EFB App, In-Game Toolbar Panel (`GATEFINDER V2.0.7`), VR & Fenix EFB](#10-msfs-2024-efb-app-in-game-toolbar-panel-gatefinder-v207-vr--fenix-efb)
 11. [External Tablet & Smartphone Web EFB (QR Code)](#11-external-tablet--smartphone-web-efb-qr-code)
 12. [Settings Reference](#12-settings-reference)
 13. [Troubleshooting & Uninstallation](#13-troubleshooting--uninstallation)
@@ -53,7 +53,7 @@
      - Click **Auto-Detect** next to **GSX Profile Path** (default: `%APPDATA%\Virtuali\GSX\MSFS`).
      - Verify your **Primary Community Folder** and/or **Secondary / MSFS 2024 Folder** (automatically detected from your MSFS `UserCfg.opt`).
 5. **Install the MSFS In-Game Panel / MSFS 2024 EFB / Fenix EFB**:
-   - Click **Install Panel**. GateFinder deploys the `gatefinder-ingame-panel` package (`GATEFINDER V2.0.6`) into your Community folder(s), enabling both the **MSFS Toolbar Panel**, the **native MSFS 2024 EFB App**, and (when enabled) the **Fenix A320 EFB App**.
+   - Click **Install Panel**. GateFinder deploys the `gatefinder-ingame-panel` package (`GATEFINDER V2.0.7`) into your Community folder(s), enabling both the **MSFS Toolbar Panel**, the **native MSFS 2024 EFB App**, and (when enabled) the **Fenix A320 EFB App**.
 6. **Return to Main View**:
    - Click **Back** in the top-right corner—all settings are saved automatically.
 
@@ -111,7 +111,7 @@ When you click **Import SimBrief** (or on startup), GateFinder cross-checks your
 
 ## 5. Airline, Cargo, Military (`Mil`), Business Jet & GA Operations
 
-GateFinder V2.0.6 automatically adapts its stand selection engine to five distinct aviation categories without requiring manual mode switching:
+GateFinder V2.0.7 automatically adapts its stand selection engine to five distinct aviation categories without requiring manual mode switching:
 
 1. **Commercial Passenger Airlines**:
    - Matches your airline ICAO code to real-world terminal rules (`airlines_terminals.json`), GSX `.ini` gate assignments, and MSFS scenery airline codes, prioritizing jetway-equipped gates with realistic wingspan margins (including automatic **MARS multi-stand bay resolution** for narrowbody vs. widebody variants).
@@ -191,7 +191,7 @@ At the bottom of the left sidebar, the **TRAFFIC & STAND STATUS** card monitors 
 
 ---
 
-## 10. MSFS 2024 EFB App, In-Game Toolbar Panel (`GATEFINDER V2.0.6`), VR & Fenix EFB
+## 10. MSFS 2024 EFB App, In-Game Toolbar Panel (`GATEFINDER V2.0.7`), VR & Fenix EFB
 
 ### 1. Native MSFS 2024 Tablet EFB Integration
 - When installed into your MSFS 2024 Community folder, GateFinder appears as a **dedicated native app icon directly inside the MSFS 2024 EFB tablet** (`GateFinder`), featuring a tailored cockpit tablet layout and full real-time synchronization with the desktop app.
@@ -202,7 +202,7 @@ At the bottom of the left sidebar, the **TRAFFIC & STAND STATUS** card monitors 
 
 ### 3. MSFS In-Game Toolbar Panel (MSFS 2020 & 2024 — 2D & VR)
 1. Load a flight in **MSFS 2020** or **MSFS 2024**.
-2. Open the **MSFS Top Toolbar** and click the **GateFinder** icon (`GATEFINDER V2.0.6`).
+2. Open the **MSFS Top Toolbar** and click the **GateFinder** icon (`GATEFINDER V2.0.7`).
 3. **VR & Cockpit Ergonomics**:
    - Features the same resizable left sidebar splitter, full-airport default centering, interactive taxiway builder, GSX Pro confirmation toast, and `Follow + Hdg Up` Lido vector map as the desktop app, with enlarged hitboxes for VR controllers and head-tracked cursors.
 
@@ -210,9 +210,9 @@ At the bottom of the left sidebar, the **TRAFFIC & STAND STATUS** card monitors 
 
 ## 11. External Tablet & Smartphone Web EFB (QR Code)
 
-You can use GateFinder V2.0.6 on an external **iPad, Android tablet, or smartphone** over your local Wi-Fi network:
+You can use GateFinder V2.0.7 on an external **iPad, Android tablet, or smartphone** over your local Wi-Fi network:
 1. Open **Settings** in the GateFinder desktop app and click **Open Tablet / Web EFB (QR Code)** (or scan the QR code displayed in the modal).
-2. Your tablet or phone browser will open `http://<YOUR_PC_LAN_IP>:8420/efb` with the full interactive GateFinder V2.0.6 Lido EFB synchronized in real time.
+2. Your tablet or phone browser will open `http://<YOUR_PC_LAN_IP>:8420/efb` with the full interactive GateFinder V2.0.7 Lido EFB synchronized in real time.
 3. **Important Note for VPN Users (ProtonVPN, NordVPN, etc.)**:
    - GateFinder automatically detects your PC's physical Wi-Fi/Ethernet LAN IP (`192.168.x.x`) even if a VPN is running on your PC.
    - However, if a **VPN app is active on your tablet or smartphone**, the mobile VPN may block local Wi-Fi (`192.168.x.x`) traffic. Either enable **"Allow LAN connections"** (Split Tunneling) in your mobile VPN settings or disconnect the VPN on your tablet/phone while using the Web EFB.
@@ -227,7 +227,8 @@ You can use GateFinder V2.0.6 on an external **iPad, Android tablet, or smartpho
 | **SimBrief Username or Pilot ID** | Your SimBrief Pilot ID or username used to download your latest OFP. Use **Test Connection** to validate. |
 | **Auto-fetch latest SimBrief OFP on startup** | Automatically imports your active SimBrief flight plan as soon as GateFinder launches. |
 | **Prompt to keep arrival or live MSFS parked stand on Turnaround** | Asks whether to keep your current physical stand or pick a new one when importing an OFP while already parked at an airport. |
-| **Suppress desktop popups (Cockpit / VR mode)** | Prevents automatic blocking modals (Live Stand Selection & SimBrief Mismatch) from stealing desktop/simulator focus, replacing them with a discreet inline desktop bar and in-sim EFB resolution. |
+| **Suppress desktop popups (Cockpit / VR mode)** | Prevents automatic blocking modals (Live Stand Selection, Turnaround & SimBrief Mismatch) from stealing desktop/simulator focus, replacing them with a discreet inline desktop bar and in-sim EFB resolution. |
+| **Auto-select 'Use MSFS Aircraft' on SimBrief mismatch** | Automatically applies your spawned MSFS aircraft in the background whenever a SimBrief aircraft/airport mismatch is detected, bypassing the mismatch prompt. |
 | **Force Cargo Mode** | Optional manual override to force cargo ramps even when flying a passenger aircraft (freighter aircraft and cargo airlines are already detected automatically). |
 
 ### 2. ATC, GSX Pro & Online Traffic
@@ -255,7 +256,7 @@ You can use GateFinder V2.0.6 on an external **iPad, Android tablet, or smartpho
 | **GSX Profile Path** | Path to your FSDreamTeam GSX `.ini` airport profiles (`%APPDATA%\Virtuali\GSX\MSFS`). Click **Auto-Detect** to locate automatically. |
 | **Primary Community Folder** | Path to your primary MSFS `Community` folder. |
 | **Secondary / MSFS 2024 Folder** | Optional path to a second `Community` folder (if you have both MSFS 2020 and MSFS 2024 installed). |
-| **MSFS In-Game Toolbar Panel & EFB** | Click **Install Panel** or **Uninstall Panel** to add or remove `gatefinder-ingame-panel` (`GATEFINDER V2.0.6`) from your Community folder(s). |
+| **MSFS In-Game Toolbar Panel & EFB** | Click **Install Panel** or **Uninstall Panel** to add or remove `gatefinder-ingame-panel` (`GATEFINDER V2.0.7`) from your Community folder(s). |
 | **Uninstall GateFinder** *(Red Button)* | Completely removes the MSFS In-Game Panel & EFB hooks from all Community folders, cleans up `exe.xml` auto-start entries, and prepares GateFinder for removal. |
 
 ---

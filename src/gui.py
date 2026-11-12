@@ -609,6 +609,19 @@ class SettingsView(ctk.CTkFrame):
         self._chk_widgets.append(chk_suppress_popups)
         Tooltip(chk_suppress_popups, "Prevents automatic Live Stand, Turnaround, and SimBrief Mismatch modals from forcing open over the simulator or desktop UI. Status and choices remain accessible inside the in-sim EFB panel.")
 
+        is_def_msfs = str(self.config.settings.get("default_mismatch_action", "ask") or "ask").strip().lower() == "use_msfs"
+        self.default_mismatch_use_msfs_var = ctk.BooleanVar(value=is_def_msfs)
+        chk_def_mismatch = ctk.CTkCheckBox(
+            c3_checks,
+            text="Auto-select 'Use MSFS Aircraft' on SimBrief mismatch",
+            variable=self.default_mismatch_use_msfs_var,
+            command=self.save_settings_silent,
+            **chk_style
+        )
+        chk_def_mismatch.pack(anchor="w", pady=1)
+        self._chk_widgets.append(chk_def_mismatch)
+        Tooltip(chk_def_mismatch, "Automatically applies 'Use MSFS Aircraft' in the background when your spawned MSFS aircraft or airport differs from your SimBrief OFP, bypassing the mismatch prompt.")
+
         lbl_poll_rate = ctk.CTkLabel(c3, text="Live Map Follow Refresh Rate:", font=ctk.CTkFont(size=13, weight="bold"), text_color="#E2E8F0")
         lbl_poll_rate.grid(row=1, column=0, sticky="w", pady=(3, 1))
         Tooltip(lbl_poll_rate, "Controls real-time aircraft tracking refresh rate on the ground chart. Zero impact on MSFS FPS; 20 Hz slightly increases GateFinder CPU usage on very large hubs.")
@@ -1970,6 +1983,11 @@ class SettingsView(ctk.CTkFrame):
             "auto_lock_turnaround": self.auto_lock_turnaround_var.get(),
             "hibernate_map_in_flight": self.hibernate_map_in_flight_var.get(),
             "suppress_popups_in_cockpit": self.suppress_popups_var.get() if hasattr(self, "suppress_popups_var") else False,
+            "default_mismatch_action": (
+                "use_msfs"
+                if (hasattr(self, "default_mismatch_use_msfs_var") and self.default_mismatch_use_msfs_var.get())
+                else "ask"
+            ),
             "map_follow_refresh_hz": int(self.map_follow_refresh_hz_var.get()) if hasattr(self, "map_follow_refresh_hz_var") else 10,
             "auto_clear_ai": self.auto_clear_ai_var.get(),
             "mars_overlap_protection": self.mars_overlap_protection_var.get() if hasattr(self, "mars_overlap_protection_var") else True,
@@ -4560,7 +4578,7 @@ class GUIApp(ctk.CTk):
         self._geom_save_after_id = None
 
         self.configure(fg_color="#121418")
-        self.title("MSFS 2024 - GateFinder V2.0.6")
+        self.title("MSFS 2024 - GateFinder V2.0.7")
         win_scale, work_left, work_top, work_w_phys, work_h_phys, logical_w, logical_h = self._get_dpi_work_area()
 
         min_w = min(1180, max(860, int(logical_w * 0.78)))
@@ -4727,6 +4745,14 @@ class GUIApp(ctk.CTk):
             if getattr(self.backend, "show_window_requested", False):
                 self.backend.show_window_requested = False
                 self.show_main_window()
+            if getattr(self.backend, "_gui_settings_sync_needed", False):
+                self.backend._gui_settings_sync_needed = False
+                if hasattr(self, "settings_view") and hasattr(self.settings_view, "default_mismatch_use_msfs_var"):
+                    try:
+                        is_def_m = str(self.config.settings.get("default_mismatch_action", "ask") or "ask").strip().lower() == "use_msfs"
+                        self.settings_view.default_mismatch_use_msfs_var.set(is_def_m)
+                    except Exception:
+                        pass
             if getattr(self.backend, "_gui_close_mismatch_modal", False):
                 self.backend._gui_close_mismatch_modal = False
                 mm_dlg = getattr(self, "_mismatch_modal_dlg", None)
@@ -4738,13 +4764,17 @@ class GUIApp(ctk.CTk):
                         pass
                     self._mismatch_modal_dlg = None
                     self._ofp_modal_open = False
+            force_gui_sync = False
             if getattr(self.backend, "_gui_sync_needed", False):
                 self.backend._gui_sync_needed = False
                 self._last_rendered_signature = None
+                force_gui_sync = True
             if getattr(self, "_is_importing_ofp", False):
                 return
             fd = self.backend.get_dynamic_flight_data()
             if fd:
+                if force_gui_sync:
+                    self.last_flight_data = fd
                 u_ac = fd.get("user_aircraft") or {}
 
                 # Auto-switch tab to Arrival immediately when Wheels-Off (is_airborne == True)
@@ -4779,7 +4809,7 @@ class GUIApp(ctk.CTk):
 
                 if is_airborne:
                     self.user_manual_phase_override = False
-                    if self.active_phase != "arrival":
+                    if self.active_phase != "arrival" and (fd.get("arrival") or {}).get("icao"):
                         self.active_phase = "arrival"
                         self._last_rendered_signature = None
                 else:
@@ -5295,7 +5325,7 @@ class GUIApp(ctk.CTk):
     def check_for_updates(self, manual=False):
         import urllib.request
         import json
-        current_ver = "2.0.6"
+        current_ver = "2.0.7"
         t0 = time.monotonic()
         found_update = False
         found_tag = ""
@@ -5313,7 +5343,7 @@ class GUIApp(ctk.CTk):
             req = urllib.request.Request(
                 "https://api.github.com/repos/wildbill75/gsx-gatefinder/releases/latest",
                 headers={
-                    "User-Agent": "GateFinder-Updater/2.0.6",
+                    "User-Agent": "GateFinder-Updater/2.0.7",
                     "Accept": "application/vnd.github+json",
                 },
             )
@@ -5405,7 +5435,7 @@ class GUIApp(ctk.CTk):
                 os.makedirs(staging_dir, exist_ok=True)
 
                 dl_file = os.path.join(staging_dir, "release_pkg.zip" if asset_kind == "zip" else "GateFinder.exe")
-                req = urllib.request.Request(dl_url, headers={"User-Agent": "GateFinder-Updater/2.0.6"})
+                req = urllib.request.Request(dl_url, headers={"User-Agent": "GateFinder-Updater/2.0.7"})
                 with urllib.request.urlopen(req, timeout=30) as resp, open(dl_file, "wb") as out_f:
                     total_sz = int(resp.headers.get("Content-Length") or 0)
                     read_sz = 0
@@ -5594,7 +5624,7 @@ class GUIApp(ctk.CTk):
         self.flight_strip_frame.pack(side="left", padx=(16, 8), pady=12)
         ctk.CTkLabel(
             self.flight_strip_frame,
-            text="GATEFINDER V2.0.6  •  SIMBRIEF EFB DISPATCH",
+            text="GATEFINDER V2.0.7  •  SIMBRIEF EFB DISPATCH",
             height=46,
             fg_color="#2B303B",
             text_color="#94A3B8",
@@ -5793,6 +5823,8 @@ class GUIApp(ctk.CTk):
 
     def switch_phase(self, phase, manual=False):
         if phase not in ("departure", "arrival"):
+            return
+        if phase == "arrival" and self.last_flight_data and not (self.last_flight_data.get("arrival") or {}).get("icao"):
             return
         if phase == "departure" and self.last_flight_data:
             is_airborne = bool(self.last_flight_data.get("is_airborne", False))
@@ -6093,7 +6125,7 @@ class GUIApp(ctk.CTk):
         _render_blue_gradient_bar(0.06)
 
         lbl_ver_ftr = ctk.CTkLabel(
-            prog_card, text="V2.0.6 • © 2026 Sidestick Priority",
+            prog_card, text="V2.0.7 • © 2026 Sidestick Priority",
             font=ctk.CTkFont(size=11), text_color="#475569"
         )
         lbl_ver_ftr.place(relx=1.0, rely=1.0, x=-20, y=-12, anchor="se")
@@ -6106,7 +6138,7 @@ class GUIApp(ctk.CTk):
             return sp
         sp_w, sp_h = 520, 330
         splash = ctk.CTkToplevel(self)
-        splash.title("GateFinder V2.0.6")
+        splash.title("GateFinder V2.0.7")
         splash.overrideredirect(True)
         splash.configure(fg_color="#0B0E14")
         self._apply_window_icon(splash)
@@ -6208,7 +6240,8 @@ class GUIApp(ctk.CTk):
                     username,
                     on_turnaround_check=thread_safe_turnaround_check,
                     progress_callback=_on_progress,
-                    turnaround_keep_gate=turnaround_keep_gate
+                    turnaround_keep_gate=turnaround_keep_gate,
+                    auto_load=bool(startup_splash or silent_bg),
                 )
                 dyn_result = self.backend.get_dynamic_flight_data()
                 def _on_ok():
@@ -6517,7 +6550,7 @@ class GUIApp(ctk.CTk):
         self._mismatch_modal_dlg = dlg
         self._apply_window_icon(dlg)
         dlg.title(f"SimBrief / MSFS Mismatch ({live_icao})" if sb_orig else f"MSFS Live Flight ({live_icao})")
-        dlg_w, dlg_h = 540, (246 if sb_orig else 224)
+        dlg_w, dlg_h = 540, (276 if sb_orig else 254)
         dlg.geometry(f"{dlg_w}x{dlg_h}")
         dlg.resizable(False, False)
         dlg.configure(fg_color="#0F172A")
@@ -6546,9 +6579,10 @@ class GUIApp(ctk.CTk):
 
         stand_txt = f" (Stand {live_stand})" if live_stand else ""
         if sb_orig:
+            sb_route_disp = f"{sb_orig} -> {sb_dest}" if sb_dest else sb_orig
             summary_txt = (
                 f"MSFS :  {live_icao}{stand_txt}  |  {ac_disp}\n"
-                f"SimBrief :  {sb_orig} -> {sb_dest}  |  {sb_ac or 'Unknown'}"
+                f"SimBrief :  {sb_route_disp}  |  {sb_ac or 'Unknown'}"
             )
             if m_reason == "both":
                 sub_txt = "Aircraft and departure airport do not match your SimBrief OFP."
@@ -6580,19 +6614,24 @@ class GUIApp(ctk.CTk):
             wraplength=490,
             justify="left",
         )
-        lbl_sub.pack(anchor="w", padx=16, pady=(0, 10))
+        lbl_sub.pack(anchor="w", padx=16, pady=(0, 8))
 
         dest_row = ctk.CTkFrame(card, fg_color="transparent")
-        dest_row.pack(fill="x", padx=16, pady=(0, 12))
+        dest_row.pack(fill="x", padx=16, pady=(0, 8))
         ctk.CTkLabel(
             dest_row,
             text="Arrival ICAO (optional):",
             font=ctk.CTkFont(size=12, weight="bold"),
             text_color="#94A3B8",
         ).pack(side="left", padx=(0, 10))
+        dest_ph = (
+            f"e.g. {sb_dest} (blank = {sb_dest})"
+            if (sb_orig == live_icao and sb_dest and sb_dest != live_icao)
+            else "e.g. LFPG (optional)"
+        )
         dest_entry = ctk.CTkEntry(
             dest_row,
-            placeholder_text=f"e.g. LFPG (blank = {live_icao})",
+            placeholder_text=dest_ph,
             height=30,
             border_width=0,
             fg_color="#1E293B",
@@ -6600,6 +6639,29 @@ class GUIApp(ctk.CTk):
             font=ctk.CTkFont(family="Consolas", size=12, weight="bold"),
         )
         dest_entry.pack(side="left", fill="x", expand=True)
+
+        pref_row = ctk.CTkFrame(card, fg_color="transparent")
+        pref_row.pack(fill="x", padx=16, pady=(0, 10))
+        make_default_var = ctk.BooleanVar(
+            value=(str(self.config.settings.get("default_mismatch_action", "ask") or "ask").strip().lower() == "use_msfs")
+        )
+        chk_make_default = ctk.CTkCheckBox(
+            pref_row,
+            text="Make this default choice for 'Use MSFS Aircraft'",
+            variable=make_default_var,
+            checkbox_width=16,
+            checkbox_height=16,
+            corner_radius=4,
+            border_width=1,
+            border_color="#475569",
+            fg_color="#0A86C2",
+            hover_color="#0A6E9E",
+            checkmark_color="#FFFFFF",
+            text_color="#CBD5E1",
+            font=ctk.CTkFont(size=11.5),
+        )
+        chk_make_default.pack(side="left")
+        Tooltip(chk_make_default, "When checked, clicking 'Use MSFS Aircraft' saves this preference and applies it automatically in the background on future flights.")
 
         btn_row = ctk.CTkFrame(card, fg_color="transparent")
         btn_row.pack(fill="x", padx=16, pady=(0, 12))
@@ -6671,9 +6733,19 @@ class GUIApp(ctk.CTk):
 
         def _use_live_msfs(*_):
             dest_val = re.sub(r"[^A-Z0-9]", "", dest_entry.get().strip().upper())[:4]
+            save_def = bool(make_default_var.get())
+            eff_dest = self.backend.resolve_default_live_dest(live_icao, dest_val, mismatch_info=mismatch_info)
             _close_dlg_clean()
+            if save_def:
+                self.config.settings["default_mismatch_action"] = "use_msfs"
+                self.config.save()
+                if hasattr(self, "settings_view") and hasattr(self.settings_view, "default_mismatch_use_msfs_var"):
+                    try:
+                        self.settings_view.default_mismatch_use_msfs_var.set(True)
+                    except Exception:
+                        pass
             self.backend.dismiss_simbrief_msfs_mismatch(mismatch_key)
-            self.load_live_msfs_flight_ui(live_icao, dest_val or live_icao)
+            self.load_live_msfs_flight_ui(live_icao, eff_dest)
 
         def _keep_simbrief():
             _close_dlg_clean()
@@ -6723,35 +6795,40 @@ class GUIApp(ctk.CTk):
         btn_keep.pack(side="right", expand=True, fill="x", padx=(5, 0))
         Tooltip(btn_keep, f"Keep the SimBrief OFP ({sb_orig} -> {sb_dest}) despite the mismatch." if sb_orig else "Dismiss this prompt.")
 
-    def load_live_msfs_flight_ui(self, origin_icao, dest_icao=""):
+    def load_live_msfs_flight_ui(self, origin_icao, dest_icao="", silent_bg=False):
         if getattr(self, "_is_importing_ofp", False):
             return
         orig_u = str(origin_icao or "").strip().upper()
-        dest_u = str(dest_icao or "").strip().upper() or orig_u
+        dest_u = self.backend.resolve_default_live_dest(orig_u, dest_icao)
         if not orig_u:
             return
 
+        quiet_mode = bool(silent_bg or self._is_cockpit_popup_suppressed() or getattr(self, "_silent_hidden_mode", False))
         self._is_importing_ofp = True
-        self._silent_hidden_mode = False
-        self._current_import_step_msg = f"Loading Live MSFS Flight ({orig_u} -> {dest_u})..."
-        self.show_main_view()
+        if not quiet_mode:
+            self._silent_hidden_mode = False
+        route_lbl = f"{orig_u} -> {dest_u}" if dest_u else orig_u
+        self._current_import_step_msg = f"Loading Live MSFS Flight ({route_lbl})..."
+        if not quiet_mode:
+            self.show_main_view()
         self.btn_import.configure(text="Loading MSFS...", state="disabled")
 
         self._last_clearance_val = None
         self._last_traffic_pills_val = None
         self._last_rendered_signature = None
 
-        if self.state() != "withdrawn":
-            try:
-                self._restore_zoomed = (self.state() == "zoomed")
-                self._save_window_geometry()
-            except Exception:
-                pass
-            self.withdraw()
-        self._create_startup_splash_window(initial_step=self._current_import_step_msg)
-        _render_blue_gradient_bar = getattr(self, "_render_blue_gradient_bar", lambda v: None)
-        _render_blue_gradient_bar(0.12)
-        self.update()
+        if not quiet_mode:
+            if self.state() != "withdrawn":
+                try:
+                    self._restore_zoomed = (self.state() == "zoomed")
+                    self._save_window_geometry()
+                except Exception:
+                    pass
+                self.withdraw()
+            self._create_startup_splash_window(initial_step=self._current_import_step_msg)
+            _render_blue_gradient_bar = getattr(self, "_render_blue_gradient_bar", lambda v: None)
+            _render_blue_gradient_bar(0.12)
+            self.update()
 
         import threading
         def _on_progress(pct, step_msg):
@@ -6781,7 +6858,7 @@ class GUIApp(ctk.CTk):
                     self.render_results(dyn_result, preserve_camera=False)
                     self.btn_import.configure(text="Import SimBrief", state="normal")
                     self._close_startup_splash()
-                    if not getattr(self, "_silent_hidden_mode", False) and self.state() == "withdrawn":
+                    if not quiet_mode and not getattr(self, "_silent_hidden_mode", False) and self.state() == "withdrawn":
                         self.show_main_window()
                 self.after(0, _on_ok)
             except Exception as e:
@@ -8626,7 +8703,7 @@ class GUIApp(ctk.CTk):
 
         u_ac = result.get("user_aircraft")
         is_airborne = bool(result.get("is_airborne", False))
-        if is_airborne and self.active_phase == "departure":
+        if is_airborne and self.active_phase == "departure" and arr.get("icao"):
             self.active_phase = "arrival"
 
         tabs_state = (

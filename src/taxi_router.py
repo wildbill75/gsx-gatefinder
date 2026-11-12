@@ -925,7 +925,23 @@ class TaxiRouter:
             self._merge_extra_stands(cached, extra_stands)
             return cached
 
-        if not chart.get("runways") or not chart.get("taxiways") or (not chart.get("stands") and not extra_stands):
+        needs_bgl_fb = bool(
+            not chart.get("runways")
+            or not chart.get("taxiways")
+            or (not chart.get("stands") and not extra_stands)
+        )
+        if not needs_bgl_fb and callable(self.bgl_geometry_provider):
+            tw_pts_chk = [p for t in (chart.get("taxiways") or []) for p in (t.get("points") or [])]
+            st_chk = [
+                (float(s["lat"]), float(s["lon"]))
+                for s in (extra_stands or chart.get("stands") or [])
+                if s.get("lat") is not None and s.get("lon") is not None
+            ]
+            if tw_pts_chk and st_chk:
+                sample_tw = tw_pts_chk[::max(1, len(tw_pts_chk) // 160)]
+                if any(min(haversine_m(sla, slo, tp[0], tp[1]) for tp in sample_tw) > 185.0 for sla, slo in st_chk):
+                    needs_bgl_fb = True
+        if needs_bgl_fb:
             extra_stands = self._apply_bgl_geometry_fallback(icao, chart, extra_stands)
 
         self._merge_extra_stands(chart, extra_stands)
@@ -1419,6 +1435,51 @@ class TaxiRouter:
                 if synth_st:
                     chart["osm_stands"] = [dict(s) for s in synth_st]
                     chart["stands"] = [dict(s) for s in synth_st]
+        elif chart.get("taxiways"):
+            # Bridge any stand clusters (>185m from all OSM taxiway vertices) to the nearest taxiway node
+            tw_existing = chart.get("taxiways") or []
+            tw_verts = [p for t in tw_existing for p in (t.get("points") or [])]
+            orphan_stands = []
+            for s in (extra_stands or chart.get("stands") or []):
+                if s.get("lat") is not None and s.get("lon") is not None:
+                    sla, slo = float(s["lat"]), float(s["lon"])
+                    if tw_verts and min(haversine_m(sla, slo, tp[0], tp[1]) for tp in tw_verts[::max(1, len(tw_verts) // 200)]) > 185.0:
+                        orphan_stands.append((sla, slo))
+            if orphan_stands and tw_verts:
+                vis_o = [False] * len(orphan_stands)
+                for i_o in range(len(orphan_stands)):
+                    if vis_o[i_o]:
+                        continue
+                    vis_o[i_o] = True
+                    q_o = [i_o]
+                    grp_o = []
+                    while q_o:
+                        cur_o = q_o.pop()
+                        grp_o.append(orphan_stands[cur_o])
+                        for j_o in range(len(orphan_stands)):
+                            if not vis_o[j_o] and haversine_m(orphan_stands[cur_o][0], orphan_stands[cur_o][1], orphan_stands[j_o][0], orphan_stands[j_o][1]) <= 110.0:
+                                vis_o[j_o] = True
+                                q_o.append(j_o)
+                    grp_o.sort(key=lambda pt: (pt[0], pt[1]))
+                    if len(grp_o) >= 2:
+                        tw_existing.append({
+                            "ref": "",
+                            "type": "taxilane",
+                            "points": [[round(la, 6), round(lo, 6)] for la, lo in grp_o],
+                            "_synth_bgl": True,
+                        })
+                    mid_o = grp_o[len(grp_o) // 2]
+                    nearest_tp = min(tw_verts, key=lambda tp: haversine_m(mid_o[0], mid_o[1], tp[0], tp[1]))
+                    if haversine_m(mid_o[0], mid_o[1], nearest_tp[0], nearest_tp[1]) <= 1200.0:
+                        tw_existing.append({
+                            "ref": "",
+                            "type": "taxilane",
+                            "points": [[round(nearest_tp[0], 6), round(nearest_tp[1], 6)], [round(mid_o[0], 6), round(mid_o[1], 6)]],
+                            "_synth_bgl": True,
+                        })
+                chart.pop("_render_cache", None)
+                if icao:
+                    self.graph_cache.pop(str(icao).strip().upper(), None)
 
         if chart.get("runways") or chart.get("taxiways"):
             all_la = [p[0] for r in (chart.get("runways") or []) for p in (r.get("points") or [])] + [p[0] for t in (chart.get("taxiways") or []) for p in (t.get("points") or [])]
@@ -1451,7 +1512,7 @@ class TaxiRouter:
         stands = chart.get("stands") or []
         twys_in = chart.get("taxiways") or []
         rwys = chart.get("runways") or []
-        hull_sig = (1, len(stands), len(twys_in), len(rwys))
+        hull_sig = (2, len(stands), len(twys_in), len(rwys))
         if chart.get("_apron_hull_sig") == hull_sig:
             return
 
@@ -1728,6 +1789,21 @@ class TaxiRouter:
                 else:
                     uncovered.append(item)
 
+        if not ap_boxes and not uncovered and twys:
+            # Airport has runways/taxiways in OSM/BGL but zero aprons and zero stands:
+            # synthesize a bounding apron hull around ramp/spur taxiway endpoints clear of runways.
+            ep_counts = {}
+            for pts_m in tw_pts_m:
+                for ep_m in (pts_m[0], pts_m[-1]):
+                    ek = (round(ep_m[0] / 8.0), round(ep_m[1] / 8.0))
+                    ep_counts[ek] = ep_counts.get(ek, 0) + 1
+            for idx_t, pts_m in enumerate(tw_pts_m):
+                for ep_m in (pts_m[0], pts_m[-1]):
+                    ek = (round(ep_m[0] / 8.0), round(ep_m[1] / 8.0))
+                    if ep_counts.get(ek, 0) == 1 and _min_rwy_dist(ep_m[0], ep_m[1]) > 62.0:
+                        la, lo = c_lat + ep_m[1] / sy, c_lon + ep_m[0] / sx
+                        uncovered.append((la, lo, ep_m[0], ep_m[1], 24.0, False, idx_t))
+
         cov_grid = {}
         for cov in covered:
             cov_grid.setdefault((int(cov[2] // 90.0), int(cov[3] // 90.0)), []).append(cov)
@@ -1762,10 +1838,10 @@ class TaxiRouter:
             c_stands = sum(1 for it in comp if it[5])
             c_ways = len({it[6] for it in comp if it[6] >= 0})
             should_build = (
-                (not ap_boxes and (c_stands >= 1 or len(comp) >= 3))
-                or c_stands >= 4
-                or c_ways >= 5
-                or (c_stands >= 2 and c_ways >= 2)
+                (not ap_boxes and (c_stands >= 1 or len(comp) >= 2))
+                or c_stands >= 2
+                or c_ways >= 3
+                or (c_stands >= 1 and c_ways >= 2)
             )
             if not should_build:
                 continue
@@ -1855,7 +1931,7 @@ class TaxiRouter:
             if icao_k:
                 self.graph_cache.pop(icao_k, None)
 
-        chart["_apron_hull_sig"] = (1, len(chart.get("stands") or ()), len(chart.get("taxiways") or ()), len(chart.get("runways") or ()))
+        chart["_apron_hull_sig"] = (2, len(chart.get("stands") or ()), len(chart.get("taxiways") or ()), len(chart.get("runways") or ()))
 
     def _parse_osm_geometry(self, icao, osm_data, center_lat, center_lon):
         runways = []
@@ -2155,7 +2231,24 @@ class TaxiRouter:
                         changed = True
                 if len(cur) >= 3:
                     gap_o = 0.0 if cur[0] == cur[-1] else haversine_m(cur[0][0], cur[0][1], cur[-1][0], cur[-1][1])
-                    if gap_o <= 260.0:
+                    can_close_wide = False
+                    if 260.0 < gap_o <= 850.0 and len(cur) >= 4:
+                        chord_clear = True
+                        for frac_c in (0.25, 0.5, 0.75):
+                            clat_c = cur[-1][0] + frac_c * (cur[0][0] - cur[-1][0])
+                            clon_c = cur[-1][1] + frac_c * (cur[0][1] - cur[-1][1])
+                            for rw_chk in raw_runway_ways:
+                                rpts_chk = rw_chk.get("points") or []
+                                for kr_c in range(len(rpts_chk) - 1):
+                                    if point_to_segment_projection(clat_c, clon_c, rpts_chk[kr_c][0], rpts_chk[kr_c][1], rpts_chk[kr_c + 1][0], rpts_chk[kr_c + 1][1])[3] < 48.0:
+                                        chord_clear = False
+                                        break
+                                if not chord_clear:
+                                    break
+                            if not chord_clear:
+                                break
+                        can_close_wide = chord_clear
+                    if gap_o <= 260.0 or can_close_wide:
                         closed_o = cur if cur[0] == cur[-1] else (cur + [cur[0]])
                         ref_lat = closed_o[0][0]
                         sx_a = 111320.0 * max(0.15, math.cos(math.radians(ref_lat)))
@@ -2438,7 +2531,7 @@ class TaxiRouter:
                 if end_id not in rwy_ids:
                     rwy_ids.append(end_id)
 
-        return {
+        res_chart = {
             "icao": icao,
             "geom_v": 4,
             "full_rwy_extent": True,
@@ -2454,6 +2547,8 @@ class TaxiRouter:
             "stands": stands,
             "osm_stands": [dict(s) for s in stands]
         }
+        self._ensure_complete_apron_surfaces(res_chart)
+        return res_chart
 
     def _compute_runway_ends(self, ref_str, pts):
         """Maps each runway designator (e.g. '08R', '26L') to its threshold coordinate and takeoff heading."""

@@ -6179,7 +6179,136 @@ class GateFinderBackend:
 
         return None
 
-    def peek_latest_simbrief_ofp(self, username):
+    @staticmethod
+    def _clean_sb_str(val):
+        if isinstance(val, str):
+            return val.strip()
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            return str(val).strip()
+        return ""
+
+    @classmethod
+    def _parse_simbrief_payload(cls, raw_input):
+        """
+        Parses either a pre-decoded SimBrief JSON dict or raw JSON / XML text/bytes
+        returned by SimBrief's `xml.fetcher.php`, normalizing empty XML-to-JSON `{}` tags.
+        """
+        if isinstance(raw_input, dict):
+            return raw_input
+        if isinstance(raw_input, (bytes, bytearray)):
+            txt = raw_input.decode("utf-8", errors="replace").strip()
+        else:
+            txt = str(raw_input or "").strip()
+        if not txt:
+            return {}
+        if txt.startswith("{"):
+            return json.loads(txt)
+        if txt.startswith("<"):
+            import xml.etree.ElementTree as ET
+            root = ET.fromstring(txt)
+            out = {}
+            for child in root:
+                tag = child.tag.strip()
+                if len(child) == 0:
+                    out[tag] = (child.text or "").strip()
+                else:
+                    sub = {}
+                    for gc in child:
+                        if len(gc) == 0:
+                            sub[gc.tag.strip()] = (gc.text or "").strip()
+                    if tag in out:
+                        if isinstance(out[tag], list):
+                            out[tag].append(sub)
+                        else:
+                            out[tag] = [out[tag], sub]
+                    else:
+                        out[tag] = sub
+            return out
+        return json.loads(txt)
+
+    def _extract_validated_simbrief_route_icaos(self, data, auto_load=False, is_synthetic_live=False):
+        """
+        Extracts and strictly validates `dep_icao` and `arr_icao` from a SimBrief XML/JSON dict.
+        Prevents erroneous `dep == arr` overwrites during auto-loads or malformed SimBrief payloads.
+        """
+        if not isinstance(data, dict):
+            return "", ""
+        orig_blk = data.get("origin") if isinstance(data.get("origin"), dict) else {}
+        dest_blk = data.get("destination") if isinstance(data.get("destination"), dict) else {}
+
+        dep_icao = re.sub(r"[^A-Z0-9]", "", self._clean_sb_str(orig_blk.get("icao_code")).upper())[:4]
+        arr_icao = re.sub(r"[^A-Z0-9]", "", self._clean_sb_str(dest_blk.get("icao_code")).upper())[:4]
+        if len(dep_icao) < 3:
+            dep_icao = ""
+        if len(arr_icao) < 3:
+            arr_icao = ""
+
+        if is_synthetic_live:
+            return dep_icao, arr_icao
+
+        # 1. If arr_icao is missing or erroneously identical to dep_icao, cross-check ICAO FPL & general fields
+        if dep_icao and (not arr_icao or arr_icao == dep_icao):
+            general_blk = data.get("general") if isinstance(data.get("general"), dict) else {}
+            for gk in ("dest_icao", "arr_icao", "destination_icao", "arrival"):
+                cand_g = re.sub(r"[^A-Z0-9]", "", self._clean_sb_str(general_blk.get(gk)).upper())[:4]
+                if len(cand_g) == 4 and cand_g != dep_icao:
+                    arr_icao = cand_g
+                    break
+
+        if dep_icao and (not arr_icao or arr_icao == dep_icao):
+            atc_blk = data.get("atc") if isinstance(data.get("atc"), dict) else {}
+            fpl_txt = self._clean_sb_str(atc_blk.get("flightplan_text")).upper()
+            if fpl_txt:
+                # Standard ICAO FPL item 13 (-ADEPhhmm) and item 16 (-ADEShhmm [ALTN])
+                fpl_groups = re.findall(r"-\s*([A-Z0-9]{4})\d{4}\b", fpl_txt)
+                if len(fpl_groups) >= 2:
+                    for cand_fpl in fpl_groups[1:]:
+                        if cand_fpl != dep_icao:
+                            arr_icao = cand_fpl
+                            break
+
+        if dep_icao and not arr_icao:
+            alt_blk = data.get("alternate")
+            alt_list = alt_blk if isinstance(alt_blk, list) else ([alt_blk] if isinstance(alt_blk, dict) else [])
+            for ab in alt_list:
+                if isinstance(ab, dict):
+                    cand_alt = re.sub(r"[^A-Z0-9]", "", self._clean_sb_str(ab.get("icao_code")).upper())[:4]
+                    if len(cand_alt) == 4 and cand_alt != dep_icao:
+                        arr_icao = cand_alt
+                        break
+
+        # 2. Prevent erroneous `dep == arr` or blank-arrival overwrites during auto-loads or same-origin refreshes
+        if dep_icao and (not arr_icao or arr_icao == dep_icao):
+            cur_fd = self.current_flight_data if isinstance(self.current_flight_data, dict) else None
+            prev_dep = str(((cur_fd or {}).get("departure") or {}).get("icao") or "").strip().upper()
+            prev_arr = str(((cur_fd or {}).get("arrival") or {}).get("icao") or "").strip().upper()
+            if prev_dep == dep_icao and prev_arr and prev_arr != dep_icao:
+                arr_icao = prev_arr
+            elif auto_load:
+                recovered_sess = ""
+                try:
+                    p_sess = self._get_session_state_path()
+                    if os.path.exists(p_sess):
+                        with open(p_sess, "r", encoding="utf-8") as rf_s:
+                            s_dict = json.load(rf_s)
+                        if (
+                            isinstance(s_dict, dict)
+                            and (time.time() - float(s_dict.get("timestamp") or 0) <= 14 * 3600)
+                            and str(s_dict.get("origin") or "").strip().upper() == dep_icao
+                        ):
+                            cand_sd = str(s_dict.get("destination") or "").strip().upper()
+                            if len(cand_sd) >= 3 and cand_sd != dep_icao:
+                                recovered_sess = cand_sd
+                except Exception:
+                    recovered_sess = ""
+                arr_icao = recovered_sess  # "" if none, preventing arrival == departure overwrite
+
+        if isinstance(data.get("destination"), dict) and arr_icao != self._clean_sb_str(dest_blk.get("icao_code")).upper():
+            data["destination"]["icao_code"] = arr_icao
+
+        return dep_icao, arr_icao
+
+    def peek_latest_simbrief_ofp(self, username, allow_same_dep_arr=False):
         """
         Lightweight non-intrusive check of the user's latest SimBrief OFP metadata
         (ofp_id, origin, destination, planned runways, airline, aircraft) to detect
@@ -6204,25 +6333,30 @@ class GateFinderBackend:
                 }
             )
             with urllib.request.urlopen(req, timeout=5.0) as response:
-                data = json.loads(response.read().decode('utf-8'))
-            origin = data.get('origin', {}).get('icao_code', '')
-            origin_name = self.get_airport_display_name(origin, data.get('origin', {}).get('name', ''))
-            origin_rwy = data.get('origin', {}).get('plan_rwy', '')
-            destination = data.get('destination', {}).get('icao_code', '')
-            dest_name = self.get_airport_display_name(destination, data.get('destination', {}).get('name', ''))
-            dest_rwy = data.get('destination', {}).get('plan_rwy', '')
+                data = self._parse_simbrief_payload(response.read())
+            origin, destination = self._extract_validated_simbrief_route_icaos(
+                data, auto_load=not allow_same_dep_arr, is_synthetic_live=False
+            )
+            orig_blk = data.get('origin') if isinstance(data.get('origin'), dict) else {}
+            dest_blk = data.get('destination') if isinstance(data.get('destination'), dict) else {}
+            origin_name = self.get_airport_display_name(origin, self._clean_sb_str(orig_blk.get('name')))
+            origin_rwy = self._clean_sb_str(orig_blk.get('plan_rwy'))
+            dest_name = self.get_airport_display_name(destination, self._clean_sb_str(dest_blk.get('name'))) if destination else ""
+            dest_rwy = self._clean_sb_str(dest_blk.get('plan_rwy')) if destination else ""
             params_block = data.get('params', {}) if isinstance(data.get('params'), dict) else {}
-            req_id = str(params_block.get('request_id') or '')
-            t_gen = str(params_block.get('time_generated') or '')
+            req_id = self._clean_sb_str(params_block.get('request_id'))
+            t_gen = self._clean_sb_str(params_block.get('time_generated'))
             ofp_id = f"{req_id}_{t_gen}_{origin}_{destination}" if (req_id or t_gen) else f"{origin}_{destination}"
             general = data.get('general', {}) if isinstance(data.get('general'), dict) else {}
-            airline = general.get('icao_airline', '') or general.get('airline', '')
-            flight_num = general.get('flight_number', '')
+            airline = self._clean_sb_str(general.get('icao_airline')) or self._clean_sb_str(general.get('airline'))
+            flight_num = self._clean_sb_str(general.get('flight_number'))
             ac_block = data.get('aircraft', {}) if isinstance(data.get('aircraft'), dict) else {}
-            aircraft = ac_block.get('name') or ac_block.get('icaocode', '')
-            aircraft_icao = str(ac_block.get('icaocode') or '').strip().upper()
-            aircraft_base = str(ac_block.get('base_type') or '').strip().upper()
+            aircraft = self._clean_sb_str(ac_block.get('name')) or self._clean_sb_str(ac_block.get('icaocode'))
+            aircraft_icao = self._clean_sb_str(ac_block.get('icaocode')).upper()
+            aircraft_base = self._clean_sb_str(ac_block.get('base_type')).upper()
             if not origin or not destination:
+                return None
+            if not allow_same_dep_arr and origin == destination:
                 return None
             return {
                 "ofp_id": ofp_id,
@@ -6241,7 +6375,7 @@ class GateFinderBackend:
         except Exception:
             return None
 
-    def get_flight_data(self, username, on_turnaround_check=None, progress_callback=None, _mock_data=None, turnaround_keep_gate=None):
+    def get_flight_data(self, username, on_turnaround_check=None, progress_callback=None, _mock_data=None, turnaround_keep_gate=None, auto_load=False):
         def _report_progress(pct, msg):
             if progress_callback:
                 try:
@@ -6260,8 +6394,8 @@ class GateFinderBackend:
             traffic_future = traffic_executor.submit(self.network_checker.fetch_data)
 
         try:
-            if _mock_data:
-                data = _mock_data
+            if _mock_data is not None:
+                data = self._parse_simbrief_payload(_mock_data)
             else:
                 from urllib.parse import quote
                 username_clean = username.strip()
@@ -6281,7 +6415,7 @@ class GateFinderBackend:
                 )
                 try:
                     with urllib.request.urlopen(req, timeout=8) as response:
-                        data = json.loads(response.read().decode('utf-8'))
+                        data = self._parse_simbrief_payload(response.read())
                 except urllib.error.HTTPError as http_err:
                     try:
                         err_body = http_err.read().decode('utf-8')
@@ -6298,35 +6432,40 @@ class GateFinderBackend:
         finally:
             if traffic_executor:
                 traffic_executor.shutdown(wait=False)
-            
-        origin = data.get('origin', {}).get('icao_code', '')
-        origin_rwy = data.get('origin', {}).get('plan_rwy', '')
-        if origin:
-            self.airport_names[origin] = self.get_airport_display_name(origin, data.get('origin', {}).get('name', ''))
-        
-        destination = data.get('destination', {}).get('icao_code', '')
-        dest_rwy = data.get('destination', {}).get('plan_rwy', '')
-        if destination:
-            self.airport_names[destination] = self.get_airport_display_name(destination, data.get('destination', {}).get('name', ''))
-        
+
         params_block = data.get('params', {}) if isinstance(data.get('params'), dict) else {}
-        req_id = str(params_block.get('request_id') or '')
-        t_gen = str(params_block.get('time_generated') or '')
+        req_id = self._clean_sb_str(params_block.get('request_id'))
+        t_gen = self._clean_sb_str(params_block.get('time_generated'))
+        is_synthetic_live = req_id.startswith("LIVE_MSFS_")
+
+        origin, destination = self._extract_validated_simbrief_route_icaos(
+            data, auto_load=bool(auto_load), is_synthetic_live=is_synthetic_live
+        )
+        orig_blk = data.get('origin') if isinstance(data.get('origin'), dict) else {}
+        dest_blk = data.get('destination') if isinstance(data.get('destination'), dict) else {}
+        origin_rwy = self._clean_sb_str(orig_blk.get('plan_rwy'))
+        if origin:
+            self.airport_names[origin] = self.get_airport_display_name(origin, self._clean_sb_str(orig_blk.get('name')))
+        
+        dest_rwy = self._clean_sb_str(dest_blk.get('plan_rwy')) if destination else ''
+        if destination:
+            self.airport_names[destination] = self.get_airport_display_name(destination, self._clean_sb_str(dest_blk.get('name')))
+        
         ofp_id = f"{req_id}_{t_gen}_{origin}_{destination}" if (req_id or t_gen) else f"{origin}_{destination}"
         
-        general = data.get('general', {})
-        airline = general.get('icao_airline', '')
+        general = data.get('general') if isinstance(data.get('general'), dict) else {}
+        airline = self._clean_sb_str(general.get('icao_airline'))
         if not airline:
-            airline = general.get('airline', '')
+            airline = self._clean_sb_str(general.get('airline'))
 
         atc_block = data.get('atc', {}) if isinstance(data.get('atc'), dict) else {}
-        ofp_callsign = str(atc_block.get('callsign') or '').strip().upper()
+        ofp_callsign = self._clean_sb_str(atc_block.get('callsign')).upper()
         if not ofp_callsign:
-            fl_num = str(general.get('flight_number') or '').strip().upper()
+            fl_num = self._clean_sb_str(general.get('flight_number')).upper()
             if airline and fl_num:
                 ofp_callsign = f"{airline.strip().upper()}{fl_num}"
-            elif general.get('callsign'):
-                ofp_callsign = str(general.get('callsign')).strip().upper()
+            elif self._clean_sb_str(general.get('callsign')):
+                ofp_callsign = self._clean_sb_str(general.get('callsign')).upper()
 
         sc_self = getattr(self, "simconnect_manager", None)
         u_lat_self = None
@@ -6336,12 +6475,12 @@ class GateFinderBackend:
             u_lon_self = sc_self.user_lon
             
         ac_block = data.get('aircraft', {}) if isinstance(data.get('aircraft'), dict) else {}
-        aircraft_icao = str(ac_block.get('icaocode') or '').strip()
-        aircraft_name = str(ac_block.get('name') or '').strip()
-        aircraft_engines = str(ac_block.get('engines') or '').strip()
-        aircraft_reg = str(ac_block.get('reg') or '').strip().upper()
+        aircraft_icao = self._clean_sb_str(ac_block.get('icaocode'))
+        aircraft_name = self._clean_sb_str(ac_block.get('name'))
+        aircraft_engines = self._clean_sb_str(ac_block.get('engines'))
+        aircraft_reg = self._clean_sb_str(ac_block.get('reg')).upper()
         if not aircraft_reg:
-            m_reg = re.search(r'\bREG/([A-Z0-9-]+)', str(atc_block.get('flightplan_text') or '').upper())
+            m_reg = re.search(r'\bREG/([A-Z0-9-]+)', self._clean_sb_str(atc_block.get('flightplan_text')).upper())
             if m_reg:
                 aircraft_reg = m_reg.group(1)
         aircraft = aircraft_name if aircraft_name and aircraft_name != aircraft_icao else f"{aircraft_icao}"
@@ -6350,7 +6489,7 @@ class GateFinderBackend:
         else:
             aircraft_version = aircraft
         
-        base_type = str(ac_block.get('base_type') or '').strip()
+        base_type = self._clean_sb_str(ac_block.get('base_type'))
         wingspan = AIRCRAFT_WINGSPANS.get(aircraft_icao, AIRCRAFT_WINGSPANS.get(base_type, 36.0))
         if ac_block.get('wingspan') is not None:
             try:
@@ -7924,11 +8063,18 @@ class GateFinderBackend:
         }
         map_style_short = style_key if style_key in ("dark", "light", "satellite", "osm") else style_mapping.get(style_key, "dark")
 
+        norm_ac_type = (
+            self._normalize_aircraft_icao(aircraft_icao)
+            or self._normalize_aircraft_icao(base_type)
+            or self._normalize_aircraft_icao(aircraft_name)
+            or str(aircraft_icao or base_type or "").strip().upper()
+        )
         self.current_flight_data = {
             "ofp_id": ofp_id,
             "callsign": ofp_callsign,
             "registration": aircraft_reg,
             "aircraft": aircraft,
+            "aircraft_type": norm_ac_type,
             "aircraft_engines": aircraft_engines,
             "aircraft_version": aircraft_version,
             "aircraft_wingspan": wingspan,
@@ -8749,14 +8895,18 @@ class GateFinderBackend:
 
         # 3. Specific multi-token & hyphenated family rules (evaluated before generic regexes)
         spec_patterns = (
-            (r"\b(?:A319\s*NEO|319\s*NEO|A19N|19N)\b", "A19N"),
-            (r"\b(?:A320\s*NEO|320\s*NEO|A32NX|A20N|20N)\b", "A20N"),
-            (r"\b(?:A321\s*(?:NEO|NX|LR|XLR)|321\s*(?:NEO|NX|LR|XLR)|A21N|21N)\b", "A21N"),
+            (r"\b(?:A?319[-\s]*\d{3}\s*N\w*|A319\s*NEO|319\s*NEO|A19N|19N)\b", "A19N"),
+            (r"\b(?:A?320[-\s]*\d{3}\s*N\w*|A320\s*NEO|320\s*NEO|A32NX|A20N|20N)\b", "A20N"),
+            (r"\b(?:A?321[-\s]*\d{3}\s*N\w*|A321\s*(?:NEO|NX|LR|XLR)|321\s*(?:NEO|NX|LR|XLR)|A21N|21N)\b", "A21N"),
+            (r"\b(?:A?318[-\s]*1\d\d\w*)\b", "A318"),
+            (r"\b(?:A?319[-\s]*1\d\d\w*)\b", "A319"),
+            (r"\b(?:A?320[-\s]*2\d\d\w*)\b", "A320"),
+            (r"\b(?:A?321[-\s]*[12]\d\d\w*)\b", "A321"),
             (r"\b(?:A?220[-\s]*100|CS100|BCS1|A221)\b", "BCS1"),
             (r"\b(?:A?220[-\s]*300|CS300|BCS3|A223|A220)\b", "BCS3"),
-            (r"\b(?:A?300[-\s]*600\w*|A306\w*)\b", "A306"),
-            (r"\b(?:A?330[-\s]*800|330[-\s]*800|A338)\b", "A338"),
-            (r"\b(?:A?330[-\s]*900|330[-\s]*900|A330\s*NEO|A339)\b", "A339"),
+            (r"\b(?:A?300[-\s]*6[A-Z0-9]{2}\w*|A306\w*)\b", "A306"),
+            (r"\b(?:A?330[-\s]*8\d\d|330[-\s]*8\d\d|A338)\b", "A338"),
+            (r"\b(?:A?330[-\s]*9\d\d|330[-\s]*9\d\d|A330\s*NEO|A339)\b", "A339"),
             (r"\b(?:A?330[-\s]*2\d\d|330[-\s]*2\d\d|A332)\b", "A332"),
             (r"\b(?:A?330[-\s]*3\d\d|330[-\s]*3\d\d|A333)\b", "A333"),
             (r"\b(?:A?340[-\s]*3\d\d|340[-\s]*3\d\d|A343)\b", "A343"),
@@ -8765,26 +8915,26 @@ class GateFinderBackend:
             (r"\b(?:A?350[-\s]*9\d\d|350[-\s]*9\d\d|A359|A350)\b", "A359"),
             (r"\b(?:A?380(?:[-\s]*8\d\d)?|A388)\b", "A388"),
             (r"\b(?:B?737\s*MAX\s*7|737[-\s]*7\s*MAX|B37M|37M)\b", "B37M"),
-            (r"\b(?:B?737\s*MAX\s*8|737[-\s]*8\b(?!\d)|737\s*MAX|738M|B38M|38M|MAX\s*8)\b", "B38M"),
-            (r"\b(?:B?737\s*MAX\s*9|737[-\s]*9\b(?!\d)|739M|B39M|39M|MAX\s*9)\b", "B39M"),
+            (r"\b(?:B?737\s*MAX\s*8|737[-\s]*8\b(?![A-Z0-9])|737\s*MAX|738M|B38M|38M|MAX\s*8)\b", "B38M"),
+            (r"\b(?:B?737\s*MAX\s*9|737[-\s]*9\b(?![A-Z0-9])|739M|B39M|39M|MAX\s*9)\b", "B39M"),
             (r"\b(?:B?737\s*MAX\s*10|737[-\s]*10\b|B3XM|3XM|MAX\s*10)\b", "B3XM"),
-            (r"\b(?:B?717(?:[-\s]*2\d\d)?|B712)\b", "B712"),
-            (r"\b(?:B?737[-\s]*6\d\d|B736)\b", "B736"),
-            (r"\b(?:B?737[-\s]*7\d\d|B737|73G|73W)\b", "B737"),
-            (r"\b(?:B?737[-\s]*8\d\d\w*|B738\w*|738W|73H)\b", "B738"),
-            (r"\b(?:B?737[-\s]*9\d\d\w*|B739\w*|73J)\b", "B739"),
+            (r"\b(?:B?717(?:[-\s]*2[A-Z0-9]{2})?|B712)\b", "B712"),
+            (r"\b(?:B?737[-\s]*6[A-Z0-9]{2}\w*|B736)\b", "B736"),
+            (r"\b(?:B?737[-\s]*7[A-Z0-9]{2}\w*|B737|73G|73W)\b", "B737"),
+            (r"\b(?:B?737[-\s]*8[A-Z0-9]{2}\w*|B738\w*|738W|73H)\b", "B738"),
+            (r"\b(?:B?737[-\s]*9[A-Z0-9]{2}\w*|B739\w*|73J)\b", "B739"),
             (r"\b(?:B?747[-\s]*8\w*|B748\w*|748I|748F)\b", "B748"),
-            (r"\b(?:B?747[-\s]*4\d\d\w*|B744\w*|744F)\b", "B744"),
-            (r"\b(?:B?757[-\s]*3\d\d|B753)\b", "B753"),
-            (r"\b(?:B?757(?:[-\s]*2\d\d\w*)?|B752\w*)\b", "B752"),
-            (r"\b(?:B?767[-\s]*4\d\d|B764)\b", "B764"),
-            (r"\b(?:B?767[-\s]*2\d\d\w*|B762\w*)\b", "B762"),
-            (r"\b(?:B?767(?:[-\s]*3\d\d\w*)?|B763\w*)\b", "B763"),
-            (r"\b(?:B?777[-\s]*200\s*LR|B77L|77L)\b", "B77L"),
+            (r"\b(?:B?747[-\s]*4[A-Z0-9]{2}\w*|B744\w*|744F)\b", "B744"),
+            (r"\b(?:B?757[-\s]*3[A-Z0-9]{2}\w*|B753)\b", "B753"),
+            (r"\b(?:B?757(?:[-\s]*2[A-Z0-9]{2}\w*)?|B752\w*)\b", "B752"),
+            (r"\b(?:B?767[-\s]*4[A-Z0-9]{2}\w*|B764)\b", "B764"),
+            (r"\b(?:B?767[-\s]*2[A-Z0-9]{2}\w*|B762\w*)\b", "B762"),
+            (r"\b(?:B?767(?:[-\s]*3[A-Z0-9]{2}\w*)?|B763\w*)\b", "B763"),
+            (r"\b(?:B?777[-\s]*2[A-Z0-9]{2}\s*LR|B77L|77L)\b", "B77L"),
             (r"\b(?:B?777[-\s]*F\b|777F|B77F|77F)\b", "B77F"),
-            (r"\b(?:B?777[-\s]*300\s*ER|777W|B77W|77W)\b", "B77W"),
-            (r"\b(?:B?777[-\s]*3\d\d|B773)\b", "B773"),
-            (r"\b(?:B?777[-\s]*2\d\d\w*|B772)\b", "B772"),
+            (r"\b(?:B?777[-\s]*3[A-Z0-9]{2}\s*ER|777W|B77W|77W)\b", "B77W"),
+            (r"\b(?:B?777[-\s]*3[A-Z0-9]{2}\w*|B773)\b", "B773"),
+            (r"\b(?:B?777[-\s]*2[A-Z0-9]{2}\w*|B772)\b", "B772"),
             (r"\b(?:B?787[-\s]*10|B78X|78X)\b", "B78X"),
             (r"\b(?:B?787[-\s]*9|B789)\b", "B789"),
             (r"\b(?:B?787[-\s]*8|B788)\b", "B788"),
@@ -9142,23 +9292,108 @@ class GateFinderBackend:
             "live_lat": live_apt.get("lat"),
             "live_lon": live_apt.get("lon"),
             "simbrief_origin": dep_icao,
-            "simbrief_dest": arr_icao or dep_icao,
+            "simbrief_dest": arr_icao if (arr_icao and arr_icao != dep_icao) else "",
             "simbrief_aircraft": sb_ac_name,
             "simbrief_aircraft_icao": cur_ac_type,
             "live_aircraft": ac_prof,
         }
+        if str(self.config.settings.get("default_mismatch_action", "ask") or "ask").strip().lower() == "use_msfs":
+            self.auto_apply_default_mismatch_if_configured(res_mismatch)
+            self._mismatch_check_memo = (memo_key, None)
+            self.pending_simbrief_mismatch = None
+            return None
         self._mismatch_check_memo = (memo_key, res_mismatch)
         self.pending_simbrief_mismatch = res_mismatch
         return res_mismatch
+
+    def resolve_default_live_dest(self, origin_icao, explicit_dest="", mismatch_info=None):
+        """
+        Determines the arrival airport ICAO when switching to a Live MSFS Flight ('Use MSFS Aircraft').
+        - If `explicit_dest` was typed by the user, uses it directly.
+        - Otherwise, if the live departure airport matches the SimBrief/current flight origin and has a
+          valid distinct destination (`dest != origin`), preserves that destination instead of resetting
+          arrival to `origin_icao`.
+        - Otherwise returns `""` (leaving Arrival unset rather than fabricating `dep == arr`).
+        """
+        orig_u = re.sub(r"[^A-Z0-9]", "", str(origin_icao or "").strip().upper())[:4]
+        exp_u = re.sub(r"[^A-Z0-9]", "", str(explicit_dest or "").strip().upper())[:4]
+        if len(exp_u) >= 3 and exp_u != orig_u:
+            return exp_u
+        if not orig_u:
+            return ""
+
+        mm = mismatch_info if isinstance(mismatch_info, dict) else (getattr(self, "pending_simbrief_mismatch", None) or {})
+        sb_orig = str(mm.get("simbrief_origin") or "").strip().upper()
+        sb_dest = str(mm.get("simbrief_dest") or "").strip().upper()
+        if sb_orig == orig_u and len(sb_dest) >= 3 and sb_dest != orig_u:
+            return sb_dest
+
+        fd = self.current_flight_data if isinstance(self.current_flight_data, dict) else None
+        if fd:
+            cur_dep = str((fd.get("departure") or {}).get("icao") or "").strip().upper()
+            cur_arr = str((fd.get("arrival") or {}).get("icao") or "").strip().upper()
+            if cur_dep == orig_u and len(cur_arr) >= 3 and cur_arr != orig_u:
+                return cur_arr
+
+        cached_pk = getattr(self, "_cached_mismatch_sb_peek", None)
+        if isinstance(cached_pk, tuple) and len(cached_pk) >= 3 and isinstance(cached_pk[2], dict):
+            pk_orig = str(cached_pk[2].get("origin") or "").strip().upper()
+            pk_dest = str(cached_pk[2].get("destination") or "").strip().upper()
+            if pk_orig == orig_u and len(pk_dest) >= 3 and pk_dest != orig_u:
+                return pk_dest
+
+        return ""
+
+    def auto_apply_default_mismatch_if_configured(self, mismatch_info):
+        """
+        Silently applies the user's saved 'Use MSFS Aircraft' preference in a background thread
+        without opening any blocking modal on Desktop or in-sim EFB.
+        """
+        if not isinstance(mismatch_info, dict):
+            return False
+        if str(self.config.settings.get("default_mismatch_action", "ask") or "ask").strip().lower() != "use_msfs":
+            return False
+        m_key = mismatch_info.get("mismatch_key")
+        live_icao = str(mismatch_info.get("live_icao") or "").strip().upper()
+        if not live_icao:
+            return False
+        lock = getattr(self, "_auto_mismatch_lock", None)
+        if lock is None:
+            self._auto_mismatch_lock = threading.Lock()
+            lock = self._auto_mismatch_lock
+        with lock:
+            if getattr(self, "_auto_mismatch_worker_running", False):
+                return False
+            dismissed = getattr(self, "_dismissed_airport_mismatches", set())
+            if m_key and m_key in dismissed:
+                return False
+            self._auto_mismatch_worker_running = True
+            self.dismiss_simbrief_msfs_mismatch(m_key)
+            dest_auto = self.resolve_default_live_dest(live_icao, "", mismatch_info=mismatch_info)
+
+        def _bg_apply():
+            try:
+                self.load_live_msfs_flight(live_icao, dest_auto)
+                self._gui_close_mismatch_modal = True
+                self._gui_sync_needed = True
+            except Exception as ex_mm:
+                print(f"[GateFinder] Auto-apply default mismatch error: {ex_mm}")
+            finally:
+                with lock:
+                    self._auto_mismatch_worker_running = False
+
+        threading.Thread(target=_bg_apply, daemon=True).start()
+        return True
 
     def load_live_msfs_flight(self, origin_icao, dest_icao="", progress_callback=None):
         """
         Loads a Direct Live MSFS Flight without requiring a matching SimBrief OFP,
         using the live aircraft telemetry from SimConnect and resolving airport stands/charts
-        for `origin_icao` and `dest_icao` (defaults to `origin_icao` for local flights).
+        for `origin_icao` and `dest_icao` (preserves matching SimBrief destination or leaves
+        arrival unset when `dest_icao` is omitted, avoiding erroneous `dep == arr` resets).
         """
         orig_u = str(origin_icao or "").strip().upper()
-        dest_u = str(dest_icao or "").strip().upper() or orig_u
+        dest_u = self.resolve_default_live_dest(orig_u, dest_icao)
 
         orig_lat, orig_lon, orig_name = self.resolve_airport_coords_by_icao(orig_u)
         if orig_lat is None or orig_lon is None:
@@ -9166,7 +9401,9 @@ class GateFinderBackend:
             if sc and sc.user_lat is not None and sc.user_lon is not None:
                 orig_lat, orig_lon = float(sc.user_lat), float(sc.user_lon)
 
-        if dest_u == orig_u:
+        if not dest_u:
+            dest_lat, dest_lon, dest_name = None, None, ""
+        elif dest_u == orig_u:
             dest_lat, dest_lon, dest_name = orig_lat, orig_lon, orig_name
         else:
             dest_lat, dest_lon, dest_name = self.resolve_airport_coords_by_icao(dest_u)
@@ -10336,7 +10573,8 @@ class GateFinderBackend:
         if fd.get("aircraft_version") and "•" in str(fd["aircraft_version"]):
             fd["aircraft_version"] = re.sub(r"\s*•\s*", " - ", str(fd["aircraft_version"]))
         fd["camaieu_palette"] = self.get_airline_camaieu_palette(al_code_cam)
-        fd["app_version"] = "2.0.6"
+        fd["default_mismatch_action"] = str(self.config.settings.get("default_mismatch_action", "ask") or "ask")
+        fd["app_version"] = "2.0.7"
         return fd
 
     def scan_gsx_profiles(self):
@@ -10597,7 +10835,7 @@ class GateFinderBackend:
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <title>GateFinder V2.0.6 - Live Web EFB</title>
+    <title>GateFinder V2.0.7 - Live Web EFB</title>
     <link rel="stylesheet" href="/GateFinderPanel.css?v=44" />
     <style>
         html, body {
@@ -10943,11 +11181,11 @@ class GateFinderBackend:
             display: none !important;
         }
     </style>
-    <script type="text/javascript" src="/GateFinderPanel.js?v=206"></script>
+    <script type="text/javascript" src="/GateFinderPanel.js?v=207"></script>
 </head>
 <body class="border-box color-white">
     <gsx-gatefinder-panel>
-        <ingame-ui id="GSX_GateFinder" panel-id="PANEL_GATEFINDER" title="GATEFINDER V2.0.6">
+        <ingame-ui id="GSX_GateFinder" panel-id="PANEL_GATEFINDER" title="GATEFINDER V2.0.7">
             <div id="MainDisplay">
                 <div id="StatusMessage" class="status-message-box">
                     <h2 id="StatusTitle" class="status-title">Awaiting Flight Data</h2>
@@ -11207,7 +11445,7 @@ class GateFinderBackend:
                             raw_bytes = f.read()
                         if fname.endswith('.html'):
                             ts_b = str(int(time.time())).encode('ascii')
-                            raw_bytes = raw_bytes.replace(b'?v=206', b'?v=' + ts_b).replace(b'?v=205', b'?v=' + ts_b).replace(b'?v=204', b'?v=' + ts_b).replace(b'?v=203', b'?v=' + ts_b)
+                            raw_bytes = raw_bytes.replace(b'?v=207', b'?v=' + ts_b).replace(b'?v=206', b'?v=' + ts_b).replace(b'?v=205', b'?v=' + ts_b).replace(b'?v=204', b'?v=' + ts_b).replace(b'?v=203', b'?v=' + ts_b)
                         self.wfile.write(raw_bytes)
                         return
 
@@ -11268,6 +11506,7 @@ class GateFinderBackend:
                             fd = {
                                 "pending_simbrief_mismatch": pmm,
                                 "suppress_popups_in_cockpit": bool(bi.config.settings.get("suppress_popups_in_cockpit", False)),
+                                "default_mismatch_action": str(bi.config.settings.get("default_mismatch_action", "ask") or "ask"),
                                 "is_airborne": False,
                                 "user_aircraft": {
                                     "connected": bool(sc_now and sc_now.connected),
@@ -11388,15 +11627,21 @@ class GateFinderBackend:
                     dest_q = re.sub(r'[^A-Z0-9]', '', query.get('dest', [''])[0].strip().upper())[:4]
                     mkey_q = query.get('key', [''])[0].strip()
                     live_q = re.sub(r'[^A-Z0-9]', '', query.get('live_icao', [''])[0].strip().upper())[:4]
+                    make_def_q = query.get('make_default', ['0'])[0].strip().lower() in ('1', 'true', 'yes')
                     bi = APIHandler.backend_instance
                     pmm = getattr(bi, "pending_simbrief_mismatch", None) or {}
                     eff_key = mkey_q or pmm.get("mismatch_key")
                     eff_live = live_q or str(pmm.get("live_icao") or "").strip().upper()
                     try:
                         if action == 'use_msfs':
+                            if make_def_q:
+                                bi.config.settings["default_mismatch_action"] = "use_msfs"
+                                bi.config.save()
+                                bi._gui_settings_sync_needed = True
+                            eff_dest = bi.resolve_default_live_dest(eff_live, dest_q, mismatch_info=pmm)
                             bi.dismiss_simbrief_msfs_mismatch(eff_key)
                             if eff_live:
-                                bi.load_live_msfs_flight(eff_live, dest_q or eff_live)
+                                bi.load_live_msfs_flight(eff_live, eff_dest)
                         elif action == 'import_simbrief':
                             bi._cached_mismatch_sb_peek = None
                             bi._mismatch_check_memo = None

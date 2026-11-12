@@ -361,7 +361,7 @@ class GSXGateFinderPanel extends TemplateElement {
 
         function forceTitle() {
             self.classList.add("is-ingame-panel");
-            let verStr = (self.currentData && self.currentData.app_version) ? String(self.currentData.app_version) : "2.0.6";
+            let verStr = (self.currentData && self.currentData.app_version) ? String(self.currentData.app_version) : "2.0.7";
             let fullTitle = "GATEFINDER V" + verStr.replace(/^V/i, "");
             let ui = document.querySelector("ingame-ui");
             if (ui) {
@@ -1079,6 +1079,9 @@ class GSXGateFinderPanel extends TemplateElement {
         }
         if (tabArr) {
             tabArr.addEventListener("click", () => {
+                if (this.currentData && (!this.currentData.arrival || !this.currentData.arrival.icao)) {
+                    return;
+                }
                 this.activePhase = "arrival";
                 this.manualPhaseOverride = true;
                 this.initialFitDone = false;
@@ -1838,7 +1841,7 @@ class GSXGateFinderPanel extends TemplateElement {
 
         if (isAirborne) {
             this.manualPhaseOverride = false;
-            if (this.activePhase !== "arrival") {
+            if (this.activePhase !== "arrival" && data.arrival && data.arrival.icao) {
                 this.activePhase = "arrival";
                 this.initialFitDone = false;
                 this.lastSidebarSig = "";
@@ -3046,10 +3049,14 @@ class GSXGateFinderPanel extends TemplateElement {
                 '<div class="atc-modal-card" style="background-color:#111827;border:0;max-width:468px;padding:16px 18px;border-radius:10px;">' +
                     '<div id="SbMismatchHeader" class="atc-modal-header" style="font-size:11.5px;margin-bottom:8px;">SIMBRIEF / MSFS MISMATCH</div>' +
                     '<div id="SbMismatchSummary" style="font-size:12.5px;font-weight:700;color:#FFFFFF;line-height:1.5;margin-bottom:4px;white-space:pre-line;"></div>' +
-                    '<div id="SbMismatchSub" style="font-size:11.5px;color:#94A3B8;line-height:1.4;margin-bottom:11px;"></div>' +
-                    '<div style="display:flex;align-items:center;margin-bottom:13px;">' +
+                    '<div id="SbMismatchSub" style="font-size:11.5px;color:#94A3B8;line-height:1.4;margin-bottom:10px;"></div>' +
+                    '<div style="display:flex;align-items:center;margin-bottom:10px;">' +
                         '<span style="font-size:11.5px;font-weight:700;color:#94A3B8;margin-right:10px;white-space:nowrap;">Arrival ICAO (optional):</span>' +
                         '<input id="SbMismatchDestInput" type="text" maxlength="4" style="flex:1;height:28px;background-color:#1E293B;border:0;border-radius:6px;padding:0 10px;color:#FFFFFF;font-family:Consolas,monospace;font-size:12px;font-weight:700;outline:none;text-transform:uppercase;" />' +
+                    '</div>' +
+                    '<div id="SbMismatchMakeDefaultRow" style="display:flex;align-items:center;margin-bottom:12px;cursor:pointer;user-select:none;">' +
+                        '<div id="SbMismatchMakeDefaultBox" style="width:15px;height:15px;border-radius:4px;border:1px solid #475569;background-color:#1E293B;display:flex;align-items:center;justify-content:center;margin-right:8px;font-size:11px;font-weight:800;color:#FFFFFF;line-height:1;"></div>' +
+                        '<span style="font-size:11.5px;color:#CBD5E1;">Make this default choice for \'Use MSFS Aircraft\'</span>' +
                     '</div>' +
                     '<div class="atc-modal-actions" style="gap:6px;">' +
                         '<div id="BtnMismatchSimbrief" class="atc-modal-btn" style="background-color:#0A86C2;margin-right:6px;">Open SimBrief</div>' +
@@ -3087,9 +3094,27 @@ class GSXGateFinderPanel extends TemplateElement {
             let sumEl = modal.querySelector("#SbMismatchSummary");
             let subEl = modal.querySelector("#SbMismatchSub");
             let destIn = modal.querySelector("#SbMismatchDestInput");
+            let defRow = modal.querySelector("#SbMismatchMakeDefaultRow");
+            let defBox = modal.querySelector("#SbMismatchMakeDefaultBox");
             let btnSb = modal.querySelector("#BtnMismatchSimbrief");
             let btnMsfs = modal.querySelector("#BtnMismatchUseMsfs");
             let btnKeep = modal.querySelector("#BtnMismatchKeepSb");
+
+            let makeDefChecked = String((data && data.default_mismatch_action) || "ask").toLowerCase() === "use_msfs";
+            let renderDefBox = () => {
+                if (!defBox) return;
+                defBox.style.backgroundColor = makeDefChecked ? "#0A86C2" : "#1E293B";
+                defBox.style.borderColor = makeDefChecked ? "#0A86C2" : "#475569";
+                defBox.innerText = makeDefChecked ? "✓" : "";
+            };
+            renderDefBox();
+            if (defRow) {
+                defRow.onclick = (e) => {
+                    e.stopPropagation();
+                    makeDefChecked = !makeDefChecked;
+                    renderDefBox();
+                };
+            }
 
             if (hdrEl) {
                 hdrEl.innerText = sbOrig ? "SIMBRIEF / MSFS MISMATCH" : "MSFS LIVE FLIGHT";
@@ -3098,9 +3123,10 @@ class GSXGateFinderPanel extends TemplateElement {
             let standNote = liveStand ? (" (Stand " + liveStand + ")") : "";
             if (sumEl) {
                 if (sbOrig) {
+                    let sbRoute = sbDest ? (sbOrig + " -> " + sbDest) : sbOrig;
                     sumEl.innerText =
                         "MSFS :  " + liveIcao + standNote + "  |  " + acDisp + "\n" +
-                        "SimBrief :  " + sbOrig + " -> " + sbDest + "  |  " + (sbAc || "Unknown");
+                        "SimBrief :  " + sbRoute + "  |  " + (sbAc || "Unknown");
                 } else {
                     sumEl.innerText = "MSFS :  " + liveIcao + standNote + "  |  " + acDisp;
                 }
@@ -3118,7 +3144,9 @@ class GSXGateFinderPanel extends TemplateElement {
             }
             if (destIn) {
                 destIn.value = "";
-                destIn.placeholder = "e.g. LFPG (blank = " + liveIcao + ")";
+                destIn.placeholder = (sbOrig === liveIcao && sbDest && sbDest !== liveIcao)
+                    ? ("e.g. " + sbDest + " (blank = " + sbDest + ")")
+                    : "e.g. LFPG (optional)";
             }
             let isInSimPanel = (typeof window.Include !== "undefined" || typeof Coherent !== "undefined");
             let avoidDesktopBrowser = Boolean(suppressCockpitPopups && isInSimPanel);
@@ -3175,6 +3203,7 @@ class GSXGateFinderPanel extends TemplateElement {
                 let qs = "action=" + encodeURIComponent(act) +
                     "&live_icao=" + encodeURIComponent(liveIcao) +
                     "&dest=" + encodeURIComponent(destVal) +
+                    "&make_default=" + ((act === "use_msfs" && makeDefChecked) ? "1" : "0") +
                     "&key=" + encodeURIComponent(String(mmInfo.mismatch_key || ""));
                 fetch(this.getApiBase() + "/api/resolve_mismatch?" + qs)
                     .then(r => r.json())

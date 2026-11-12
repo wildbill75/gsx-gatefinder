@@ -3,7 +3,7 @@
     "Language": "fr-FR",
     "Strings": {
       "GateFinder": "GateFinder",
-      "PANEL_GATEFINDER": "GATEFINDER V2.0.6",
+      "PANEL_GATEFINDER": "GATEFINDER V2.0.7",
       "GSX GateFinder": "GateFinder",
       "GSX_GateFinder": "GateFinder",
       "GATEFINDERPANEL": "GateFinder",
@@ -12,10 +12,11 @@
       "ICON_TOOLBAR_GATEFINDERPANEL": "GateFinder",
       "ICON_TOOLBAR_GATEFINDER-OFF": "GateFinder",
       "ICON_TOOLBAR_GATEFINDERPANEL-OFF": "GateFinder",
-      "GATEFINDER V2.0": "GATEFINDER V2.0.6",
-      "GATEFINDER V2.0.4": "GATEFINDER V2.0.6",
-      "GATEFINDER V2.0.5": "GATEFINDER V2.0.6",
-      "GATEFINDER V2.0.6": "GATEFINDER V2.0.6"
+      "GATEFINDER V2.0": "GATEFINDER V2.0.7",
+      "GATEFINDER V2.0.4": "GATEFINDER V2.0.7",
+      "GATEFINDER V2.0.5": "GATEFINDER V2.0.7",
+      "GATEFINDER V2.0.6": "GATEFINDER V2.0.7",
+      "GATEFINDER V2.0.7": "GATEFINDER V2.0.7"
     }
   }
 }

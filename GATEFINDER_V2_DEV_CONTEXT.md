@@ -1,4 +1,4 @@
-# GateFinder — Référentiel Complet de Développement & d'Architecture (V2.0.0 → V2.0.6)
+# GateFinder — Référentiel Complet de Développement & d'Architecture (V2.0.0 → V2.0.7)
 
 > **Usage prévu de ce document :** Ce fichier sert de **base de connaissances exhaustive (System Context)** à fournir à **Gemini** afin qu'il dispose de 100 % de l'historique fonctionnel, de l'architecture du code, des API internes, des conventions UI/UX et des contraintes techniques de **GateFinder** pour rédiger des prompts chirurgicaux destinés à l'agent de code (**Antigravity**).
 
@@ -7,12 +7,12 @@
 ## 1. Identité du Projet & Écosystème d'Exécution
 
 - **Nom :** GateFinder (édité par *Sidestick Priority* — dépôt GitHub : `wildbill75/gsx-gatefinder`)
-- **Version actuelle en production :** `V2.0.6` (`V2.0.5` étant la dernière version uploadée manuellement sur `flightsim.to` ; `V2.0.6+` sont distribuées automatiquement via l'Auto-Updater GitHub intégré).
+- **Version actuelle en production :** `V2.0.7` (`V2.0.5` étant la dernière version uploadée manuellement sur `flightsim.to` ; `V2.0.6+` sont distribuées automatiquement via l'Auto-Updater GitHub intégré).
 - **Simulateurs cibles :** Microsoft Flight Simulator 2020 & Microsoft Flight Simulator 2024 (Store & Steam, 2D & VR).
 - **Rôle :** Compagnon tout-en-un d'assignation intelligente de portes/postes de stationnement, de cartographie vectorielle sol type Lido (Moving Map), de routage taxiway A* temps réel, et de synchronisation bidirectionnelle **SimBrief + GSX Pro + BeyondATC + SayIntentions.AI + VATSIM/IVAO + SimConnect**.
 - **5 Surfaces d'Affichage Synchronisées en Temps Réel** (alimentées par le même moteur Python local sur le port HTTP `8420`) :
   1. **Application Desktop Windows (`GateFinder.exe`)** : CustomTkinter + Canvas vectoriel GDI haute performance (`src/gui.py`), icône System Tray (`pystray`), support 4K / High-DPI (200 %–250 %+).
-  2. **MSFS In-Game Toolbar Panel (`GATEFINDER V2.0.6`)** : Panneau barre d'outils natif MSFS 2020 & 2024 (2D et VR) via CoherentGT (`GateFinderPanel.html` + `GateFinderPanel.js`).
+  2. **MSFS In-Game Toolbar Panel (`GATEFINDER V2.0.7`)** : Panneau barre d'outils natif MSFS 2020 & 2024 (2D et VR) via CoherentGT (`GateFinderPanel.html` + `GateFinderPanel.js`).
   3. **Application Native Tablette EFB MSFS 2024** : App dédiée intégrée directement dans l'EFB natif de MSFS 2024 (`GateFinderEfbApp.js` → `GateFinderEfbFrame.html`).
   4. **Application Native Cockpit EFB Fenix A320 Series (`A319` / `A320` / `A321`)** : App intégrée sur l'écran d'accueil des tablettes Captain et First Officer du Fenix (`EfbHost_Captain.html`, `EfbHost_FO.html` → `GateFinderFenixFrame.html`).
   5. **Web EFB Externe (iPad / Tablette Android / Smartphone)** : Accessible en Wi-Fi local via QR code (`http://<LAN_IP>:8420/` avec modes adaptatifs `Phone`, `Tablet`, `PC`).
@@ -89,13 +89,17 @@ Passage de l'architecture V1 (simples cartes/tuiles statiques) à une suite EFB 
 
 ---
 
-### Phase D — Version 2.0.6 (Normalisation Avion Intelligente, Mode Cockpit/VR Sans Popups & Fallback Géométrique Global OSM + BGL)
-1. **Normalisation Intelligente des Types Avions SimBrief ↔ MSFS (`_normalize_aircraft_icao` & `_are_aircraft_types_compatible` dans `src/backend.py`)** :
-   - Suppression des faux positifs de mismatch entre les codes ICAO SimBrief (ex. `B738`, `A20N`) et les chaînes télémétriques MSFS brutes (ex. `BOEING 738 (AUA)`, `AIRBUS A320NEO`, `FENIXA320 CFM WF`) par nettoyage des suffixes livrées entre parenthèses, retrait des préfixes constructeurs et équivalence des sous-familles Neo/MAX/motorisations.
-2. **Option de Suppression des Popups Desktop en Cockpit / VR (`suppress_popups_in_cockpit` dans `src/config.py`, `src/gui.py`, `src/backend.py`, `GateFinderPanel.js`)** :
-   - Ajout d'un réglage persistant `Suppress desktop popups (Cockpit / VR mode)` (`False` par défaut). Lorsqu'il est activé, aucune modale bloquante (**Live Stand Selection** ni **SimBrief Mismatch**) ne s'ouvre automatiquement par-dessus MSFS/Windows : une barre d'action discrète sans icône apparaît dans le bandeau Desktop tandis que l'EFB / In-Game Panel cockpit permet de trancher en un clic sans quitter le casque VR ou le home-cockpit.
-3. **Fallback Géométrique Global OSM + MSFS BGL Natif (`src/taxi_router.py`, `src/backend.py`, `GateFinderPanel.js`)** :
-   - Fin des correctifs aéroport par aéroport (ex. `LICC` Catane) grâce à un pipeline global en 3 niveaux : (a) couture topologique automatique des ways/multipolygones OSM d'apron ouverts ou tronqués + rendu Canvas `beginPath()` par anneau, (b) fusion automatique du réseau natif MSFS BGL (`runways`, `taxiways`, `parkings`, `aprons` via `bgl_geometry_provider`) dès qu'OSM est incomplet, et (c) génération automatique d'enveloppes d'apron orientées autour des stands orphelins + support des pistes à remontée (*backtrack*).
+### Phase D — Versions 2.0.6 & 2.0.7 (Normalisation Avion Intelligente, Préférence Mismatch Persistante, Correctif `dep == arr`, Mode Cockpit/VR Sans Popups & Fallback Géométrique Global OSM + BGL)
+1. **Normalisation Intelligente des Types Avions SimBrief ↔ MSFS & Préférence Mismatch par Défaut (`src/backend.py`, `src/config.py`, `src/gui.py`, `GateFinderPanel.js`)** :
+   - Suppression des faux positifs de mismatch entre les codes ICAO SimBrief (ex. `B738`, `A20N`) et les chaînes télémétriques MSFS brutes (ex. `BOEING 738 (AUA)`, `737-8AS (RYR)`, `AIRBUS 320-214`, `FENIXA320 CFM WF`) par nettoyage des suffixes livrées entre parenthèses, retrait des préfixes constructeurs, support des codes clients alphanumériques Boeing/Airbus et équivalence des sous-familles Neo/MAX/motorisations.
+   - Ajout de la préférence persistante `default_mismatch_action` (`"ask"` ou `"use_msfs"`) via la case `Make this default choice for 'Use MSFS Aircraft'` dans la modale mismatch (Desktop & EFB) et le switch `Auto-select 'Use MSFS Aircraft' on SimBrief mismatch` dans `Settings` pour appliquer automatiquement l'avion MSFS en tâche de fond sans ouvrir la modale.
+   - Correctif PyInstaller `--onefile` sur `start_github_self_update` (`PYTHONHOME`/`PYTHONPATH` nettoyés + `PYINSTALLER_RESET_ENVIRONMENT=1` dans `apply_update.bat`) empêchant l'héritage de l'ancien dossier temporaire `_MEIxxxxx` au redémarrage post-update.
+2. **Validation Stricte de l'Aéroport d'Arrivée SimBrief (`dep == arr` Fix dans `src/backend.py`)** :
+   - Parsing unifié JSON + XML (`_parse_simbrief_payload` assainissant les balises XML vides `{}`) et validation croisée `_extract_validated_simbrief_route_icaos` (vérification `origin != destination`, extraction de secours `-ADES` depuis le texte FPL ATC ICAO, conservation de la destination active/session et `resolve_default_live_dest`) empêchant tout auto-import ou action `Use MSFS Aircraft` sans destination d'écraser l'arrivée avec l'aéroport de départ (`dep == arr`).
+3. **Option de Suppression Complète des Popups Desktop en Cockpit / VR (`suppress_popups_in_cockpit` dans `src/config.py`, `src/gui.py`, `src/backend.py`, `GateFinderPanel.js`)** :
+   - Réglage persistant `Suppress desktop popups (Cockpit / VR mode)` (`False` par défaut). Lorsqu'il est activé, aucune modale bloquante (**Live Stand Selection**, **Turnaround Stand**, **SimBrief Mismatch**, ni splash de rechargement live) ne s'ouvre par-dessus MSFS/Windows : une barre d'action discrète sans icône apparaît dans le bandeau Desktop tandis que l'EFB / In-Game Panel cockpit conserve la résolution interactive complète.
+4. **Fallback Géométrique Global OSM + MSFS BGL Natif (`src/taxi_router.py`, `src/backend.py`, `GateFinderPanel.js`)** :
+   - Fin des correctifs aéroport par aéroport (ex. `LICC` Catane) grâce à un pipeline global en 3 niveaux : (a) couture topologique et fermeture automatique des ways/multipolygones OSM d'apron ouverts ou tronqués + rendu Canvas `beginPath()` par anneau, (b) fusion automatique du réseau natif MSFS BGL (`runways`, `taxiways`, `parkings`, `aprons` via `bgl_geometry_provider`) et pontage des îlots de stands déconnectés (`> 185 m`) dès qu'OSM est incomplet, et (c) génération automatique d'enveloppes d'apron orientées autour des stands/bretelles orphelins + support des pistes à remontée (*backtrack*).
 
 ---
 

@@ -156,6 +156,7 @@ class Config:
             "sayintentions_api_key": si_key_def,
             "map_follow_refresh_hz": 10,
             "suppress_popups_in_cockpit": False,
+            "default_mismatch_action": "ask",
             "send_crash_reports": True,
             "share_flight_stats": True
         }

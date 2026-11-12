@@ -1,6 +1,21 @@
 # GateFinder — Changelog
 
-## Version 2.0.6 (Latest Release)
+## Version 2.0.7 (Latest Release)
+
+### 🚀 New Features, UX Enhancements & Bug Fixes
+- **Enhanced Aircraft Type Normalization & Persistent Default Mismatch Choice (`default_mismatch_action`):**
+  - Expanded ICAO airframe normalization to handle Boeing 2-character alphanumeric customer codes (e.g., `737-8AS (RYR)`, `737-7H4`, `747-4R7F`), Airbus engine/subseries codes (`320-214`, `A320-251N`), parenthetical livery suffixes (`BOEING 738 (AUA)`), and manufacturer prefixes without false mismatch prompts.
+  - Added a **`Make this default choice for 'Use MSFS Aircraft'`** checkbox directly inside the SimBrief/MSFS mismatch modal (both Desktop and MSFS In-Game Panel / EFB), plus a toggle in **Settings** (`Auto-select 'Use MSFS Aircraft' on SimBrief mismatch`) to automatically apply your spawned MSFS aircraft silently in the background on future flights.
+- **SimBrief Auto-Import Arrival Airport Validation Fix (`dep == arr` Bug Fix):**
+  - Strictly validated SimBrief XML/JSON route parsing (`origin` vs. `destination`, empty `{}` XML tag sanitization, ICAO FPL `-ADES` recovery, and active/session destination preservation) so auto-loads and blank-destination `Use MSFS Aircraft` resolutions never overwrite the arrival airport with the departure ICAO (`dep == arr`).
+- **Full Cockpit / VR Popup Suppression Coverage (`suppress_popups_in_cockpit`):**
+  - Extended `Suppress desktop popups (Cockpit / VR mode)` across all automatic desktop modals (Live Stand Selection, Turnaround Stand Prompt, SimBrief Mismatch, and live-flight reload splash), keeping desktop focus untouched for VR and home-cockpit setups while maintaining full interactive control in the MSFS EFB / In-Game Panel.
+- **Enhanced Global OSM + Native MSFS BGL Airport Geometry Fallback:**
+  - Upgraded the worldwide surface geometry loader (`taxi_router.py`) to close wide unclosed OSM apron ways, synthesize bounding apron hulls even on sparse airports with zero OSM stands/aprons, and automatically bridge disconnected stand clusters (`> 185 m` from OSM taxiways) via native MSFS BGL networks—eliminating truncated airport charts globally (including `LICC`).
+
+---
+
+## Version 2.0.6
 
 ### 🚀 New Features & Reliability Improvements
 - **Intelligent Aircraft Type Normalization (SimBrief vs. MSFS Mismatch Fix):**
