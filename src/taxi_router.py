@@ -211,6 +211,21 @@ class TaxiRouter:
                 chart["stands"] = [dict(s) for s in synth_stands]
                 modified = True
 
+        # 4. Globally prune dangling dead-end taxiway cul-de-sacs & orphaned grass holding points
+        if chart.get("_deadend_pruned_v") != 2:
+            pc_tw, pc_hp = self._prune_dangling_taxiway_stubs(chart)
+            chart["_deadend_pruned_v"] = 2
+            modified = True
+            if pc_tw > 0 or pc_hp > 0:
+                chart.pop("_apron_hull_sig", None)
+                self._ensure_complete_apron_surfaces(chart)
+                all_lats = [p[0] for r in (chart.get("runways") or []) for p in (r.get("points") or [])] + [
+                    p[0] for t in (chart.get("taxiways") or []) for p in (t.get("points") or [])
+                ]
+                all_lons = [p[1] for r in (chart.get("runways") or []) for p in (r.get("points") or [])] + [
+                    p[1] for t in (chart.get("taxiways") or []) for p in (t.get("points") or [])
+                ]
+
         if modified and all_lats and all_lons:
             min_lat, max_lat = min(all_lats), max(all_lats)
             min_lon, max_lon = min(all_lons), max(all_lons)
@@ -1499,6 +1514,534 @@ class TaxiRouter:
 
         return extra_stands
 
+    def _prune_dangling_taxiway_stubs(self, chart):
+        """
+        Globally eliminates dangling dead-end taxiway stubs and orphaned grass hold-short bars
+        left behind in OSM by demolished/disused aprons, closed runways, or unbuilt masterplan piers:
+        - Splits taxiways into a planar graph at all T/X-junctions (<= 7.5m) so overhanging tails
+          past an intersection become distinct degree-1 leaf chains.
+        - Iteratively peels degree-1 leaf chains whose tips are unanchored (outside original aprons,
+          away from runways, away from stands, away from terminals/hangars, and not part of an
+          undershot T-junction or parallel apron parking comb).
+        """
+        if not isinstance(chart, dict):
+            return 0, 0
+        twys_in = chart.get("taxiways") or []
+        rwys = chart.get("runways") or []
+        if not twys_in or not rwys:
+            return 0, 0
+
+        orig_aprons = [ap for ap in (chart.get("aprons") or []) if not ap.get("_synth_hull")]
+        stands_all = list(chart.get("stands") or [])
+        seen_st = {
+            (round(float(s["lat"]), 5), round(float(s["lon"]), 5))
+            for s in stands_all
+            if s.get("lat") is not None and s.get("lon") is not None
+        }
+        for s in (chart.get("osm_stands") or []):
+            if s.get("lat") is not None and s.get("lon") is not None:
+                sk = (round(float(s["lat"]), 5), round(float(s["lon"]), 5))
+                if sk not in seen_st:
+                    seen_st.add(sk)
+                    stands_all.append(s)
+        terms = chart.get("terminals") or []
+
+        if not orig_aprons and not stands_all and len(twys_in) <= 8:
+            return 0, 0
+
+        c_lat = float(chart.get("center_lat") or 0.0)
+        c_lon = float(chart.get("center_lon") or 0.0)
+        sx = 111320.0 * max(0.15, math.cos(math.radians(c_lat)))
+        sy = 111320.0
+
+        def _to_m(la, lo):
+            return ((lo - c_lon) * sx, (la - c_lat) * sy)
+
+        def _to_ll(mx, my):
+            return [round(c_lat + my / sy, 6), round(c_lon + mx / sx, 6)]
+
+        def _seg_proj_m(px, py, a, b):
+            dx = b[0] - a[0]
+            dy = b[1] - a[1]
+            l2 = dx * dx + dy * dy
+            if l2 < 1e-6:
+                return math.hypot(px - a[0], py - a[1]), 0.0, a[0], a[1]
+            t = ((px - a[0]) * dx + (py - a[1]) * dy) / l2
+            tc = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+            cx = a[0] + tc * dx
+            cy = a[1] + tc * dy
+            return math.hypot(px - cx, py - cy), tc, cx, cy
+
+        rwy_segs_m = []
+        rwy_grid = {}
+        for r in rwys:
+            rpts = r.get("points") or []
+            for i in range(len(rpts) - 1):
+                a = _to_m(rpts[i][0], rpts[i][1])
+                b = _to_m(rpts[i + 1][0], rpts[i + 1][1])
+                rid = len(rwy_segs_m)
+                rwy_segs_m.append((a, b))
+                for gx in range(int((min(a[0], b[0]) - 42.0) // 80.0), int((max(a[0], b[0]) + 42.0) // 80.0) + 1):
+                    for gy in range(int((min(a[1], b[1]) - 42.0) // 80.0), int((max(a[1], b[1]) + 42.0) // 80.0) + 1):
+                        rwy_grid.setdefault((gx, gy), []).append(rid)
+        rwy_ends_m = [
+            _to_m(float(ei["lat"]), float(ei["lon"]))
+            for r in rwys for ei in (r.get("ends") or {}).values()
+            if ei.get("lat") is not None and ei.get("lon") is not None
+        ]
+
+        def _near_runway(px, py, lim=38.0):
+            for rid in rwy_grid.get((int(px // 80.0), int(py // 80.0)), ()):
+                if _seg_proj_m(px, py, rwy_segs_m[rid][0], rwy_segs_m[rid][1])[0] <= lim:
+                    return True
+            for ex, ey in rwy_ends_m:
+                if (px - ex) ** 2 + (py - ey) ** 2 <= 58.0 ** 2:
+                    return True
+            return False
+
+        ap_boxes = []
+        ap_edges = []
+        ap_edge_grid = {}
+        for ap in orig_aprons:
+            pts = ap.get("points") or []
+            if len(pts) >= 3:
+                las = [p[0] for p in pts]
+                los = [p[1] for p in pts]
+                ap_boxes.append((pts, min(las), max(las), min(los), max(los)))
+                for i in range(len(pts) - 1):
+                    a = _to_m(pts[i][0], pts[i][1])
+                    b = _to_m(pts[i + 1][0], pts[i + 1][1])
+                    eid = len(ap_edges)
+                    ap_edges.append((a, b))
+                    for gx in range(int((min(a[0], b[0]) - 16.0) // 60.0), int((max(a[0], b[0]) + 16.0) // 60.0) + 1):
+                        for gy in range(int((min(a[1], b[1]) - 16.0) // 60.0), int((max(a[1], b[1]) + 16.0) // 60.0) + 1):
+                            ap_edge_grid.setdefault((gx, gy), []).append(eid)
+
+        def _in_or_near_apron(px, py, edge_lim=12.0):
+            if ap_boxes:
+                la = c_lat + py / sy
+                lo = c_lon + px / sx
+                for poly, min_la, max_la, min_lo, max_lo in ap_boxes:
+                    if min_la <= la <= max_la and min_lo <= lo <= max_lo:
+                        inside = False
+                        n_p = len(poly)
+                        j_p = n_p - 1
+                        for i_p in range(n_p):
+                            yi, xi = poly[i_p][0], poly[i_p][1]
+                            yj, xj = poly[j_p][0], poly[j_p][1]
+                            if ((yi > la) != (yj > la)) and (lo < (xj - xi) * (la - yi) / (yj - yi + 1e-15) + xi):
+                                inside = not inside
+                            j_p = i_p
+                        if inside:
+                            return True
+                for eid in ap_edge_grid.get((int(px // 60.0), int(py // 60.0)), ()):
+                    if _seg_proj_m(px, py, ap_edges[eid][0], ap_edges[eid][1])[0] <= edge_lim:
+                        return True
+            return False
+
+        stand_m = [_to_m(float(s["lat"]), float(s["lon"])) for s in stands_all if s.get("lat") is not None and s.get("lon") is not None]
+        stand_grid = {}
+        for sx0, sy0 in stand_m:
+            stand_grid.setdefault((int(sx0 // 60.0), int(sy0 // 60.0)), []).append((sx0, sy0))
+
+        def _near_stand(px, py, lim=42.0):
+            gx, gy = int(px // 60.0), int(py // 60.0)
+            d2 = lim * lim
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for sx0, sy0 in stand_grid.get((gx + dx, gy + dy), ()):
+                        if (px - sx0) ** 2 + (py - sy0) ** 2 <= d2:
+                            return True
+            return False
+
+        term_edges = []
+        term_grid = {}
+        for tm in terms:
+            pts = tm.get("points") or []
+            for i in range(len(pts) - 1):
+                a = _to_m(pts[i][0], pts[i][1])
+                b = _to_m(pts[i + 1][0], pts[i + 1][1])
+                tid = len(term_edges)
+                term_edges.append((a, b))
+                for gx in range(int((min(a[0], b[0]) - 24.0) // 60.0), int((max(a[0], b[0]) + 24.0) // 60.0) + 1):
+                    for gy in range(int((min(a[1], b[1]) - 24.0) // 60.0), int((max(a[1], b[1]) + 24.0) // 60.0) + 1):
+                        term_grid.setdefault((gx, gy), []).append(tid)
+
+        def _near_terminal(px, py, lim=22.0):
+            for tid in term_grid.get((int(px // 60.0), int(py // 60.0)), ()):
+                if _seg_proj_m(px, py, term_edges[tid][0], term_edges[tid][1])[0] <= lim:
+                    return True
+            return False
+
+        def _is_valid_anchor(px, py):
+            return _near_runway(px, py) or _in_or_near_apron(px, py) or _near_stand(px, py) or _near_terminal(px, py)
+
+        nodes_xy = []
+        node_grid = {}
+
+        def _get_node(mx, my, snap=4.0):
+            gx, gy = int(mx // 12.0), int(my // 12.0)
+            best_i = -1
+            best_d2 = snap * snap
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for idx in node_grid.get((gx + dx, gy + dy), ()):
+                        nx, ny = nodes_xy[idx]
+                        d2 = (mx - nx) ** 2 + (my - ny) ** 2
+                        if d2 <= best_d2:
+                            best_d2 = d2
+                            best_i = idx
+            if best_i >= 0:
+                return best_i
+            idx = len(nodes_xy)
+            nodes_xy.append((mx, my))
+            node_grid.setdefault((gx, gy), []).append(idx)
+            return idx
+
+        raw_ways_m = []
+        synth_ways = []
+        for tw in twys_in:
+            pts = tw.get("points") or []
+            if len(pts) < 2:
+                continue
+            if tw.get("_synth_bgl"):
+                synth_ways.append(tw)
+                continue
+            pts_m = [_to_m(p[0], p[1]) for p in pts]
+            nids = [_get_node(mx, my) for mx, my in pts_m]
+            raw_ways_m.append((tw, pts_m, nids))
+
+        init_segs = []
+        seg_grid = {}
+        for w_idx, (_, pts_m, nids) in enumerate(raw_ways_m):
+            for k in range(len(pts_m) - 1):
+                u, v = nids[k], nids[k + 1]
+                if u == v:
+                    continue
+                a, b = nodes_xy[u], nodes_xy[v]
+                sid = len(init_segs)
+                init_segs.append((w_idx, k, u, v, a, b))
+                for gx in range(int((min(a[0], b[0]) - 8.0) // 40.0), int((max(a[0], b[0]) + 8.0) // 40.0) + 1):
+                    for gy in range(int((min(a[1], b[1]) - 8.0) // 40.0), int((max(a[1], b[1]) + 8.0) // 40.0) + 1):
+                        seg_grid.setdefault((gx, gy), []).append(sid)
+
+        seg_splits = {}
+        for n_idx, (nx, ny) in enumerate(nodes_xy):
+            seen_sids = set()
+            for sid in seg_grid.get((int(nx // 40.0), int(ny // 40.0)), ()):
+                if sid in seen_sids:
+                    continue
+                seen_sids.add(sid)
+                w_idx, k, u, v, a, b = init_segs[sid]
+                if n_idx == u or n_idx == v:
+                    continue
+                d, tc, cx, cy = _seg_proj_m(nx, ny, a, b)
+                if d <= 7.5 and 0.02 < tc < 0.98:
+                    if math.hypot(cx - a[0], cy - a[1]) > 2.5 and math.hypot(cx - b[0], cy - b[1]) > 2.5:
+                        seg_splits.setdefault(sid, []).append((tc, n_idx))
+
+        checked_pairs = set()
+        for cell_sids in seg_grid.values():
+            nc = len(cell_sids)
+            if nc < 2 or nc > 80:
+                continue
+            for i in range(nc):
+                s1 = cell_sids[i]
+                w1, _, u1, v1, a1, b1 = init_segs[s1]
+                for j in range(i + 1, nc):
+                    s2 = cell_sids[j]
+                    if s1 == s2:
+                        continue
+                    pk = (s1, s2) if s1 < s2 else (s2, s1)
+                    if pk in checked_pairs:
+                        continue
+                    checked_pairs.add(pk)
+                    w2, _, u2, v2, a2, b2 = init_segs[s2]
+                    if w1 == w2 or u1 == u2 or u1 == v2 or v1 == u2 or v1 == v2:
+                        continue
+                    dx1, dy1 = b1[0] - a1[0], b1[1] - a1[1]
+                    dx2, dy2 = b2[0] - a2[0], b2[1] - a2[1]
+                    denom = dx1 * dy2 - dy1 * dx2
+                    if abs(denom) < 1e-6:
+                        continue
+                    ox, oy = a2[0] - a1[0], a2[1] - a1[1]
+                    t1 = (ox * dy2 - oy * dx2) / denom
+                    t2 = (ox * dy1 - oy * dx1) / denom
+                    if 0.02 < t1 < 0.98 and 0.02 < t2 < 0.98:
+                        ix = a1[0] + t1 * dx1
+                        iy = a1[1] + t1 * dy1
+                        x_nid = _get_node(ix, iy, snap=3.5)
+                        seg_splits.setdefault(s1, []).append((t1, x_nid))
+                        seg_splits.setdefault(s2, []).append((t2, x_nid))
+
+        edges = []  # [w_idx, u, v, length_m, alive]
+        adj = {}
+        way_edge_lists = [[] for _ in range(len(raw_ways_m))]
+        for sid, (w_idx, k, u, v, a, b) in enumerate(init_segs):
+            sp = seg_splits.get(sid)
+            if sp:
+                sp_sorted = sorted(sp, key=lambda x: x[0])
+                seq = [u] + [nid for _, nid in sp_sorted] + [v]
+            else:
+                seq = [u, v]
+            for idx_s in range(len(seq) - 1):
+                nu, nv = seq[idx_s], seq[idx_s + 1]
+                if nu == nv:
+                    continue
+                pa, pb = nodes_xy[nu], nodes_xy[nv]
+                elen = math.hypot(pb[0] - pa[0], pb[1] - pa[1])
+                if elen < 0.1:
+                    continue
+                eid = len(edges)
+                edges.append([w_idx, nu, nv, elen, True])
+                adj.setdefault(nu, []).append(eid)
+                adj.setdefault(nv, []).append(eid)
+                way_edge_lists[w_idx].append(eid)
+
+        if not edges:
+            return 0, 0
+
+        edge_grid = {}
+        for eid, (_, nu, nv, _, _) in enumerate(edges):
+            pa, pb = nodes_xy[nu], nodes_xy[nv]
+            for gx in range(int((min(pa[0], pb[0]) - 20.0) // 45.0), int((max(pa[0], pb[0]) + 20.0) // 45.0) + 1):
+                for gy in range(int((min(pa[1], pb[1]) - 20.0) // 45.0), int((max(pa[1], pb[1]) + 20.0) // 45.0) + 1):
+                    edge_grid.setdefault((gx, gy), []).append(eid)
+
+        def _is_undershot_tjunction(tip_nid, prev_nid, junc_nid, own_eids):
+            tx, ty = nodes_xy[tip_nid]
+            px, py = nodes_xy[prev_nid]
+            vx, vy = tx - px, ty - py
+            vlen = math.hypot(vx, vy)
+            if vlen < 1e-4:
+                return False
+            ux, uy = vx / vlen, vy / vlen
+            for eid in edge_grid.get((int(tx // 45.0), int(ty // 45.0)), ()):
+                if not edges[eid][4] or eid in own_eids:
+                    continue
+                eu, ev = edges[eid][1], edges[eid][2]
+                if eu in (prev_nid, tip_nid, junc_nid) or ev in (prev_nid, tip_nid, junc_nid):
+                    continue
+                pa, pb = nodes_xy[eu], nodes_xy[ev]
+                sx_e, sy_e = pb[0] - pa[0], pb[1] - pa[1]
+                denom = ux * sy_e - uy * sx_e
+                if abs(denom) > 1e-5:
+                    ox, oy = pa[0] - tx, pa[1] - ty
+                    s_ray = (ox * sy_e - oy * sx_e) / denom
+                    t_seg = (ox * uy - oy * ux) / denom
+                    if 0.0 <= s_ray <= 18.5 and -0.08 <= t_seg <= 1.08:
+                        return True
+                d, _, cx, cy = _seg_proj_m(tx, ty, pa, pb)
+                if d <= 9.5 and ((cx - tx) * ux + (cy - ty) * uy) >= 0.5:
+                    return True
+            return False
+
+        pair_edges = {}
+        nbrs = {}
+        for eid, (_, nu, nv, _, _) in enumerate(edges):
+            pkey = (nu, nv) if nu < nv else (nv, nu)
+            pair_edges.setdefault(pkey, []).append(eid)
+            nbrs.setdefault(nu, set()).add(nv)
+            nbrs.setdefault(nv, set()).add(nu)
+
+        # Protect parallel unnamed parking-comb rows (>= 2 parallel sibling spurs within 115m)
+        comb_spurs = []
+        for nid, nb_set in nbrs.items():
+            if len(nb_set) != 1:
+                continue
+            first_nb = next(iter(nb_set))
+            pk0 = (nid, first_nb) if nid < first_nb else (first_nb, nid)
+            if any(raw_ways_m[edges[e][0]][0].get("ref") for e in pair_edges[pk0]):
+                continue
+            c_len = 0.0
+            cur = nid
+            prev_n = -1
+            while True:
+                cand_nb = [nb for nb in nbrs.get(cur, ()) if nb != prev_n]
+                if len(cand_nb) != 1:
+                    break
+                nxt = cand_nb[0]
+                pk_s = (cur, nxt) if cur < nxt else (nxt, cur)
+                c_len += edges[pair_edges[pk_s][0]][3]
+                if c_len > 105.0:
+                    break
+                prev_n = cur
+                cur = nxt
+                if len(nbrs.get(cur, ())) != 2:
+                    break
+            if 20.0 <= c_len <= 100.0 and cur != nid:
+                tx, ty = nodes_xy[nid]
+                jx, jy = nodes_xy[cur]
+                vl = math.hypot(tx - jx, ty - jy)
+                if vl > 10.0:
+                    comb_spurs.append((nid, tx, ty, (tx - jx) / vl, (ty - jy) / vl))
+
+        protected_comb_tips = set()
+        comb_grid = {}
+        for idx_c, (_, tx, ty, _, _) in enumerate(comb_spurs):
+            comb_grid.setdefault((int(tx // 120.0), int(ty // 120.0)), []).append(idx_c)
+        for idx_c, (nid, tx, ty, ux, uy) in enumerate(comb_spurs):
+            sibs = 0
+            gx, gy = int(tx // 120.0), int(ty // 120.0)
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for j_c in comb_grid.get((gx + dx, gy + dy), ()):
+                        if j_c != idx_c:
+                            _, ox, oy, oux, ouy = comb_spurs[j_c]
+                            dist_c = math.hypot(tx - ox, ty - oy)
+                            if 16.0 <= dist_c <= 115.0 and (ux * oux + uy * ouy) >= 0.94:
+                                sibs += 1
+            if sibs >= 2:
+                protected_comb_tips.add(nid)
+
+        total_len = sum(edges[eids[0]][3] for eids in pair_edges.values())
+        pruned_len = 0.0
+        pruned_chains = 0
+
+        leaf_q = [nid for nid, nb_s in nbrs.items() if len(nb_s) == 1 and nid not in protected_comb_tips]
+        q_head = 0
+        while q_head < len(leaf_q):
+            start_nid = leaf_q[q_head]
+            q_head += 1
+            if len(nbrs.get(start_nid, ())) != 1 or start_nid in protected_comb_tips:
+                continue
+            tx, ty = nodes_xy[start_nid]
+            if _is_valid_anchor(tx, ty):
+                continue
+
+            chain_pairs = []
+            chain_eids = []
+            chain_nids = [start_nid]
+            cur_n = start_nid
+            prev_n = -1
+            while True:
+                cand_nb = [nb for nb in nbrs.get(cur_n, ()) if nb != prev_n]
+                if len(cand_nb) != 1:
+                    break
+                nxt_n = cand_nb[0]
+                pkey = (cur_n, nxt_n) if cur_n < nxt_n else (nxt_n, cur_n)
+                chain_pairs.append(pkey)
+                chain_eids.extend(pair_edges[pkey])
+                chain_nids.append(nxt_n)
+                if len(nbrs.get(nxt_n, ())) != 2:
+                    break
+                nx_m, ny_m = nodes_xy[nxt_n]
+                if _is_valid_anchor(nx_m, ny_m):
+                    break
+                prev_n = cur_n
+                cur_n = nxt_n
+
+            if not chain_pairs:
+                continue
+
+            own_set = set(chain_eids)
+            if _is_undershot_tjunction(start_nid, chain_nids[1], chain_nids[-1], own_set):
+                continue
+
+            chain_len = sum(edges[pair_edges[pk][0]][3] for pk in chain_pairs)
+            if not orig_aprons and (pruned_len + chain_len) > total_len * 0.40:
+                continue
+
+            for pk in chain_pairs:
+                pu, pv = pk
+                nbrs.get(pu, set()).discard(pv)
+                nbrs.get(pv, set()).discard(pu)
+                pruned_len += edges[pair_edges[pk][0]][3]
+                for eid in pair_edges[pk]:
+                    edges[eid][4] = False
+            pruned_chains += 1
+            end_nid = chain_nids[-1]
+            end_deg = len(nbrs.get(end_nid, ()))
+            if end_deg == 1 and end_nid not in protected_comb_tips:
+                leaf_q.append(end_nid)
+            elif end_deg == 2:
+                # If a 3-way grass fork collapsed into a degree-2 corner, walk both arms to re-queue any unanchored leaf
+                for arm_nb in list(nbrs.get(end_nid, ())):
+                    w_prev, w_cur = end_nid, arm_nb
+                    steps = 0
+                    while steps < 64 and len(nbrs.get(w_cur, ())) == 2:
+                        nxt_c = [nb for nb in nbrs[w_cur] if nb != w_prev]
+                        if not nxt_c:
+                            break
+                        w_prev, w_cur = w_cur, nxt_c[0]
+                        steps += 1
+                    if len(nbrs.get(w_cur, ())) == 1 and w_cur not in protected_comb_tips:
+                        leaf_q.append(w_cur)
+
+        new_twys = list(synth_ways)
+        for w_idx, (orig_tw, _, _) in enumerate(raw_ways_m):
+            eids = way_edge_lists[w_idx]
+            cur_run = []
+            last_v = None
+            for eid in eids:
+                if edges[eid][4]:
+                    _, u, v, _, _ = edges[eid]
+                    if not cur_run:
+                        cur_run = [u, v]
+                    elif u == last_v:
+                        cur_run.append(v)
+                    else:
+                        if len(cur_run) >= 2:
+                            tw_c = dict(orig_tw)
+                            tw_c["points"] = [_to_ll(*nodes_xy[nid]) for nid in cur_run]
+                            new_twys.append(tw_c)
+                        cur_run = [u, v]
+                    last_v = v
+                else:
+                    if len(cur_run) >= 2:
+                        tw_c = dict(orig_tw)
+                        tw_c["points"] = [_to_ll(*nodes_xy[nid]) for nid in cur_run]
+                        new_twys.append(tw_c)
+                    cur_run = []
+                    last_v = None
+            if len(cur_run) >= 2:
+                tw_c = dict(orig_tw)
+                tw_c["points"] = [_to_ll(*nodes_xy[nid]) for nid in cur_run]
+                new_twys.append(tw_c)
+
+        hps_in = chart.get("holding_points") or []
+        pruned_hps = 0
+        if hps_in and new_twys:
+            live_segs = []
+            live_grid = {}
+            for tw in new_twys:
+                pts = tw.get("points") or []
+                pts_m = [_to_m(p[0], p[1]) for p in pts]
+                for i in range(len(pts_m) - 1):
+                    a, b = pts_m[i], pts_m[i + 1]
+                    sid = len(live_segs)
+                    live_segs.append((a, b))
+                    for gx in range(int((min(a[0], b[0]) - 16.0) // 50.0), int((max(a[0], b[0]) + 16.0) // 50.0) + 1):
+                        for gy in range(int((min(a[1], b[1]) - 16.0) // 50.0), int((max(a[1], b[1]) + 16.0) // 50.0) + 1):
+                            live_grid.setdefault((gx, gy), []).append(sid)
+            kept_hps = []
+            for hp in hps_in:
+                if hp.get("lat") is None or hp.get("lon") is None:
+                    continue
+                hx, hy = _to_m(float(hp["lat"]), float(hp["lon"]))
+                ok_hp = False
+                for sid in live_grid.get((int(hx // 50.0), int(hy // 50.0)), ()):
+                    if _seg_proj_m(hx, hy, live_segs[sid][0], live_segs[sid][1])[0] <= 14.5:
+                        ok_hp = True
+                        break
+                if ok_hp:
+                    kept_hps.append(hp)
+                else:
+                    pruned_hps += 1
+            if pruned_hps > 0:
+                chart["holding_points"] = kept_hps
+
+        if pruned_chains > 0 and new_twys:
+            chart["taxiways"] = new_twys
+
+        if pruned_chains > 0 or pruned_hps > 0:
+            chart.pop("_render_cache", None)
+            icao_k = str(chart.get("icao") or "").strip().upper()
+            if icao_k:
+                self.graph_cache.pop(icao_k, None)
+
+        return pruned_chains, pruned_hps
+
     def _ensure_complete_apron_surfaces(self, chart):
         """
         Globally repairs incomplete, truncated, or missing OSM apron polygons for any airport:
@@ -2547,6 +3090,8 @@ class TaxiRouter:
             "stands": stands,
             "osm_stands": [dict(s) for s in stands]
         }
+        self._prune_dangling_taxiway_stubs(res_chart)
+        res_chart["_deadend_pruned_v"] = 2
         self._ensure_complete_apron_surfaces(res_chart)
         return res_chart
 

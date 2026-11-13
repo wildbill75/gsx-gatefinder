@@ -10,7 +10,7 @@ from datetime import datetime
 from urllib.parse import quote
 
 SUPPORT_EMAIL = "contact@sidestickpriority.com"
-APP_VERSION = "2.0.7"
+APP_VERSION = "2.0.8"
 AUTHOR_NAME = "Sidestick Priority"
 PANEL_PACKAGE_NAME = "gatefinder-ingame-panel"
 LEGACY_PACKAGE_NAMES = ("wildbill75-gatefinder", "gsx-gatefinder", "wildbill75-gsx-gatefinder")

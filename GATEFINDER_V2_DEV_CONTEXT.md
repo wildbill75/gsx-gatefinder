@@ -1,4 +1,4 @@
-# GateFinder — Référentiel Complet de Développement & d'Architecture (V2.0.0 → V2.0.7)
+# GateFinder — Référentiel Complet de Développement & d'Architecture (V2.0.0 → V2.0.8)
 
 > **Usage prévu de ce document :** Ce fichier sert de **base de connaissances exhaustive (System Context)** à fournir à **Gemini** afin qu'il dispose de 100 % de l'historique fonctionnel, de l'architecture du code, des API internes, des conventions UI/UX et des contraintes techniques de **GateFinder** pour rédiger des prompts chirurgicaux destinés à l'agent de code (**Antigravity**).
 
@@ -7,12 +7,12 @@
 ## 1. Identité du Projet & Écosystème d'Exécution
 
 - **Nom :** GateFinder (édité par *Sidestick Priority* — dépôt GitHub : `wildbill75/gsx-gatefinder`)
-- **Version actuelle en production :** `V2.0.7` (`V2.0.5` étant la dernière version uploadée manuellement sur `flightsim.to` ; `V2.0.6+` sont distribuées automatiquement via l'Auto-Updater GitHub intégré).
+- **Version actuelle en production :** `V2.0.8` (`V2.0.5` étant la dernière version uploadée manuellement sur `flightsim.to` ; `V2.0.6+` sont distribuées automatiquement via l'Auto-Updater GitHub intégré).
 - **Simulateurs cibles :** Microsoft Flight Simulator 2020 & Microsoft Flight Simulator 2024 (Store & Steam, 2D & VR).
 - **Rôle :** Compagnon tout-en-un d'assignation intelligente de portes/postes de stationnement, de cartographie vectorielle sol type Lido (Moving Map), de routage taxiway A* temps réel, et de synchronisation bidirectionnelle **SimBrief + GSX Pro + BeyondATC + SayIntentions.AI + VATSIM/IVAO + SimConnect**.
 - **5 Surfaces d'Affichage Synchronisées en Temps Réel** (alimentées par le même moteur Python local sur le port HTTP `8420`) :
   1. **Application Desktop Windows (`GateFinder.exe`)** : CustomTkinter + Canvas vectoriel GDI haute performance (`src/gui.py`), icône System Tray (`pystray`), support 4K / High-DPI (200 %–250 %+).
-  2. **MSFS In-Game Toolbar Panel (`GATEFINDER V2.0.7`)** : Panneau barre d'outils natif MSFS 2020 & 2024 (2D et VR) via CoherentGT (`GateFinderPanel.html` + `GateFinderPanel.js`).
+  2. **MSFS In-Game Toolbar Panel (`GATEFINDER V2.0.8`)** : Panneau barre d'outils natif MSFS 2020 & 2024 (2D et VR) via CoherentGT (`GateFinderPanel.html` + `GateFinderPanel.js`).
   3. **Application Native Tablette EFB MSFS 2024** : App dédiée intégrée directement dans l'EFB natif de MSFS 2024 (`GateFinderEfbApp.js` → `GateFinderEfbFrame.html`).
   4. **Application Native Cockpit EFB Fenix A320 Series (`A319` / `A320` / `A321`)** : App intégrée sur l'écran d'accueil des tablettes Captain et First Officer du Fenix (`EfbHost_Captain.html`, `EfbHost_FO.html` → `GateFinderFenixFrame.html`).
   5. **Web EFB Externe (iPad / Tablette Android / Smartphone)** : Accessible en Wi-Fi local via QR code (`http://<LAN_IP>:8420/` avec modes adaptatifs `Phone`, `Tablet`, `PC`).
@@ -100,6 +100,17 @@ Passage de l'architecture V1 (simples cartes/tuiles statiques) à une suite EFB 
    - Réglage persistant `Suppress desktop popups (Cockpit / VR mode)` (`False` par défaut). Lorsqu'il est activé, aucune modale bloquante (**Live Stand Selection**, **Turnaround Stand**, **SimBrief Mismatch**, ni splash de rechargement live) ne s'ouvre par-dessus MSFS/Windows : une barre d'action discrète sans icône apparaît dans le bandeau Desktop tandis que l'EFB / In-Game Panel cockpit conserve la résolution interactive complète.
 4. **Fallback Géométrique Global OSM + MSFS BGL Natif (`src/taxi_router.py`, `src/backend.py`, `GateFinderPanel.js`)** :
    - Fin des correctifs aéroport par aéroport (ex. `LICC` Catane) grâce à un pipeline global en 3 niveaux : (a) couture topologique et fermeture automatique des ways/multipolygones OSM d'apron ouverts ou tronqués + rendu Canvas `beginPath()` par anneau, (b) fusion automatique du réseau natif MSFS BGL (`runways`, `taxiways`, `parkings`, `aprons` via `bgl_geometry_provider`) et pontage des îlots de stands déconnectés (`> 185 m`) dès qu'OSM est incomplet, et (c) génération automatique d'enveloppes d'apron orientées autour des stands/bretelles orphelins + support des pistes à remontée (*backtrack*).
+
+---
+
+### Phase E — Version 2.0.8 (Changement d'Arrivée / Déroutement Alternate SimBrief 1-Clic, Correctif `auto_fetch`, Élagage des Taxiways en Impasse & Pastilles QFU Dynamiques)
+1. **Changement d'Aéroport d'Arrivée Cliquable & Déroutement Alternate SimBrief en 1 Clic (`src/backend.py`, `src/gui.py`, `GateFinderPanel.js`)** :
+   - Clic direct sur la pastille ICAO d'arrivée (`ARRIVAL`) ou sur le titre d'aéroport d'arrivée de la sidebar (Desktop, In-Game Panel, EFB MSFS 2024, EFB Fenix et Web EFB) + bouton `Set Arrival` sur l'écran d'attente EFB : ouvre la modale sans bordure `CHANGE ARRIVAL AIRPORT` (`change_arrival_airport` / `GET /api/set_arrival?icao=XXXX`).
+   - Support complet avec ou sans SimBrief (VFR / plan de vol saisi au MCDU via la télémétrie avion SimConnect live) et boutons 1-clic **`SimBrief Alternate: XXXX`** (`_extract_simbrief_alternates`) + **`Scheduled Arrival: YYYY`** en conservant l'`ofp_id` initial pour éviter tout faux prompt de nouveau plan de vol en croisière.
+2. **Respect Strict de `Auto-fetch latest SimBrief OFP on startup` (`src/gui.py`, `src/backend.py`)** :
+   - Correction des 3 chemins qui forçaient encore le téléchargement de l'OFP SimBrief lorsque `auto_fetch = False` (`GUIApp.__init__` via `os.path.getmtime`, retour de `Settings` dans `show_main_view`, et peek SimBrief dans `check_simbrief_vs_msfs_mismatch` / `/api/resolve_mismatch`).
+3. **Élagage Topologique Global des Taxiways en Impasse & Lisibilité Carte (`src/taxi_router.py`, `src/gui.py`, `GateFinderPanel.js`)** :
+   - `_prune_dangling_taxiway_stubs` (`_deadend_pruned_v = 2`) éliminant les impasses OSM et points d'arrêt orphelins dans l'herbe (ex. `EGCC`, `EBBR`) tout en préservant les peignes de parkings parallèles et sorties d'aprons ; pastilles QFU de pistes glissant dynamiquement le long des bords de l'écran quel que soit le zoom (au repos comme au pan) et badges logos compagnies agrandis.
 
 ---
 

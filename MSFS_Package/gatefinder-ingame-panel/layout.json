@@ -7,23 +7,23 @@
     },
     {
       "path": "en-US.locPak",
-      "size": 783,
-      "date": 134389947874564000
+      "size": 832,
+      "date": 134390366425305216
     },
     {
       "path": "fr-FR.locPak",
-      "size": 783,
-      "date": 134389947893678320
+      "size": 832,
+      "date": 134390366448482768
     },
     {
       "path": "html_ui/Pages/VCockpit/Instruments/FNX32X/EFB/EfbHost_Captain.html",
       "size": 18171,
-      "date": 134389948535740368
+      "date": 134390366694084320
     },
     {
       "path": "html_ui/Pages/VCockpit/Instruments/FNX32X/EFB/EfbHost_FO.html",
       "size": 18164,
-      "date": 134389948552988000
+      "date": 134390366723056528
     },
     {
       "path": "html_ui/Textures/Menu/toolbar/GateFinder-OFF.svg",
@@ -78,7 +78,7 @@
     {
       "path": "html_ui/efb_ui/efb_apps/GateFinderEfbApp/GateFinderEfbApp.js",
       "size": 7271,
-      "date": 134389947967359504
+      "date": 134390366533277360
     },
     {
       "path": "html_ui/icons/toolbar/GateFinder-OFF.svg",
@@ -123,27 +123,27 @@
     {
       "path": "html_ui/ingamePanels/GateFinderPanel/GateFinderEfbFrame.html",
       "size": 34708,
-      "date": 134389947999215584
+      "date": 134390366635384848
     },
     {
       "path": "html_ui/ingamePanels/GateFinderPanel/GateFinderFenixFrame.html",
       "size": 34792,
-      "date": 134389948039162176
+      "date": 134390366676608176
     },
     {
       "path": "html_ui/ingamePanels/GateFinderPanel/GateFinderPanel.css",
       "size": 12904,
-      "date": 134389948521970800
+      "date": 134390366592822112
     },
     {
       "path": "html_ui/ingamePanels/GateFinderPanel/GateFinderPanel.html",
       "size": 7030,
-      "date": 134389948504984976
+      "date": 134390366572660320
     },
     {
       "path": "html_ui/ingamePanels/GateFinderPanel/GateFinderPanel.js",
-      "size": 206275,
-      "date": 134389945888558304
+      "size": 230755,
+      "date": 134390369096478064
     }
   ]
 }

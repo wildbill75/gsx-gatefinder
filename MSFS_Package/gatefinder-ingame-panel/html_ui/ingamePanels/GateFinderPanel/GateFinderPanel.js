@@ -361,7 +361,7 @@ class GSXGateFinderPanel extends TemplateElement {
 
         function forceTitle() {
             self.classList.add("is-ingame-panel");
-            let verStr = (self.currentData && self.currentData.app_version) ? String(self.currentData.app_version) : "2.0.7";
+            let verStr = (self.currentData && self.currentData.app_version) ? String(self.currentData.app_version) : "2.0.8";
             let fullTitle = "GATEFINDER V" + verStr.replace(/^V/i, "");
             let ui = document.querySelector("ingame-ui");
             if (ui) {
@@ -1065,6 +1065,9 @@ class GSXGateFinderPanel extends TemplateElement {
         let tabArr = this.querySelector("#TabArr");
         if (tabDep) {
             tabDep.addEventListener("click", () => {
+                if (this.currentData && (!this.currentData.departure || !this.currentData.departure.icao)) {
+                    return;
+                }
                 if (this.isAirborneNow()) {
                     this.showAirborneDepartureLockedToast();
                     return;
@@ -1078,8 +1081,13 @@ class GSXGateFinderPanel extends TemplateElement {
             });
         }
         if (tabArr) {
-            tabArr.addEventListener("click", () => {
-                if (this.currentData && (!this.currentData.arrival || !this.currentData.arrival.icao)) {
+            tabArr.addEventListener("click", (e) => {
+                if (e && e.target && e.target.closest && e.target.closest('[data-action="change-arrival"]')) {
+                    this.openChangeArrivalModal();
+                    return;
+                }
+                if (!this.currentData || !this.currentData.arrival || !this.currentData.arrival.icao) {
+                    this.openChangeArrivalModal();
                     return;
                 }
                 this.activePhase = "arrival";
@@ -1506,12 +1514,55 @@ class GSXGateFinderPanel extends TemplateElement {
         });
 
         let holdingPoints = [];
-        (chart.holding_points || []).forEach(hp => {
-            if (hp.lat != null && hp.lon != null) {
-                let [hxM, hyM] = toM(hp.lat, hp.lon);
-                holdingPoints.push({ xM: hxM, yM: hyM });
+        if (Array.isArray(chart.holding_points) && chart.holding_points.length > 0 && mainTaxiways.length > 0) {
+            let hpSegs = [];
+            let hpGrid = {};
+            for (let ti = 0; ti < mainTaxiways.length; ti++) {
+                let tPts = mainTaxiways[ti].pts;
+                for (let k = 0; k < tPts.length - 1; k++) {
+                    let ax = tPts[k][0], ay = tPts[k][1];
+                    let bx = tPts[k + 1][0], by = tPts[k + 1][1];
+                    let sdx = bx - ax, sdy = by - ay;
+                    let slen2 = sdx * sdx + sdy * sdy;
+                    if (slen2 < 0.04) continue;
+                    let sIdx = hpSegs.length;
+                    hpSegs.push([ax, ay, sdx, sdy, slen2]);
+                    let gx0 = Math.floor((Math.min(ax, bx) - 20.0) / 80.0);
+                    let gx1 = Math.floor((Math.max(ax, bx) + 20.0) / 80.0);
+                    let gy0 = Math.floor((Math.min(ay, by) - 20.0) / 80.0);
+                    let gy1 = Math.floor((Math.max(ay, by) + 20.0) / 80.0);
+                    for (let gx = gx0; gx <= gx1; gx++) {
+                        for (let gy = gy0; gy <= gy1; gy++) {
+                            let gk = gx + "," + gy;
+                            if (!hpGrid[gk]) hpGrid[gk] = [];
+                            hpGrid[gk].push(sIdx);
+                        }
+                    }
+                }
             }
-        });
+            chart.holding_points.forEach(hp => {
+                if (hp.lat == null || hp.lon == null) return;
+                let [hxM, hyM] = toM(hp.lat, hp.lon);
+                let cands = hpGrid[Math.floor(hxM / 80.0) + "," + Math.floor(hyM / 80.0)] || [];
+                let bestD2 = 225.0; // 15m^2 strict proximity to taxiway centerline
+                let bestTx = 0.0, bestTy = 1.0, matched = false;
+                for (let ci = 0; ci < cands.length; ci++) {
+                    let s = hpSegs[cands[ci]];
+                    let tP = Math.max(0.0, Math.min(1.0, ((hxM - s[0]) * s[2] + (hyM - s[1]) * s[3]) / s[4]));
+                    let d2 = Math.pow(hxM - (s[0] + tP * s[2]), 2) + Math.pow(hyM - (s[1] + tP * s[3]), 2);
+                    if (d2 < bestD2) {
+                        bestD2 = d2;
+                        let slen = Math.sqrt(s[4]);
+                        bestTx = s[2] / slen;
+                        bestTy = s[3] / slen;
+                        matched = true;
+                    }
+                }
+                if (matched) {
+                    holdingPoints.push({ xM: hxM, yM: hyM, distM: Math.sqrt(bestD2), tx: bestTx, ty: bestTy });
+                }
+            });
+        }
 
         let standsAll = [];
         (chart.stands || []).forEach(st => {
@@ -1797,7 +1848,54 @@ class GSXGateFinderPanel extends TemplateElement {
                             title.innerText = "Awaiting Flight Data";
                             title.style.color = "#0284c7";
                         }
-                        if (text) text.innerHTML = "Please import a flight from SimBrief in the <strong>GateFinder</strong> desktop application first.";
+                        if (text) text.innerHTML = "Import a flight from SimBrief or set an arrival airport directly.";
+                        let btnSetArr = statusBox.querySelector("#BtnStatusSetArrival");
+                        if (!btnSetArr) {
+                            let existingImport = statusBox.querySelector("#BtnStatusImport");
+                            let btnCss = "display:inline-block;color:#ffffff;font-weight:700;font-size:13px;padding:9px 20px;border-radius:8px;cursor:pointer;user-select:none;";
+                            btnSetArr = document.createElement("span");
+                            btnSetArr.id = "BtnStatusSetArrival";
+                            btnSetArr.style.cssText = btnCss + "background:#2B303B;margin-left:8px;";
+                            btnSetArr.innerText = "Set Arrival";
+                            btnSetArr.addEventListener("click", (e) => {
+                                e.stopPropagation();
+                                this.openChangeArrivalModal();
+                            });
+                            if (existingImport && existingImport.parentNode) {
+                                existingImport.parentNode.id = "StatusActionRow";
+                                existingImport.parentNode.appendChild(btnSetArr);
+                            } else {
+                                let actRow = document.createElement("div");
+                                actRow.id = "StatusActionRow";
+                                actRow.style.cssText = "margin-top:14px;";
+                                let btnImp = document.createElement("span");
+                                btnImp.id = "BtnStatusImport";
+                                btnImp.style.cssText = btnCss + "background:#0A86C2;";
+                                btnImp.innerText = "Import SimBrief";
+                                btnImp.addEventListener("click", (e) => {
+                                    e.stopPropagation();
+                                    if (btnImp.getAttribute("data-busy") === "1") return;
+                                    btnImp.setAttribute("data-busy", "1");
+                                    btnImp.innerText = "...";
+                                    fetch(this.getApiBase() + "/api/simbrief")
+                                        .then(r => r.json())
+                                        .then(() => {
+                                            btnImp.removeAttribute("data-busy");
+                                            btnImp.innerText = "Import SimBrief";
+                                            this.fetchCurrentData();
+                                        })
+                                        .catch(() => {
+                                            btnImp.removeAttribute("data-busy");
+                                            btnImp.innerText = "Import SimBrief";
+                                        });
+                                });
+                                actRow.appendChild(btnImp);
+                                actRow.appendChild(btnSetArr);
+                                statusBox.appendChild(actRow);
+                            }
+                        }
+                        let actRowEl = statusBox.querySelector("#StatusActionRow");
+                        if (actRowEl) actRowEl.style.display = "block";
                     }
                     this.syncSimbriefMismatchModal(
                         data ? data.pending_simbrief_mismatch : null,
@@ -1826,6 +1924,8 @@ class GSXGateFinderPanel extends TemplateElement {
                         title.style.color = "#ef4444";
                     }
                     if (text) text.innerHTML = "Please launch the <strong>GateFinder</strong> desktop application first to fetch airport and gate details.";
+                    let actRowEl = statusBox.querySelector("#StatusActionRow");
+                    if (actRowEl) actRowEl.style.display = "none";
                 }
             });
     }
@@ -1944,6 +2044,12 @@ class GSXGateFinderPanel extends TemplateElement {
         // 2. Phase Selector Cards (DEPARTURE vs ARRIVAL with 3 Camaïeu Pills each)
         let dep = data.departure || {};
         let arr = data.arrival || {};
+        if (!dep.icao && arr.icao && this.activePhase === "departure") {
+            this.activePhase = "arrival";
+            this.initialFitDone = false;
+            this.lastSidebarSig = "";
+            this.lastChartSig = "";
+        }
         let tabDep = this.querySelector("#TabDep");
         let tabArr = this.querySelector("#TabArr");
 
@@ -2023,13 +2129,13 @@ class GSXGateFinderPanel extends TemplateElement {
                 tabArr.style.justifyContent = "center";
                 tabArr.style.opacity = isArrAct ? "1.0" : "0.62";
             }
-            let arrKey = arrIcao + "|" + arrStand + "|" + arrRwy + "|" + cam.s4 + "|" + s5 + "|" + s6 + "|" + isEfbMode + "|" + isFenixMode + "|v4";
+            let arrKey = arrIcao + "|" + arrStand + "|" + arrRwy + "|" + cam.s4 + "|" + s5 + "|" + s6 + "|" + isEfbMode + "|" + isFenixMode + "|v5";
             if (tabArr.getAttribute("data-key") !== arrKey) {
                 tabArr.setAttribute("data-key", arrKey);
                 if (isEfbMode) {
                     tabArr.innerHTML =
                         '<span class="efb-phase-title" style="' + phaseTitleStyle + '">ARRIVAL</span>' +
-                        '<span class="efb-phase-val" style="' + miniPillStyle + 'color:' + this.brightenForText(cam.s4, 0.48) + ';">' + arrIcao + '</span>' +
+                        '<span class="efb-phase-val" data-action="change-arrival" title="Click to change arrival airport or divert to alternate" style="' + miniPillStyle + 'cursor:pointer;color:' + this.brightenForText(cam.s4, 0.48) + ';">' + arrIcao + '</span>' +
                         phaseSepHtml +
                         '<span class="efb-phase-val" style="' + miniPillStyle + 'color:' + this.brightenForText(s5, 0.46) + ';">' + arrStand + '</span>' +
                         phaseSepHtml +
@@ -2037,7 +2143,7 @@ class GSXGateFinderPanel extends TemplateElement {
                 } else {
                     tabArr.innerHTML =
                         '<span class="phase-title" style="' + phaseTitleStyle + '">ARRIVAL</span>' +
-                        '<span class="phase-mini-pill" style="' + miniPillStyle + 'background:' + cam.s4 + ';">' + arrIcao + '</span>' +
+                        '<span class="phase-mini-pill" data-action="change-arrival" title="Click to change arrival airport or divert to alternate" style="' + miniPillStyle + 'cursor:pointer;background:' + cam.s4 + ';">' + arrIcao + '</span>' +
                         '<span class="phase-mini-pill" style="' + miniPillStyle + 'background:' + s5 + ';">' + arrStand + '</span>' +
                         '<span class="phase-mini-pill" style="' + miniPillStyle + 'margin-right:0;background:' + s6 + ';">' + arrRwy + '</span>';
                 }
@@ -2550,6 +2656,14 @@ class GSXGateFinderPanel extends TemplateElement {
             ? "font-size:15.5px;font-weight:800;color:#F8FAFC;text-align:center;margin-bottom:6px;line-height:1.25;"
             : "font-size:17px;font-weight:700;color:#ffffff;text-align:center;margin-bottom:4px;line-height:1.25;";
         aptTitle.innerText = (aptData.icao || "") + (aptData.name ? " - " + aptData.name : "");
+        if (!isDep) {
+            aptTitle.style.cursor = "pointer";
+            aptTitle.title = "Click to change arrival airport or divert to alternate";
+            aptTitle.addEventListener("click", (e) => {
+                e.stopPropagation();
+                this.openChangeArrivalModal();
+            });
+        }
         gateCard.appendChild(aptTitle);
 
         let cityStr = String(aptData.city || aptData.terminal || "").trim();
@@ -3100,7 +3214,7 @@ class GSXGateFinderPanel extends TemplateElement {
             let btnMsfs = modal.querySelector("#BtnMismatchUseMsfs");
             let btnKeep = modal.querySelector("#BtnMismatchKeepSb");
 
-            let makeDefChecked = String((data && data.default_mismatch_action) || "ask").toLowerCase() === "use_msfs";
+            let makeDefChecked = String((this.currentData && this.currentData.default_mismatch_action) || "ask").toLowerCase() === "use_msfs";
             let renderDefBox = () => {
                 if (!defBox) return;
                 defBox.style.backgroundColor = makeDefChecked ? "#0A86C2" : "#1E293B";
@@ -3265,6 +3379,230 @@ class GSXGateFinderPanel extends TemplateElement {
         modal.classList.remove("hidden");
     }
 
+    openChangeArrivalModal() {
+        let mainDisp = this.querySelector("#MainDisplay") || this;
+        let modal = this.querySelector("#ChangeArrivalModal");
+        if (!modal) {
+            modal = document.createElement("div");
+            modal.id = "ChangeArrivalModal";
+            modal.className = "atc-modal-overlay hidden";
+            modal.style.zIndex = "570";
+            modal.innerHTML =
+                '<div class="atc-modal-card" style="background-color:#111827;border:0;max-width:440px;padding:16px 18px;border-radius:10px;">' +
+                    '<div id="ChangeArrHeader" class="atc-modal-header" style="font-size:11.5px;margin-bottom:8px;">CHANGE ARRIVAL AIRPORT</div>' +
+                    '<div id="ChangeArrSub" style="font-size:11.5px;color:#94A3B8;line-height:1.45;margin-bottom:10px;"></div>' +
+                    '<div style="display:flex;align-items:center;margin-bottom:10px;">' +
+                        '<span style="font-size:11.5px;font-weight:700;color:#CBD5E1;margin-right:10px;white-space:nowrap;">Arrival ICAO:</span>' +
+                        '<input id="ChangeArrIcaoInput" type="text" maxlength="4" placeholder="e.g. LFPO" style="flex:1;height:30px;background-color:#1E293B;border:0;border-radius:6px;padding:0 10px;color:#FFFFFF;font-family:Consolas,monospace;font-size:13px;font-weight:700;outline:none;text-transform:uppercase;" />' +
+                    '</div>' +
+                    '<div id="ChangeArrQuickRow" style="display:flex;flex-wrap:wrap;margin-bottom:8px;"></div>' +
+                    '<div id="ChangeArrStatus" style="font-size:11.5px;color:#F87171;min-height:16px;margin-bottom:8px;"></div>' +
+                    '<div class="atc-modal-actions" style="gap:6px;">' +
+                        '<div id="BtnChangeArrApply" class="atc-modal-btn" style="background-color:#0A86C2;margin-right:6px;">Set Arrival</div>' +
+                        '<div id="BtnChangeArrCancel" class="atc-modal-btn" style="background-color:#2B303B;">Cancel</div>' +
+                    '</div>' +
+                '</div>';
+            modal.addEventListener("mousedown", (e) => { e.stopPropagation(); });
+            modal.addEventListener("click", (e) => {
+                if (e.target === modal) {
+                    modal.classList.add("hidden");
+                }
+                e.stopPropagation();
+            });
+            mainDisp.appendChild(modal);
+        }
+
+        let cam = this.getCamaieu(this.currentData);
+        let fd = this.currentData || {};
+        let curArr = String((fd.arrival && fd.arrival.icao) || "").toUpperCase();
+        let curDep = String((fd.departure && fd.departure.icao) || "").toUpperCase();
+        let rawAlts = Array.isArray(fd.simbrief_alternates) ? fd.simbrief_alternates.slice() : [];
+        if (rawAlts.length === 0 && fd.simbrief_alternate) {
+            rawAlts.push(String(fd.simbrief_alternate).toUpperCase());
+        }
+        let sbSched = String(fd.simbrief_scheduled_arrival || "").toUpperCase();
+
+        let hdrEl = modal.querySelector("#ChangeArrHeader");
+        let subEl = modal.querySelector("#ChangeArrSub");
+        let inpEl = modal.querySelector("#ChangeArrIcaoInput");
+        let quickEl = modal.querySelector("#ChangeArrQuickRow");
+        let statEl = modal.querySelector("#ChangeArrStatus");
+        let btnApply = modal.querySelector("#BtnChangeArrApply");
+        let btnCancel = modal.querySelector("#BtnChangeArrCancel");
+
+        if (hdrEl) hdrEl.style.color = cam.accent || "#38BDF8";
+        if (subEl) {
+            subEl.innerText = curArr
+                ? ("Current arrival: " + curArr + ". Enter a new 4-letter ICAO or select an alternate below.")
+                : "Enter a 4-letter destination ICAO to compute arrival stand, active runway, and taxi chart.";
+        }
+        if (statEl) {
+            statEl.style.color = "#F87171";
+            statEl.innerText = "";
+        }
+        if (inpEl) {
+            inpEl.value = "";
+            inpEl.disabled = false;
+        }
+        if (btnApply) {
+            btnApply.innerText = "Set Arrival";
+            btnApply.style.opacity = "1";
+        }
+
+        let submitIcao = (rawVal) => {
+            let clean = String(rawVal || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 4);
+            if (clean.length < 3) {
+                if (statEl) {
+                    statEl.style.color = "#F87171";
+                    statEl.innerText = "Please enter a valid airport ICAO code.";
+                }
+                return;
+            }
+            if (clean === curArr && curArr) {
+                modal.classList.add("hidden");
+                this.activePhase = "arrival";
+                this.manualPhaseOverride = true;
+                this.initialFitDone = false;
+                this.lastSidebarSig = "";
+                this.lastChartSig = "";
+                if (this.currentData) this.renderData(this.currentData, true);
+                return;
+            }
+            if (inpEl) inpEl.disabled = true;
+            if (btnApply) {
+                btnApply.innerText = "Loading...";
+                btnApply.style.opacity = "0.7";
+            }
+            if (statEl) {
+                statEl.style.color = "#38BDF8";
+                statEl.innerText = "Computing arrival data for " + clean + "...";
+            }
+            fetch(this.getApiBase() + "/api/set_arrival?icao=" + encodeURIComponent(clean))
+                .then(r => r.json().then(body => ({ ok: r.ok, body: body })))
+                .then(res => {
+                    if (!res.ok || (res.body && res.body.error)) {
+                        if (inpEl) inpEl.disabled = false;
+                        if (btnApply) {
+                            btnApply.innerText = "Set Arrival";
+                            btnApply.style.opacity = "1";
+                        }
+                        if (statEl) {
+                            statEl.style.color = "#F87171";
+                            statEl.innerText = (res.body && res.body.error) ? String(res.body.error) : ("Airport " + clean + " not found.");
+                        }
+                        return;
+                    }
+                    modal.classList.add("hidden");
+                    let d = res.body;
+                    if (d && (d.departure || d.arrival)) {
+                        let statusBox = this.querySelector("#StatusMessage");
+                        let efbContainer = this.querySelector("#EFBContainer");
+                        if (statusBox) statusBox.classList.add("hidden");
+                        if (efbContainer) efbContainer.classList.remove("hidden");
+                        ["departure", "arrival"].forEach(ph => {
+                            let apt = d[ph];
+                            if (apt && apt.icao) {
+                                if (apt.chart_data) {
+                                    this.rawCharts[apt.icao] = apt.chart_data;
+                                    this.fastCharts[apt.icao] = this.compileFastChart(apt.chart_data);
+                                } else if (this.rawCharts[apt.icao]) {
+                                    apt.chart_data = this.rawCharts[apt.icao];
+                                }
+                            }
+                        });
+                        this.currentData = d;
+                        this.activePhase = "arrival";
+                        this.manualPhaseOverride = true;
+                        this.initialFitDone = false;
+                        this.lastSidebarSig = "";
+                        this.lastChartSig = "";
+                        requestAnimationFrame(() => {
+                            this.updateCanvasMetrics();
+                            this.renderData(d, true);
+                        });
+                    }
+                })
+                .catch(() => {
+                    if (inpEl) inpEl.disabled = false;
+                    if (btnApply) {
+                        btnApply.innerText = "Set Arrival";
+                        btnApply.style.opacity = "1";
+                    }
+                    if (statEl) {
+                        statEl.style.color = "#F87171";
+                        statEl.innerText = "Connection error while updating arrival airport.";
+                    }
+                });
+        };
+
+        if (quickEl) {
+            quickEl.innerHTML = "";
+            let quickItems = [];
+            let seenCodes = {};
+            rawAlts.forEach((altEntry, idx) => {
+                let c = "";
+                let nm = "";
+                if (altEntry && typeof altEntry === "object") {
+                    c = String(altEntry.icao || "").toUpperCase().trim();
+                    nm = String(altEntry.name || "").trim();
+                } else {
+                    c = String(altEntry || "").toUpperCase().trim();
+                }
+                if (c && c.length >= 3 && c !== curArr && !seenCodes[c]) {
+                    seenCodes[c] = true;
+                    let baseLbl = (rawAlts.length === 1) ? ("SimBrief Alternate: " + c) : ("Alternate " + (idx + 1) + ": " + c);
+                    let fullLbl = (nm && nm.toUpperCase() !== c) ? (baseLbl + " (" + nm + ")") : baseLbl;
+                    if (fullLbl.length > 42) fullLbl = baseLbl;
+                    quickItems.push({ code: c, label: fullLbl, bg: cam.s2 || "#4E788E" });
+                }
+            });
+            if (sbSched && sbSched.length >= 3 && sbSched !== curArr && !seenCodes[sbSched]) {
+                quickItems.push({ code: sbSched, label: "Scheduled Arrival: " + sbSched, bg: "#334155" });
+            }
+            quickItems.forEach((item) => {
+                let qb = document.createElement("div");
+                qb.style.cssText = "display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 12px;border-radius:6px;font-size:11.5px;font-weight:700;color:#FFFFFF;cursor:pointer;margin-right:6px;margin-bottom:6px;background-color:" + item.bg + ";";
+                qb.innerText = item.label;
+                qb.onclick = (e) => {
+                    e.stopPropagation();
+                    submitIcao(item.code);
+                };
+                quickEl.appendChild(qb);
+            });
+            quickEl.style.display = (quickItems.length > 0) ? "flex" : "none";
+        }
+
+        if (btnApply) {
+            btnApply.onclick = (e) => {
+                e.stopPropagation();
+                submitIcao(inpEl ? inpEl.value : "");
+            };
+        }
+        if (btnCancel) {
+            btnCancel.onclick = (e) => {
+                e.stopPropagation();
+                modal.classList.add("hidden");
+            };
+        }
+        if (inpEl) {
+            inpEl.onkeydown = (e) => {
+                e.stopPropagation();
+                if (e.key === "Enter") {
+                    submitIcao(inpEl.value);
+                } else if (e.key === "Escape") {
+                    modal.classList.add("hidden");
+                }
+            };
+        }
+
+        modal.classList.remove("hidden");
+        setTimeout(() => {
+            if (inpEl && typeof inpEl.focus === "function") {
+                try { inpEl.focus(); } catch (e) {}
+            }
+        }, 40);
+    }
+
     fitTerminalView() {
         this.viewMode = "terminal";
         this.followAircraft = false;
@@ -3417,18 +3755,18 @@ class GSXGateFinderPanel extends TemplateElement {
         let allY = [bRL[1], bFL[1], bFR[1], bRR[1], nTip[1]];
 
         // 5. Airline icon(s) displayed right in front of the triangular tip
-        //    Applies a progressive scale multiplier (up to 1.45x) when the user zooms in to maximum zoom
+        //    Applies a progressive scale multiplier across apron zoom levels
         if (logoCodes && logoCodes.length > 0 && (scMult > 1.05 || this.metersPerPixel <= 3.2)) {
-            let logoZoomMult = 1.0 + 0.45 * Math.max(0.0, Math.min(1.0, (0.85 - this.metersPerPixel) / 0.65));
-            let rawLh = (scMult > 1.05 ? 18.0 : 13.5) * sc * logoZoomMult;
-            let maxLhCap = (scMult > 1.05) ? 34 : 28;
-            let logoH = Math.max(12, Math.min(maxLhCap, Math.round(rawLh / 2.0) * 2));
-            let logoW = Math.round(logoH * 1.16);
+            let logoZoomMult = 1.0 + 0.40 * Math.max(0.0, Math.min(1.0, (2.6 - this.metersPerPixel) / 2.2));
+            let rawLh = (scMult > 1.05 ? 22.5 : 17.8) * sc * logoZoomMult;
+            let maxLhCap = (scMult > 1.05) ? 38 : 32;
+            let logoH = Math.max(16, Math.min(maxLhCap, Math.round(rawLh / 2.0) * 2));
+            let logoW = Math.round(logoH * 1.18);
             let maxLogos = (this.metersPerPixel <= 0.85 && scMult <= 1.05) ? 2 : 1;
             let shown = logoCodes.slice(0, maxLogos);
             let tipAlong = bodyFront + noseLen;
             for (let idxL = 0; idxL < shown.length; idxL++) {
-                let lAlong = tipAlong + 2.8 + (logoH * 0.56) + idxL * (logoH + 2.0);
+                let lAlong = tipAlong + 3.2 + (logoH * 0.60) + idxL * (logoW + 2.5);
                 let [lx, ly] = pt(lAlong, 0.0);
                 let x0 = lx - logoW * 0.5;
                 let y0 = ly - logoH * 0.5;
@@ -3728,35 +4066,26 @@ class GSXGateFinderPanel extends TemplateElement {
             ctx.lineWidth = 1.5;
             ctx.stroke();
             ctx.setLineDash([]);
-
-            let endKeys = Object.keys(rwy.ends || {});
-            for (let k = 0; k < endKeys.length; k++) {
-                let endId = endKeys[k];
-                let endInfo = rwy.ends[endId];
-                let [ex, ey] = mToXY(endInfo.xM, endInfo.yM);
-                rwyThresholdBadges.push({
-                    ex: ex,
-                    ey: ey,
-                    endId: endId,
-                    isActive: (endId === activeRwy),
-                    heading: endInfo.heading || 0.0
-                });
-            }
         }
 
-        // 4b. Lido Yellow Hold-Short Bars at Holding Points
+        // 4b. Lido Yellow Hold-Short Bars at Holding Points (strictly perpendicular & matched to taxiways)
         if (this.metersPerPixel <= 3.8 && fast.holdingPoints && fast.holdingPoints.length > 0) {
-            let hbHalf = Math.max(4.0, Math.min(9.0, 7.5 * invMpp));
+            let hbHalf = Math.max(3.8, Math.min(8.5, twyW * 0.52));
+            let maxHoldDistM = Math.min(15.0, 18.0 * this.metersPerPixel);
             ctx.beginPath();
             for (let i = 0; i < fast.holdingPoints.length; i++) {
                 let hp = fast.holdingPoints[i];
+                if (hp.distM > maxHoldDistM) continue;
                 if (hp.xM < minXm || hp.xM > maxXm || hp.yM < minYm || hp.yM > maxYm) continue;
                 let [hx, hy] = mToXY(hp.xM, hp.yM);
-                ctx.moveTo(hx - hbHalf, hy - 2);
-                ctx.lineTo(hx + hbHalf, hy + 2);
+                let stx = useHdgUp ? (hp.tx * cosR + hp.ty * sinR) : hp.tx;
+                let sty = useHdgUp ? (hp.tx * sinR - hp.ty * cosR) : -hp.ty;
+                let snx = -sty, sny = stx;
+                ctx.moveTo(hx - snx * hbHalf, hy - sny * hbHalf);
+                ctx.lineTo(hx + snx * hbHalf, hy + sny * hbHalf);
             }
             ctx.strokeStyle = pal.holdBar;
-            ctx.lineWidth = 2.4;
+            ctx.lineWidth = 2.2;
             ctx.stroke();
         }
 
@@ -4091,19 +4420,133 @@ class GSXGateFinderPanel extends TemplateElement {
             }
         }
 
-        // 7b. Interactive Circular Runway Badges (Lido AMM Cyan-Ringed Circles) anchored at exact threshold coordinates
+        // 7b. Interactive Circular Runway Badges (Viewport-Clamped Lido AMM Cyan-Ringed Circles)
+        let clipSegRect = (x0, y0, x1, y1, xmin, ymin, xmax, ymax) => {
+            let dx = x1 - x0, dy = y1 - y0;
+            let t0 = 0.0, t1 = 1.0;
+            let pq = [[-dx, x0 - xmin], [dx, xmax - x0], [-dy, y0 - ymin], [dy, ymax - y0]];
+            for (let qIdx = 0; qIdx < 4; qIdx++) {
+                let p = pq[qIdx][0], q = pq[qIdx][1];
+                if (Math.abs(p) < 1e-9) {
+                    if (q < 0.0) return null;
+                } else {
+                    let r = q / p;
+                    if (p < 0.0) {
+                        if (r > t1) return null;
+                        if (r > t0) t0 = r;
+                    } else {
+                        if (r < t0) return null;
+                        if (r < t1) t1 = r;
+                    }
+                }
+            }
+            return t0 <= t1 ? [t0, t1] : null;
+        };
+
+        let insetPx = Math.round(26 * uiSc);
+        let rBx0 = pad + insetPx, rBx1 = Math.max(rBx0 + 1, pad + w - insetPx);
+        let rBy0 = pad + insetPx, rBy1 = Math.max(rBy0 + 1, pad + h - insetPx);
+        let minSepPx = 42.0 * uiSc;
+
+        for (let i = 0; i < fast.runways.length; i++) {
+            let rwy = fast.runways[i];
+            let pts = rwy.mPts;
+            let endKeys = Object.keys(rwy.ends || {});
+            if (!pts || pts.length < 2 || endKeys.length === 0) continue;
+
+            let p0M = pts[0], p1M = pts[pts.length - 1];
+            let [x0, y0] = mToXY(p0M[0], p0M[1]);
+            let [x1, y1] = mToXY(p1M[0], p1M[1]);
+            let visClip = clipSegRect(x0, y0, x1, y1, pad - 12, pad - 12, pad + w + 12, pad + h + 12);
+            if (!visClip) continue;
+
+            let dx = x1 - x0, dy = y1 - y0;
+            let safeClip = clipSegRect(x0, y0, x1, y1, rBx0, rBy0, rBx1, rBy1);
+            let t0, t1, ps, pe;
+            if (safeClip) {
+                t0 = safeClip[0];
+                t1 = safeClip[1];
+                if (h > 96) {
+                    let px0T = x0 + t0 * dx, py0T = y0 + t0 * dy;
+                    let px1T = x0 + t1 * dx, py1T = y0 + t1 * dy;
+                    let inLeg0 = (px0T > pad + w - 236 && py0T > pad + h - 44);
+                    let inLeg1 = (px1T > pad + w - 236 && py1T > pad + h - 44);
+                    if (inLeg0 || inLeg1) {
+                        let altClip = clipSegRect(x0, y0, x1, y1, rBx0, rBy0, rBx1, pad + h - 46);
+                        if (altClip) {
+                            if (inLeg0) t0 = altClip[0];
+                            if (inLeg1) t1 = altClip[1];
+                            if (t0 > t1) { t0 = safeClip[0]; t1 = safeClip[1]; }
+                        }
+                    }
+                }
+                ps = [x0 + t0 * dx, y0 + t0 * dy];
+                pe = [x0 + t1 * dx, y0 + t1 * dy];
+            } else {
+                let tm = 0.5 * (visClip[0] + visClip[1]);
+                let pm = [
+                    Math.max(rBx0, Math.min(rBx1, x0 + tm * dx)),
+                    Math.max(rBy0, Math.min(rBy1, y0 + tm * dy))
+                ];
+                t0 = tm; t1 = tm; ps = pm; pe = pm;
+            }
+
+            let startSlot = null, endSlot = null;
+            for (let k = 0; k < endKeys.length; k++) {
+                let endId = endKeys[k];
+                let eInfo = rwy.ends[endId];
+                let d0 = Math.pow(eInfo.xM - p0M[0], 2) + Math.pow(eInfo.yM - p0M[1], 2);
+                let d1 = Math.pow(eInfo.xM - p1M[0], 2) + Math.pow(eInfo.yM - p1M[1], 2);
+                let slotObj = { endId: endId, isActive: (endId === activeRwy), heading: eInfo.heading || 0.0 };
+                if (d0 <= d1) {
+                    if (!startSlot) startSlot = slotObj;
+                    else if (!endSlot) endSlot = slotObj;
+                } else {
+                    if (!endSlot) endSlot = slotObj;
+                    else if (!startSlot) startSlot = slotObj;
+                }
+            }
+
+            if (startSlot && endSlot) {
+                let sepPx = Math.hypot(pe[0] - ps[0], pe[1] - ps[1]);
+                if (sepPx < minSepPx) {
+                    let mxS = 0.5 * (ps[0] + pe[0]), myS = 0.5 * (ps[1] + pe[1]);
+                    if (t0 <= 1e-4 && t1 >= 1.0 - 1e-4) {
+                        let segL = Math.hypot(dx, dy);
+                        let uxS = segL > 1e-3 ? dx / segL : 1.0;
+                        let uyS = segL > 1e-3 ? dy / segL : 0.0;
+                        let halfSep = 20.0 * uiSc;
+                        ps = [Math.max(rBx0, Math.min(rBx1, mxS - uxS * halfSep)), Math.max(rBy0, Math.min(rBy1, myS - uyS * halfSep))];
+                        pe = [Math.max(rBx0, Math.min(rBx1, mxS + uxS * halfSep)), Math.max(rBy0, Math.min(rBy1, myS + uyS * halfSep))];
+                        rwyThresholdBadges.push({ ex: ps[0], ey: ps[1], endId: startSlot.endId, isActive: startSlot.isActive, heading: startSlot.heading });
+                        rwyThresholdBadges.push({ ex: pe[0], ey: pe[1], endId: endSlot.endId, isActive: endSlot.isActive, heading: endSlot.heading });
+                    } else {
+                        let chosen = (startSlot.isActive || (!endSlot.isActive && t0 <= (1.0 - t1))) ? startSlot : endSlot;
+                        rwyThresholdBadges.push({ ex: mxS, ey: myS, endId: chosen.endId, isActive: chosen.isActive, heading: chosen.heading });
+                    }
+                } else {
+                    rwyThresholdBadges.push({ ex: ps[0], ey: ps[1], endId: startSlot.endId, isActive: startSlot.isActive, heading: startSlot.heading });
+                    rwyThresholdBadges.push({ ex: pe[0], ey: pe[1], endId: endSlot.endId, isActive: endSlot.isActive, heading: endSlot.heading });
+                }
+            } else if (startSlot) {
+                rwyThresholdBadges.push({ ex: ps[0], ey: ps[1], endId: startSlot.endId, isActive: startSlot.isActive, heading: startSlot.heading });
+            } else if (endSlot) {
+                rwyThresholdBadges.push({ ex: pe[0], ey: pe[1], endId: endSlot.endId, isActive: endSlot.isActive, heading: endSlot.heading });
+            }
+        }
+
         for (let i = 0; i < rwyThresholdBadges.length; i++) {
             let b = rwyThresholdBadges[i];
             let ex = b.ex, ey = b.ey;
-            let radC = Math.round((b.isActive ? 16 : 14) * uiSc);
+            let radC = Math.round((b.isActive ? 19 : 17) * uiSc);
             let fillC = b.isActive ? cam.s1 : pal.rwyCircleFill;
             let ringC = pal.rwyCircleRing;
 
             if (b.isActive) {
                 ctx.beginPath();
-                ctx.arc(ex, ey, radC + 4, 0, Math.PI * 2);
+                ctx.arc(ex, ey, radC + 3.5, 0, Math.PI * 2);
                 ctx.strokeStyle = ringC;
-                ctx.lineWidth = 1.5;
+                ctx.lineWidth = 1.0;
                 ctx.stroke();
             }
 
@@ -4112,7 +4555,7 @@ class GSXGateFinderPanel extends TemplateElement {
             ctx.fillStyle = fillC;
             ctx.fill();
             ctx.strokeStyle = ringC;
-            ctx.lineWidth = 2.5;
+            ctx.lineWidth = 1.35;
             ctx.stroke();
 
             let visRHdg = useHdgUp ? (b.heading - acHdgS) : b.heading;
@@ -4124,7 +4567,7 @@ class GSXGateFinderPanel extends TemplateElement {
             ctx.save();
             ctx.translate(ex, ey);
             ctx.rotate(txtRad);
-            ctx.font = "bold " + Math.round(10 * uiSc) + "px sans-serif";
+            ctx.font = "bold " + Math.round(11.5 * uiSc) + "px sans-serif";
             ctx.fillStyle = "#FFFFFF";
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";

@@ -1,6 +1,22 @@
 # GateFinder — Changelog
 
-## Version 2.0.7 (Latest Release)
+## Version 2.0.8 (Latest Release)
+
+### 🚀 New Features, UX Enhancements & Bug Fixes
+- **Clickable Arrival Airport Switcher & 1-Click SimBrief Alternate Diversion:**
+  - Click directly on the **Arrival ICAO pill** (`ARRIVAL` phase card) or the **Arrival Airport title** in the left sidebar (both Desktop and MSFS In-Game Panel / MSFS 2024 EFB / Fenix EFB / Web EFB) to change or divert your destination airport at any time—including VFR or MCDU-only flights without SimBrief (powered by live SimConnect aircraft telemetry).
+  - When a SimBrief OFP is active, the modal displays 1-click **`SimBrief Alternate: XXXX`** diversion buttons (plus a 1-click **`Scheduled Arrival: YYYY`** button if ATC cancels your diversion), preserving departure state and suppressing false turnaround OFP prompts.
+  - Added a direct **`Set Arrival`** action button on the EFB/Panel startup screen when `Auto-fetch latest SimBrief OFP on startup` is disabled.
+- **`Auto-fetch latest SimBrief OFP on startup` Fix:**
+  - Fixed all three paths (`GUIApp.__init__` session timestamp check, `show_main_view` Settings return check, and background SimConnect tarmac mismatch peeking) that could still fetch the last active SimBrief OFP when `Auto-fetch latest SimBrief OFP on startup` was turned off.
+- **Dead-End Taxiway Stub Pruning (`_prune_dangling_taxiway_stubs`):**
+  - Eliminated dangling dead-end OSM taxiway stubs and orphaned grass holding points worldwide (such as at `EGCC` and `EBBR`) via iterative topological leaf pruning while preserving parallel unnamed parking combs, apron exits, and stand connectors across all cached and newly generated charts.
+- **Dynamic Viewport-Clamped Runway QFU Pills & Enhanced Airline Badges:**
+  - Runway threshold QFU badges now remain visible at all zoom levels, sliding smoothly along each runway centerline toward the screen border when zoomed in (both during pan and after mouse release) with crisp larger typography and refined thin cyan rims, alongside larger high-legibility airline logo badges at gate zoom levels.
+
+---
+
+## Version 2.0.7
 
 ### 🚀 New Features, UX Enhancements & Bug Fixes
 - **Enhanced Aircraft Type Normalization & Persistent Default Mismatch Choice (`default_mismatch_action`):**

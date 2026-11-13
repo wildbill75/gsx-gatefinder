@@ -6308,6 +6308,36 @@ class GateFinderBackend:
 
         return dep_icao, arr_icao
 
+    def _extract_simbrief_alternates(self, data, dep_icao="", arr_icao=""):
+        """
+        Extracts clean SimBrief alternate airport entries ([{'icao': 'LFBO', 'name': '...', 'plan_rwy': '...'}])
+        from a parsed SimBrief OFP payload (handles both single dict and list of dicts).
+        """
+        if not isinstance(data, dict):
+            return []
+        alt_blk = data.get("alternate")
+        raw_list = alt_blk if isinstance(alt_blk, list) else ([alt_blk] if isinstance(alt_blk, dict) else [])
+        out = []
+        seen = set()
+        dep_u = str(dep_icao or "").strip().upper()
+        arr_u = str(arr_icao or "").strip().upper()
+        for ab in raw_list:
+            if not isinstance(ab, dict):
+                continue
+            ic = re.sub(r"[^A-Z0-9]", "", self._clean_sb_str(ab.get("icao_code")).upper())[:4]
+            if len(ic) < 3 or ic in seen or ic == arr_u:
+                continue
+            seen.add(ic)
+            nm = self.get_airport_display_name(ic, self._clean_sb_str(ab.get("name")))
+            prwy = self._clean_sb_str(ab.get("plan_rwy")).upper()
+            out.append({
+                "icao": ic,
+                "name": nm or ic,
+                "plan_rwy": prwy,
+                "is_dep": (ic == dep_u),
+            })
+        return out
+
     def peek_latest_simbrief_ofp(self, username, allow_same_dep_arr=False):
         """
         Lightweight non-intrusive check of the user's latest SimBrief OFP metadata
@@ -6375,7 +6405,7 @@ class GateFinderBackend:
         except Exception:
             return None
 
-    def get_flight_data(self, username, on_turnaround_check=None, progress_callback=None, _mock_data=None, turnaround_keep_gate=None, auto_load=False):
+    def get_flight_data(self, username, on_turnaround_check=None, progress_callback=None, _mock_data=None, turnaround_keep_gate=None, auto_load=False, _preserve_departure=None):
         def _report_progress(pct, msg):
             if progress_callback:
                 try:
@@ -6436,7 +6466,7 @@ class GateFinderBackend:
         params_block = data.get('params', {}) if isinstance(data.get('params'), dict) else {}
         req_id = self._clean_sb_str(params_block.get('request_id'))
         t_gen = self._clean_sb_str(params_block.get('time_generated'))
-        is_synthetic_live = req_id.startswith("LIVE_MSFS_")
+        is_synthetic_live = req_id.startswith("LIVE_MSFS_") or req_id.startswith("MANUAL_ARR_")
 
         origin, destination = self._extract_validated_simbrief_route_icaos(
             data, auto_load=bool(auto_load), is_synthetic_live=is_synthetic_live
@@ -6450,6 +6480,11 @@ class GateFinderBackend:
         dest_rwy = self._clean_sb_str(dest_blk.get('plan_rwy')) if destination else ''
         if destination:
             self.airport_names[destination] = self.get_airport_display_name(destination, self._clean_sb_str(dest_blk.get('name')))
+
+        sb_alternates = self._extract_simbrief_alternates(data, dep_icao=origin, arr_icao=destination)
+        sb_primary_alt = sb_alternates[0]["icao"] if sb_alternates else ""
+        sb_sched_arr = "" if is_synthetic_live else (destination or "")
+        sb_sched_arr_rwy = "" if is_synthetic_live else (dest_rwy or "")
         
         ofp_id = f"{req_id}_{t_gen}_{origin}_{destination}" if (req_id or t_gen) else f"{origin}_{destination}"
         
@@ -7805,26 +7840,39 @@ class GateFinderBackend:
 
         # Always reset all router latches, telemetry route caches, and coherent airport caches
         # so every new OFP / turnaround performs a complete, fresh scan and A* calculation for both airports
-        self.taxi_router.dep_runway_entered.clear()
-        self.taxi_router.arr_vacated_runway.clear()
-        self.taxi_router.locked_arrival_exit.clear()
-        self._last_dep_route_pos = None
-        self._last_dep_route_key = None
-        self._last_arr_route_pos = None
-        self._last_arr_route_key = None
-        if hasattr(self, "coherent_airports") and isinstance(self.coherent_airports, dict):
-            if origin:
-                self.coherent_airports.pop(origin.upper(), None)
-            if destination:
+        if _preserve_departure is not None:
+            prev_dep_snapshot, prev_dep_entered = _preserve_departure
+            self.taxi_router.arr_vacated_runway.clear()
+            self.taxi_router.locked_arrival_exit.clear()
+            self._last_arr_route_pos = None
+            self._last_arr_route_key = None
+            if hasattr(self, "coherent_airports") and isinstance(self.coherent_airports, dict) and destination:
                 self.coherent_airports.pop(destination.upper(), None)
+            _report_progress(0.35, f"Loading arrival airport data ({destination})...")
+            dep_data = prev_dep_snapshot
+            arr_data = process_airport(destination, "arrival", dest_rwy)
+            _report_progress(0.85, f"Computing arrival stand & taxi route ({destination})...")
+        else:
+            self.taxi_router.dep_runway_entered.clear()
+            self.taxi_router.arr_vacated_runway.clear()
+            self.taxi_router.locked_arrival_exit.clear()
+            self._last_dep_route_pos = None
+            self._last_dep_route_key = None
+            self._last_arr_route_pos = None
+            self._last_arr_route_key = None
+            if hasattr(self, "coherent_airports") and isinstance(self.coherent_airports, dict):
+                if origin:
+                    self.coherent_airports.pop(origin.upper(), None)
+                if destination:
+                    self.coherent_airports.pop(destination.upper(), None)
 
-        _report_progress(0.35, f"Loading airport data ({origin} & {destination})...")
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            f_dep = pool.submit(process_airport, origin, "departure", origin_rwy)
-            f_arr = pool.submit(process_airport, destination, "arrival", dest_rwy)
-            dep_data = f_dep.result()
-            _report_progress(0.75, f"Computing gate assignment & taxi routes ({origin} -> {destination})...")
-            arr_data = f_arr.result()
+            _report_progress(0.35, f"Loading airport data ({origin} & {destination})...")
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                f_dep = pool.submit(process_airport, origin, "departure", origin_rwy)
+                f_arr = pool.submit(process_airport, destination, "arrival", dest_rwy)
+                dep_data = f_dep.result()
+                _report_progress(0.75, f"Computing gate assignment & taxi routes ({origin} -> {destination})...")
+                arr_data = f_arr.result()
 
         # Check if MSFS is live with aircraft parked at a stand at `origin`, OR if the previous flight
         # (in-memory or persisted in last_flight_session.json) arrived at or departed from `origin` at a specific stand.
@@ -7834,7 +7882,7 @@ class GateFinderBackend:
         stand_decision_made = False
         is_same_ofp_cold_resume = False
         saved_dep_gate_for_ofp = None
-        if prev_flight_snapshot is None and ofp_id:
+        if _preserve_departure is None and prev_flight_snapshot is None and ofp_id:
             try:
                 p_sess = self._get_session_state_path()
                 if os.path.exists(p_sess):
@@ -7861,7 +7909,7 @@ class GateFinderBackend:
             and float(sc_live.user_gs or 0.0) >= 35.0
         )
 
-        candidate_stand = self.get_candidate_departure_stand(
+        candidate_stand = None if _preserve_departure is not None else self.get_candidate_departure_stand(
             origin,
             default_lat=dep_data.get("lat") if dep_data else None,
             default_lon=dep_data.get("lon") if dep_data else None,
@@ -7910,7 +7958,8 @@ class GateFinderBackend:
                 if dep_data:
                     dep_data["user_requested_new_stand"] = True
         elif (
-            str(ofp_id or "").startswith("LIVE_MSFS_")
+            _preserve_departure is None
+            and str(ofp_id or "").startswith("LIVE_MSFS_")
             and dep_data
             and sc_live
             and sc_live.connected
@@ -8035,7 +8084,7 @@ class GateFinderBackend:
                     except Exception:
                         pass
         # Restore persisted session gates/runways/latches ONLY if restarting GateFinder cold on the exact same OFP
-        if prev_flight_snapshot is None:
+        if _preserve_departure is None and prev_flight_snapshot is None:
             self._restore_session_state_if_matching(
                 origin, destination, dep_data, arr_data,
                 ofp_id=ofp_id,
@@ -8053,6 +8102,17 @@ class GateFinderBackend:
                         ph_d["lat"] = m_var["lat"]
                         ph_d["lon"] = m_var["lon"]
                         ph_d["max_wingspan"] = m_var["wingspan"]
+        elif _preserve_departure is not None and arr_data and arr_data.get("gate") and destination:
+            m_var = self.resolve_mars_stand_variant_for_aircraft(
+                destination, arr_data["gate"],
+                gate_lat=arr_data.get("lat"), gate_lon=arr_data.get("lon"),
+                aircraft_wingspan=wingspan
+            )
+            if m_var and clean_gate_token(m_var["name"]) != clean_gate_token(arr_data["gate"]):
+                arr_data["gate"] = m_var["name"]
+                arr_data["lat"] = m_var["lat"]
+                arr_data["lon"] = m_var["lon"]
+                arr_data["max_wingspan"] = m_var["wingspan"]
 
         style_key = self.config.settings.get("map_style", "Satellite Imagery")
         style_mapping = {
@@ -8083,6 +8143,10 @@ class GateFinderBackend:
             "ga_category": ga_flight_info.get("category", ""),
             "is_cargo_flight": bool(is_cargo_carrier_global),
             "is_military_flight": bool(is_military_flight_global),
+            "simbrief_alternates": sb_alternates,
+            "simbrief_alternate": sb_primary_alt,
+            "simbrief_scheduled_arrival": sb_sched_arr,
+            "simbrief_scheduled_arr_rwy": sb_sched_arr_rwy,
             "departure": dep_data,
             "arrival": arr_data,
             "map_style": map_style_short,
@@ -8095,7 +8159,20 @@ class GateFinderBackend:
         if hasattr(self, "simconnect_manager") and self.simconnect_manager:
             self.simconnect_manager.register_flight(self.current_flight_data)
         if hasattr(self, "interop_hub") and self.interop_hub:
-            self.interop_hub.on_flight_loaded(self.current_flight_data)
+            if _preserve_departure is not None:
+                with self.interop_hub.lock:
+                    _prev_dep_rwy_ovr = self.interop_hub._user_overridden_rwy.get("departure")
+                    _prev_dep_dec = self.interop_hub.active_decision.get("departure")
+                    _prev_dep_st = self.interop_hub.state.get("departure")
+                self.interop_hub.on_flight_loaded(self.current_flight_data)
+                with self.interop_hub.lock:
+                    self.interop_hub._user_overridden_rwy["departure"] = _prev_dep_rwy_ovr
+                    if _prev_dep_dec is not None:
+                        self.interop_hub.active_decision["departure"] = _prev_dep_dec
+                    if _prev_dep_st is not None:
+                        self.interop_hub.state["departure"] = _prev_dep_st
+            else:
+                self.interop_hub.on_flight_loaded(self.current_flight_data)
             if self.current_flight_data.get("arrival"):
                 self.current_flight_data["arrival"]["gsx_status"] = self.interop_hub.get_arrival_gsx_status()
         self._save_session_state()
@@ -9158,7 +9235,7 @@ class GateFinderBackend:
                         break
         else:
             sb_user = str(self.config.settings.get("simbrief_username") or "").strip()
-            if sb_user:
+            if sb_user and bool(self.config.settings.get("auto_fetch", True)):
                 now_p = time.time()
                 cached_pk = getattr(self, "_cached_mismatch_sb_peek", None)
                 if cached_pk is None or (now_p - cached_pk[0]) >= 25.0 or cached_pk[1] != sb_user:
@@ -9458,6 +9535,199 @@ class GateFinderBackend:
             turnaround_keep_gate=True,
             progress_callback=progress_callback,
         )
+
+    def change_arrival_airport(self, new_arr_icao, progress_callback=None):
+        """
+        Manually sets or changes the Arrival Airport (e.g. VFR / MCDU direct flight without SimBrief,
+        or in-flight ATC diversion to a SimBrief Alternate or any 3/4-letter ICAO airport).
+        - Validates that `new_arr_icao` resolves to real airport coordinates before mutating state.
+        - If a flight is already loaded, preserves the entire departure state, aircraft specs, airline,
+          SimBrief alternates, scheduled arrival, and `ofp_id`, recomputing ONLY the arrival airport
+          (active runway, stand assignment, VATSIM/IVAO check, Lido vector chart, and A* taxi route).
+        - If no flight is loaded yet (e.g. `auto_fetch` disabled), initializes a Live MSFS Flight using
+          live SimConnect aircraft telemetry (and live departure airport if parked on the ground).
+        """
+        target_u = re.sub(r"[^A-Z0-9]", "", str(new_arr_icao or "").strip().upper())[:4]
+        if len(target_u) < 3:
+            raise ValueError("Please enter a valid 3 or 4-letter airport ICAO code.")
+
+        self.ensure_initialized(progress_callback=progress_callback)
+        dest_lat, dest_lon, dest_name = self.resolve_airport_coords_by_icao(target_u)
+        if dest_lat is None or dest_lon is None:
+            raise ValueError(f"Airport ICAO '{target_u}' could not be found.")
+
+        fd_prev = dict(self.current_flight_data) if isinstance(self.current_flight_data, dict) else None
+        if not fd_prev:
+            orig_icao = ""
+            sc = getattr(self, "simconnect_manager", None)
+            if (
+                sc
+                and sc.connected
+                and not getattr(sc, "in_menu", False)
+                and sc.user_on_ground is True
+                and sc.user_lat is not None
+                and sc.user_lon is not None
+                and float(sc.user_gs or 0.0) <= 30.0
+            ):
+                live_apt = self.detect_live_msfs_airport(float(sc.user_lat), float(sc.user_lon))
+                if live_apt and live_apt.get("icao"):
+                    orig_icao = str(live_apt["icao"]).strip().upper()
+
+            ac_prof = self.get_live_msfs_aircraft_profile()
+            ac_icao = ac_prof.get("icao") or "GA"
+            ac_name = ac_prof.get("name") or ac_icao
+            ac_reg = ac_prof.get("registration") or ""
+            ac_al = ac_prof.get("airline") or ""
+            ac_ws = ac_prof.get("wingspan") or 14.0
+            orig_lat, orig_lon, orig_name = (
+                self.resolve_airport_coords_by_icao(orig_icao) if orig_icao else (None, None, "")
+            )
+            synthetic_ofp = {
+                "origin": {
+                    "icao_code": orig_icao,
+                    "name": orig_name or orig_icao,
+                    "pos_lat": str(orig_lat) if orig_lat is not None else "",
+                    "pos_long": str(orig_lon) if orig_lon is not None else "",
+                    "plan_rwy": "",
+                },
+                "destination": {
+                    "icao_code": target_u,
+                    "name": dest_name or target_u,
+                    "pos_lat": str(dest_lat),
+                    "pos_long": str(dest_lon),
+                    "plan_rwy": "",
+                },
+                "params": {
+                    "request_id": f"LIVE_MSFS_{orig_icao}_{target_u}",
+                    "time_generated": str(int(time.time())),
+                },
+                "general": {
+                    "icao_airline": ac_al,
+                    "airline": ac_al,
+                    "flight_number": "",
+                },
+                "atc": {
+                    "callsign": ac_al if (ac_al and ac_al != ac_reg) else "",
+                },
+                "aircraft": {
+                    "icaocode": ac_icao,
+                    "base_type": ac_icao,
+                    "name": ac_name,
+                    "reg": ac_reg,
+                    "engines": "",
+                    "wingspan": ac_ws,
+                },
+            }
+            self.pending_simbrief_mismatch = None
+            return self.get_flight_data(
+                username="",
+                _mock_data=synthetic_ofp,
+                turnaround_keep_gate=True,
+                progress_callback=progress_callback,
+            )
+
+        prev_dep = dict(fd_prev["departure"]) if isinstance(fd_prev.get("departure"), dict) else None
+        prev_dep_entered = dict(self.taxi_router.dep_runway_entered)
+        orig_u = str((prev_dep or {}).get("icao") or "").strip().upper()
+        orig_name = str((prev_dep or {}).get("name") or orig_u)
+        orig_lat = (prev_dep or {}).get("lat")
+        orig_lon = (prev_dep or {}).get("lon")
+        orig_rwy = str((prev_dep or {}).get("selected_runway") or "")
+
+        orig_ofp_id = str(fd_prev.get("ofp_id") or "")
+        sb_alts = list(fd_prev.get("simbrief_alternates") or [])
+        sb_alt = str(fd_prev.get("simbrief_alternate") or "")
+        sb_sched_arr = str(fd_prev.get("simbrief_scheduled_arrival") or "")
+        sb_sched_rwy = str(fd_prev.get("simbrief_scheduled_arr_rwy") or "")
+
+        plan_rwy = ""
+        if sb_sched_arr and target_u == sb_sched_arr.upper() and sb_sched_rwy:
+            plan_rwy = sb_sched_rwy
+        else:
+            for alt_item in sb_alts:
+                if isinstance(alt_item, dict) and str(alt_item.get("icao") or "").upper() == target_u:
+                    plan_rwy = str(alt_item.get("plan_rwy") or "").upper()
+                    break
+
+        raw_al_disp = str(fd_prev.get("airline") or "").strip()
+        al_code = raw_al_disp.split("-")[0].strip().upper() if "-" in raw_al_disp else raw_al_disp.upper()
+        if al_code in ("GA", "BIZ", "MIL", "CAR", "PAX"):
+            icao_al_field = ""
+        else:
+            icao_al_field = al_code
+
+        ac_type = str(fd_prev.get("aircraft_type") or "A320").strip().upper()
+        ac_name = str(fd_prev.get("aircraft") or ac_type).strip()
+        ac_eng = str(fd_prev.get("aircraft_engines") or "").strip()
+        ac_reg = str(fd_prev.get("registration") or "").strip().upper()
+        ac_ws = float(fd_prev.get("aircraft_wingspan") or 36.0)
+        cs_str = str(fd_prev.get("callsign") or "").strip().upper()
+
+        weights_blk = {}
+        if fd_prev.get("is_cargo_flight"):
+            weights_blk = {"pax_count": "0", "cargo": "15000"}
+
+        synthetic_ofp = {
+            "origin": {
+                "icao_code": orig_u,
+                "name": orig_name,
+                "pos_lat": str(orig_lat) if orig_lat is not None else "",
+                "pos_long": str(orig_lon) if orig_lon is not None else "",
+                "plan_rwy": orig_rwy,
+            },
+            "destination": {
+                "icao_code": target_u,
+                "name": dest_name or target_u,
+                "pos_lat": str(dest_lat),
+                "pos_long": str(dest_lon),
+                "plan_rwy": plan_rwy,
+            },
+            "params": {
+                "request_id": f"MANUAL_ARR_{orig_ofp_id or 'FLIGHT'}",
+                "time_generated": str(int(time.time())),
+            },
+            "general": {
+                "icao_airline": icao_al_field,
+                "airline": icao_al_field,
+                "flight_number": "",
+            },
+            "atc": {
+                "callsign": cs_str,
+            },
+            "aircraft": {
+                "icaocode": ac_type,
+                "base_type": ac_type,
+                "name": ac_name,
+                "reg": ac_reg,
+                "engines": ac_eng,
+                "wingspan": ac_ws,
+            },
+            "weights": weights_blk,
+        }
+        res_fd = self.get_flight_data(
+            username="",
+            _mock_data=synthetic_ofp,
+            progress_callback=progress_callback,
+            _preserve_departure=(prev_dep, prev_dep_entered),
+        )
+        if isinstance(self.current_flight_data, dict):
+            if orig_ofp_id and not orig_ofp_id.startswith("LIVE_MSFS_"):
+                self.current_flight_data["ofp_id"] = orig_ofp_id
+            else:
+                self.current_flight_data["ofp_id"] = f"LIVE_MSFS_{orig_u}_{target_u}"
+            if raw_al_disp:
+                self.current_flight_data["airline"] = raw_al_disp
+            self.current_flight_data["is_ga_flight"] = bool(fd_prev.get("is_ga_flight"))
+            self.current_flight_data["ga_category"] = str(fd_prev.get("ga_category") or "")
+            self.current_flight_data["is_cargo_flight"] = bool(fd_prev.get("is_cargo_flight"))
+            self.current_flight_data["is_military_flight"] = bool(fd_prev.get("is_military_flight"))
+            self.current_flight_data["simbrief_alternates"] = sb_alts
+            self.current_flight_data["simbrief_alternate"] = sb_alt
+            self.current_flight_data["simbrief_scheduled_arrival"] = sb_sched_arr
+            self.current_flight_data["simbrief_scheduled_arr_rwy"] = sb_sched_rwy
+            self.taxi_router.dep_runway_entered.update(prev_dep_entered)
+            self._save_session_state()
+        return self.current_flight_data or res_fd
 
     def get_candidate_departure_stand(
         self,
@@ -10574,7 +10844,7 @@ class GateFinderBackend:
             fd["aircraft_version"] = re.sub(r"\s*•\s*", " - ", str(fd["aircraft_version"]))
         fd["camaieu_palette"] = self.get_airline_camaieu_palette(al_code_cam)
         fd["default_mismatch_action"] = str(self.config.settings.get("default_mismatch_action", "ask") or "ask")
-        fd["app_version"] = "2.0.7"
+        fd["app_version"] = "2.0.8"
         return fd
 
     def scan_gsx_profiles(self):
@@ -10835,7 +11105,7 @@ class GateFinderBackend:
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <title>GateFinder V2.0.7 - Live Web EFB</title>
+    <title>GateFinder V2.0.8 - Live Web EFB</title>
     <link rel="stylesheet" href="/GateFinderPanel.css?v=44" />
     <style>
         html, body {
@@ -11181,11 +11451,11 @@ class GateFinderBackend:
             display: none !important;
         }
     </style>
-    <script type="text/javascript" src="/GateFinderPanel.js?v=207"></script>
+    <script type="text/javascript" src="/GateFinderPanel.js?v=208"></script>
 </head>
 <body class="border-box color-white">
     <gsx-gatefinder-panel>
-        <ingame-ui id="GSX_GateFinder" panel-id="PANEL_GATEFINDER" title="GATEFINDER V2.0.7">
+        <ingame-ui id="GSX_GateFinder" panel-id="PANEL_GATEFINDER" title="GATEFINDER V2.0.8">
             <div id="MainDisplay">
                 <div id="StatusMessage" class="status-message-box">
                     <h2 id="StatusTitle" class="status-title">Awaiting Flight Data</h2>
@@ -11445,7 +11715,7 @@ class GateFinderBackend:
                             raw_bytes = f.read()
                         if fname.endswith('.html'):
                             ts_b = str(int(time.time())).encode('ascii')
-                            raw_bytes = raw_bytes.replace(b'?v=207', b'?v=' + ts_b).replace(b'?v=206', b'?v=' + ts_b).replace(b'?v=205', b'?v=' + ts_b).replace(b'?v=204', b'?v=' + ts_b).replace(b'?v=203', b'?v=' + ts_b)
+                            raw_bytes = raw_bytes.replace(b'?v=208', b'?v=' + ts_b).replace(b'?v=207', b'?v=' + ts_b).replace(b'?v=206', b'?v=' + ts_b).replace(b'?v=205', b'?v=' + ts_b).replace(b'?v=204', b'?v=' + ts_b).replace(b'?v=203', b'?v=' + ts_b)
                         self.wfile.write(raw_bytes)
                         return
 
@@ -11556,6 +11826,28 @@ class GateFinderBackend:
                     self.wfile.write(json.dumps(fd).encode())
                     return
 
+                if parsed.path == '/api/set_arrival':
+                    query = parse_qs(parsed.query)
+                    icao_q = re.sub(r'[^A-Z0-9]', '', query.get('icao', [''])[0].strip().upper())[:4]
+                    bi = APIHandler.backend_instance
+                    try:
+                        bi.change_arrival_airport(icao_q)
+                        bi._gui_force_phase = "arrival"
+                        bi._gui_sync_needed = True
+                        self.send_response(200)
+                        self.end_headers()
+                        fd = bi.get_dynamic_flight_data()
+                        self.wfile.write(json.dumps(fd).encode('utf-8'))
+                    except ValueError as ve:
+                        self.send_response(400)
+                        self.end_headers()
+                        self.wfile.write(json.dumps({"error": str(ve)}).encode('utf-8'))
+                    except Exception as ex_arr:
+                        self.send_response(500)
+                        self.end_headers()
+                        self.wfile.write(json.dumps({"error": str(ex_arr)}).encode('utf-8'))
+                    return
+
                 if parsed.path == '/api/set_gate':
                     query = parse_qs(parsed.query)
                     phase = query.get('phase', ['arrival'])[0].strip().lower()
@@ -11651,7 +11943,7 @@ class GateFinderBackend:
                                 bi.get_flight_data(sb_u)
                         else:
                             bi.dismiss_simbrief_msfs_mismatch(eff_key)
-                            if not bi.current_flight_data:
+                            if not bi.current_flight_data and pmm.get("simbrief_origin"):
                                 sb_u = bi.config.settings.get("simbrief_username", "").strip()
                                 if sb_u:
                                     bi.get_flight_data(sb_u)
@@ -11681,6 +11973,7 @@ class GateFinderBackend:
                         
                     try:
                         data = APIHandler.backend_instance.get_flight_data(username)
+                        APIHandler.backend_instance._gui_sync_needed = True
                         self.send_response(200)
                         self.end_headers()
                         self.wfile.write(json.dumps(data).encode('utf-8'))
