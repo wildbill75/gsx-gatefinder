@@ -157,6 +157,7 @@ class Config:
             "map_follow_refresh_hz": 10,
             "suppress_popups_in_cockpit": False,
             "default_mismatch_action": "ask",
+            "last_seen_changelog_version": "",
             "send_crash_reports": True,
             "share_flight_stats": True
         }

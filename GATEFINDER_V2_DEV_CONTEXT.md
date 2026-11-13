@@ -109,8 +109,11 @@ Passage de l'architecture V1 (simples cartes/tuiles statiques) à une suite EFB 
    - Support complet avec ou sans SimBrief (VFR / plan de vol saisi au MCDU via la télémétrie avion SimConnect live) et boutons 1-clic **`SimBrief Alternate: XXXX`** (`_extract_simbrief_alternates`) + **`Scheduled Arrival: YYYY`** en conservant l'`ofp_id` initial pour éviter tout faux prompt de nouveau plan de vol en croisière.
 2. **Respect Strict de `Auto-fetch latest SimBrief OFP on startup` (`src/gui.py`, `src/backend.py`)** :
    - Correction des 3 chemins qui forçaient encore le téléchargement de l'OFP SimBrief lorsque `auto_fetch = False` (`GUIApp.__init__` via `os.path.getmtime`, retour de `Settings` dans `show_main_view`, et peek SimBrief dans `check_simbrief_vs_msfs_mismatch` / `/api/resolve_mismatch`).
-3. **Élagage Topologique Global des Taxiways en Impasse & Lisibilité Carte (`src/taxi_router.py`, `src/gui.py`, `GateFinderPanel.js`)** :
+3. **Élagage Topologique Global des Taxiways en Impasse, Routage A\* Sans Boucles d'Apron & Lisibilité Carte (`src/taxi_router.py`, `src/interoperability_hub.py`, `src/gui.py`, `GateFinderPanel.js`)** :
    - `_prune_dangling_taxiway_stubs` (`_deadend_pruned_v = 2`) éliminant les impasses OSM et points d'arrêt orphelins dans l'herbe (ex. `EGCC`, `EBBR`) tout en préservant les peignes de parkings parallèles et sorties d'aprons ; pastilles QFU de pistes glissant dynamiquement le long des bords de l'écran quel que soit le zoom (au repos comme au pan) et badges logos compagnies agrandis.
+   - Interdiction pour l'A\* d'emprunter les postes de stationnement traversants tiers (`stand_bay_nodes`) comme ronds-points de demi-tour, suppression topologique des boucles fermées (`_strip_route_loops`), compétition des voies d'apron non nommées dans `_process_si_taxi_path` (évitant l'accrochage latéral sur des raccords courbes comme `C` à `LDDU`), et ajout de `GWI` (`Germanwings`) dans le groupe sœur `{"EWG", "EWL", "GWI"}`.
+4. **Popup Automatique "What's New" de Changelog à Chaque Mise à Jour (`src/config.py`, `src/gui.py`, `GateFinder.spec`)** :
+   - Embarquement de `CHANGELOG.md` dans `GateFinder.spec` et affichage automatique unique par version (`last_seen_changelog_version` vs `APP_VERSION`) d'une modale sans bordure présentant les nouveautés de la mise à jour (respectant `suppress_popups_in_cockpit` et `--silent`), complétée par un bouton `Changelog` dans `Settings`.
 
 ---
 

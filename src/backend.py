@@ -131,7 +131,7 @@ VIRTUAL_TO_REAL_AIRLINE_MAP = {
 AIRLINE_SISTER_GROUPS = [
     {"SWR", "OAW", "EDW"},
     {"DLH", "CLH", "LHX", "OCN", "DLA"},
-    {"EWG", "EWL"},
+    {"EWG", "EWL", "GWI"},
     {"AFR", "HOP"},
     {"KLM", "KLC"},
     {"TRA", "TVF"},
@@ -332,7 +332,7 @@ ATC_CALLSIGN_TO_ICAO_MAP = {
     "SWISS": "SWR",
     "AUSTRIAN": "AUA",
     "BEE LINE": "BEL", "BEELINE": "BEL", "BRUSSELS": "BEL",
-    "EUROWINGS": "EWG",
+    "EUROWINGS": "EWG", "GERMANWINGS": "GWI",
     "EASY": "EZY", "EASYJET": "EZY", "ALPINE": "EJU", "TOPSWISS": "EZS",
     "RYANAIR": "RYR", "MAGIC SUN": "RYS",
     "TRANSAVIA": "TRA", "FRANCE SOLEIL": "TVF",
@@ -826,6 +826,7 @@ AIRLINE_BRAND_STYLES = {
     "AUA": ("#D71920", "#FFFFFF", "#D71920", "OS"),
     "BEL": ("#00205B", "#FFFFFF", "#E4002B", "SN"),
     "EWG": ("#830051", "#FFFFFF", "#00A1DE", "EW"),
+    "GWI": ("#7A003C", "#FFFFFF", "#FFCC00", "4U"),
     "CFG": ("#F59E0B", "#111827", "#F59E0B", "DE"),
     "ITY": ("#003399", "#FFFFFF", "#009933", "AZ"),
     "NOS": ("#009FE3", "#FFFFFF", "#009FE3", "NO"),
@@ -1052,6 +1053,7 @@ AIRLINE_FULL_NAMES = {
     "AUA": "Austrian Airlines",
     "BEL": "Brussels Airlines",
     "EWG": "Eurowings",
+    "GWI": "Germanwings",
     "CFG": "Condor",
     "ITY": "ITA Airways",
     "NOS": "Neos",
@@ -1331,7 +1333,7 @@ GSX_TOKEN_TO_ICAO_MAP = {
     "LA": "TAM", "LATAM": "TAM", "JJ": "TAM",
     "G3": "GLO", "GOL": "GLO", "AD": "AZU", "AZUL": "AZU",
     "AR": "ARG", "AM": "AMX", "AV": "AVA", "CM": "CMP",
-    "LH": "DLH", "LX": "SWR", "OS": "AUA", "SN": "BEL", "EW": "EWG",
+    "LH": "DLH", "LX": "SWR", "OS": "AUA", "SN": "BEL", "EW": "EWG", "4U": "GWI",
     "AF": "AFR", "KL": "KLM", "HV": "TRA", "TO": "TVF",
     "BA": "BAW", "IB": "IBE", "VY": "VLG", "EI": "EIN", "AY": "FIN",
     "U2": "EZY", "FR": "RYR", "W6": "WZZ", "DY": "NAX", "LS": "EXS", "BY": "TOM",
@@ -5391,6 +5393,7 @@ class GateFinderBackend:
             "OCN": "Discover Airlines",
             "EWG": "Eurowings",
             "EWL": "Eurowings Europe",
+            "GWI": "Germanwings",
             "CFG": "Condor",
             "BAW": "British Airways",
             "BAWV": "British Airways Virtual",
@@ -7401,7 +7404,7 @@ class GateFinderBackend:
             all_lcc_set = LOW_COST_CARRIERS | ULTRA_LOW_COST_CARRIERS
             is_user_lcc = bool(airline_norm in all_lcc_set or airline_u in all_lcc_set)
             schengen_airline_set = {
-                "DLH", "SWR", "AUA", "BEL", "EWG", "AFR", "KLM", "TRA", "TVF", "IBE", "IBS",
+                "DLH", "SWR", "AUA", "BEL", "EWG", "GWI", "AFR", "KLM", "TRA", "TVF", "IBE", "IBS",
                 "VLG", "AEA", "ITY", "TAP", "SAS", "FIN", "LOT", "CSA", "TVS", "BTI", "ELL",
                 "AEE", "AMC", "ICE", "NAX", "LGL", "ROT", "EDW", "OAW", "CFG", "TUI", "VOE"
             }
@@ -8887,7 +8890,7 @@ class GateFinderBackend:
                 "KLM ROYAL DUTCH": "KLM", "KLM CITYHOPPER": "KLM", "KLM": "KLM",
                 "EASYJET": "EZY", "EASY JET": "EZY",
                 "RYANAIR": "RYR", "SWISS": "SWR", "EDELWEISS": "EDW",
-                "AUSTRIAN": "AUA", "EUROWINGS": "EWG", "DISCOVER AIRLINES": "OCN",
+                "AUSTRIAN": "AUA", "EUROWINGS": "EWG", "GERMANWINGS": "GWI", "DISCOVER AIRLINES": "OCN",
                 "IBERIA": "IBE", "VUELING": "VLG", "VOLOTEA": "VOE", "AIR EUROPA": "AEA",
                 "TAP AIR PORTUGAL": "TAP", "TAP PORTUGAL": "TAP",
                 "TRANSAVIA FRANCE": "TVF", "TRANSAVIA": "TRA",

@@ -2773,17 +2773,21 @@ class SayIntentionsWatcher:
                         force_override=True
                     )
 
-            # 3. Project taxi_path points onto named taxiways in `chart`
-            twys = [t for t in (chart.get("taxiways") or []) if str(t.get("ref") or "").strip()]
-            if not twys:
+            # 3. Project taxi_path points onto taxiways in `chart` (including unnamed ways as competitors
+            #    so breadcrumbs on unnamed apron taxilanes never snap sideways onto curved side-exit fillets)
+            all_twys = chart.get("taxiways") or []
+            if not any(str(t.get("ref") or "").strip() for t in all_twys):
                 return
 
             import math
             cos_ref = max(0.15, math.cos(math.radians(lat0)))
             lon_pad = 0.00032 / cos_ref
             seg_candidates = []
-            for t in twys:
-                ref = str(t["ref"]).strip().upper()
+            for t in all_twys:
+                raw_ref = str(t.get("ref") or "").strip().upper()
+                tw_type = str(t.get("type") or "taxiway").strip().lower()
+                # Ignore numeric stand-bay numbers on taxilanes (e.g. '18', '19', '20' stand lead-ins)
+                ref = "" if (tw_type == "taxilane" and raw_ref.isdigit()) else raw_ref
                 pts = t.get("points") or []
                 for i in range(len(pts) - 1):
                     la0_s, lo0_s = float(pts[i][0]), float(pts[i][1])
@@ -2820,14 +2824,21 @@ class SayIntentionsWatcher:
                         axial_diff = min(diff, 180.0 - diff)
                         if axial_diff > 55.0:
                             continue
-                    for f in (0.0, 0.25, 0.5, 0.75, 1.0):
-                        slat = la0_s + f * (la1_s - la0_s)
-                        slon = lo0_s + f * (lo1_s - lo0_s)
-                        d = haversine_m(plat, plon, slat, slon)
-                        sc = d + axial_diff * 0.15
-                        if sc < best_score:
-                            best_score = sc
-                            best_ref = ref
+                    dx_s = (lo1_s - lo0_s) * cos_ref
+                    dy_s = la1_s - la0_s
+                    seg_l2 = dx_s * dx_s + dy_s * dy_s
+                    if seg_l2 > 1e-16:
+                        t_proj = ((plon - lo0_s) * cos_ref * dx_s + (plat - la0_s) * dy_s) / seg_l2
+                        t_proj = 0.0 if t_proj < 0.0 else (1.0 if t_proj > 1.0 else t_proj)
+                    else:
+                        t_proj = 0.0
+                    slat = la0_s + t_proj * dy_s
+                    slon = lo0_s + t_proj * (lo1_s - lo0_s)
+                    d = haversine_m(plat, plon, slat, slon)
+                    sc = d + axial_diff * 0.15 + (0.0 if ref else 2.2)
+                    if sc < best_score:
+                        best_score = sc
+                        best_ref = ref
                 if best_ref:
                     raw_hits.append(best_ref)
 

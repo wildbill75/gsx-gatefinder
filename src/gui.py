@@ -304,6 +304,17 @@ class SettingsView(ctk.CTkFrame):
                 self.btn_back.pack(side="right")
                 self._primary_btns.append(self.btn_back)
                 Tooltip(self.btn_back, "Return to the Lido Ground Chart view.")
+
+                self.btn_changelog = ctk.CTkButton(
+                    hdr_row, text="Changelog",
+                    command=lambda: self.winfo_toplevel().open_changelog_modal(latest_only=True) if hasattr(self.winfo_toplevel(), "open_changelog_modal") else None,
+                    width=92, height=25, corner_radius=7,
+                    fg_color="#2B303B", hover_color="#383E4C", border_width=0,
+                    text_color="#E2E8F0",
+                    font=ctk.CTkFont(size=12, weight="bold")
+                )
+                self.btn_changelog.pack(side="right", padx=(0, 6))
+                Tooltip(self.btn_changelog, "View what's new in this update and the full GateFinder release history.")
             elif right_widget_builder:
                 right_widget_builder(hdr_row)
 
@@ -4845,6 +4856,9 @@ class GUIApp(ctk.CTk):
         self._airborne_toast_timer = None
         self._live_stand_modal_dlg = None
         self._mismatch_modal_dlg = None
+        self._changelog_modal_open = False
+        self._changelog_modal_dlg = None
+        self._changelog_defer_count = 0
         self.check_sync_loop()
         
         # Check for updates in background
@@ -5437,6 +5451,7 @@ class GUIApp(ctk.CTk):
             if hasattr(self, "vector_chart") and self.vector_chart and self.vector_chart.winfo_exists():
                 if not getattr(self.vector_chart, "_initial_fit_done", False) and not getattr(self.vector_chart, "follow_aircraft", False):
                     self.after(40, self.vector_chart.fit_route_view)
+            self.after(260, self._maybe_show_changelog_popup)
         except Exception:
             pass
 
@@ -6790,7 +6805,7 @@ class GUIApp(ctk.CTk):
         lbl_sub = ctk.CTkLabel(
             card,
             text=sub_txt,
-            font=ctk.CTkFont(size=11.5),
+            font=ctk.CTkFont(size=12),
             text_color="#94A3B8",
             wraplength=490,
             justify="left",
@@ -6839,7 +6854,7 @@ class GUIApp(ctk.CTk):
             hover_color="#0A6E9E",
             checkmark_color="#FFFFFF",
             text_color="#CBD5E1",
-            font=ctk.CTkFont(size=11.5),
+            font=ctk.CTkFont(size=12),
         )
         chk_make_default.pack(side="left")
         Tooltip(chk_make_default, "When checked, clicking 'Use MSFS Aircraft' saves this preference and applies it automatically in the background on future flights.")
@@ -7077,7 +7092,7 @@ class GUIApp(ctk.CTk):
 
         extra_rows = len(sb_alts) + (1 if show_revert_sched else 0)
         dlg_w = 470
-        dlg_h = 205 + (extra_rows * 40)
+        dlg_h = 220 + (extra_rows * 40)
 
         dlg = ctk.CTkToplevel(self)
         self._apply_window_icon(dlg)
@@ -7088,6 +7103,16 @@ class GUIApp(ctk.CTk):
         dlg.transient(self)
         dlg.grab_set()
         self._center_toplevel(dlg, dlg_w, dlg_h)
+
+        def _close_dlg():
+            self._ofp_modal_open = False
+            try:
+                if dlg.winfo_exists():
+                    dlg.destroy()
+            except Exception:
+                pass
+
+        dlg.protocol("WM_DELETE_WINDOW", _close_dlg)
 
         card = ctk.CTkFrame(dlg, fg_color="#111827", corner_radius=10, border_width=0)
         card.pack(fill="both", expand=True, padx=12, pady=12)
@@ -7107,7 +7132,7 @@ class GUIApp(ctk.CTk):
         ctk.CTkLabel(
             card,
             text=sub_txt,
-            font=ctk.CTkFont(size=11.5),
+            font=ctk.CTkFont(size=12),
             text_color="#94A3B8",
             wraplength=430,
             justify="left",
@@ -7132,14 +7157,6 @@ class GUIApp(ctk.CTk):
             font=ctk.CTkFont(family="Consolas", size=13, weight="bold"),
         )
         icao_entry.pack(side="left", fill="x", expand=True)
-
-        def _close_dlg():
-            self._ofp_modal_open = False
-            try:
-                if dlg.winfo_exists():
-                    dlg.destroy()
-            except Exception:
-                pass
 
         def _submit_icao(chosen_icao=""):
             raw_v = chosen_icao or icao_entry.get()
@@ -7219,8 +7236,419 @@ class GUIApp(ctk.CTk):
         btn_cancel.pack(side="right", padx=(6, 0))
 
         icao_entry.bind("<Return>", lambda e: _submit_icao(""))
-        dlg.protocol("WM_DELETE_WINDOW", _close_dlg)
+        dlg.bind("<Escape>", lambda e: _close_dlg())
         self.after(60, icao_entry.focus_set)
+
+    def _load_changelog_sections(self):
+        from legal_and_diagnostics import APP_VERSION
+
+        candidates = []
+        if getattr(sys, "frozen", False):
+            meipass_dir = getattr(sys, "_MEIPASS", "")
+            if meipass_dir:
+                candidates.append(os.path.join(meipass_dir, "CHANGELOG.md"))
+            candidates.append(os.path.join(os.path.dirname(sys.executable), "CHANGELOG.md"))
+        else:
+            repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            candidates.append(os.path.join(repo_root, "CHANGELOG.md"))
+            candidates.append(os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "CHANGELOG.md"))
+
+        raw_md = ""
+        fallback_md = ""
+        ver_needle = f"Version {APP_VERSION}"
+        for p in candidates:
+            if p and os.path.isfile(p):
+                try:
+                    with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                        txt = f.read()
+                    if not fallback_md and txt.strip():
+                        fallback_md = txt
+                    if ver_needle in txt:
+                        raw_md = txt
+                        break
+                except Exception:
+                    pass
+        if not raw_md:
+            raw_md = fallback_md
+
+        def _strip_icons(s):
+            s = re.sub(r"[\U00010000-\U0010ffff\u2600-\u27bf\ufe0f]+", "", str(s or ""))
+            return re.sub(r"[ \t]{2,}", " ", s).strip()
+
+        sections = []
+        cur_sec = None
+        for raw_line in (raw_md or "").splitlines():
+            stripped = raw_line.strip()
+            if not stripped or stripped == "---" or stripped.startswith("# "):
+                continue
+            if stripped.startswith("## "):
+                hdr_txt = _strip_icons(stripped[3:])
+                hdr_clean = re.sub(r"\s*\(Latest Release\)\s*", "", hdr_txt, flags=re.IGNORECASE).strip()
+                m_ver = re.search(r"(\d+\.\d+\.\d+)", hdr_clean)
+                cur_sec = {
+                    "version": m_ver.group(1) if m_ver else hdr_clean,
+                    "title": hdr_clean.upper(),
+                    "blocks": [],
+                }
+                sections.append(cur_sec)
+                continue
+            if cur_sec is None:
+                continue
+            if stripped.startswith("### "):
+                sub_txt = _strip_icons(stripped[4:])
+                if sub_txt:
+                    cur_sec["blocks"].append(("subhdr", sub_txt.upper()))
+                continue
+            m_b = re.match(r"^(\s*)-\s+(.*)$", raw_line)
+            if m_b:
+                indent_spaces = len(m_b.group(1).expandtabs(2))
+                b_txt = _strip_icons(m_b.group(2))
+                if b_txt:
+                    lvl = "bullet1" if indent_spaces >= 2 else "bullet0"
+                    cur_sec["blocks"].append((lvl, b_txt))
+            else:
+                p_txt = _strip_icons(stripped)
+                if p_txt:
+                    cur_sec["blocks"].append(("bullet1", p_txt))
+
+        if not sections:
+            sections.append({
+                "version": APP_VERSION,
+                "title": f"VERSION {APP_VERSION}",
+                "blocks": [("bullet0", f"GateFinder has been updated to V{APP_VERSION}.")],
+            })
+        return sections
+
+    def _maybe_show_changelog_popup(self):
+        from legal_and_diagnostics import APP_VERSION
+
+        if getattr(self, "_silent_hidden_mode", False) or self._is_cockpit_popup_suppressed():
+            return
+        seen_ver = str(self.config.settings.get("last_seen_changelog_version") or "").strip()
+        if seen_ver == APP_VERSION:
+            return
+        if getattr(self, "_changelog_modal_open", False):
+            return
+        if (
+            getattr(self, "_is_importing_ofp", False)
+            or getattr(self, "_startup_init_running", False)
+            or getattr(self, "_ofp_modal_open", False)
+            or self.state() == "withdrawn"
+        ):
+            cnt = int(getattr(self, "_changelog_defer_count", 0) or 0)
+            if cnt < 20 and not getattr(self, "_silent_hidden_mode", False):
+                self._changelog_defer_count = cnt + 1
+                self.after(800, self._maybe_show_changelog_popup)
+            return
+
+        self._changelog_defer_count = 0
+        self.open_changelog_modal(latest_only=True)
+
+    def open_changelog_modal(self, latest_only=True):
+        from legal_and_diagnostics import APP_VERSION
+
+        existing = getattr(self, "_changelog_modal_dlg", None)
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    existing.lift()
+                    existing.focus_force()
+                    return
+            except Exception:
+                pass
+
+        if str(self.config.settings.get("last_seen_changelog_version") or "").strip() != APP_VERSION:
+            self.config.settings["last_seen_changelog_version"] = APP_VERSION
+            try:
+                self.config.save()
+            except Exception:
+                pass
+
+        sections = self._load_changelog_sections()
+        cam = self._get_active_camaieu()
+        self._changelog_modal_open = True
+
+        dlg_w, dlg_h = 690, 510
+        dlg = ctk.CTkToplevel(self)
+        self._changelog_modal_dlg = dlg
+        self._apply_window_icon(dlg)
+        dlg.title(f"GateFinder V{APP_VERSION} - What's New")
+        dlg.geometry(f"{dlg_w}x{dlg_h}")
+        dlg.minsize(540, 380)
+        dlg.configure(fg_color="#0F172A")
+        dlg.transient(self)
+        dlg.grab_set()
+        self._center_toplevel(dlg, dlg_w, dlg_h)
+
+        def _close_changelog():
+            self._changelog_modal_open = False
+            self._changelog_modal_dlg = None
+            try:
+                if dlg.winfo_exists():
+                    dlg.destroy()
+            except Exception:
+                pass
+
+        dlg.protocol("WM_DELETE_WINDOW", _close_changelog)
+
+        card = ctk.CTkFrame(dlg, fg_color="#111827", corner_radius=10, border_width=0)
+        card.pack(fill="both", expand=True, padx=12, pady=12)
+
+        hdr_frame = ctk.CTkFrame(card, fg_color="transparent")
+        hdr_frame.pack(fill="x", padx=18, pady=(14, 8))
+
+        lbl_title = ctk.CTkLabel(
+            hdr_frame,
+            text=f"WHAT'S NEW IN GATEFINDER V{APP_VERSION}",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=cam["accent"],
+            anchor="w",
+        )
+        lbl_title.pack(fill="x")
+
+        lbl_sub = ctk.CTkLabel(
+            hdr_frame,
+            text="Summary of new features, improvements, and fixes included in this update.",
+            font=ctk.CTkFont(size=12),
+            text_color="#94A3B8",
+            anchor="w",
+        )
+        lbl_sub.pack(fill="x", pady=(2, 0))
+
+        ftr_row = ctk.CTkFrame(card, fg_color="transparent")
+        ftr_row.pack(side="bottom", fill="x", padx=18, pady=(8, 14))
+
+        body_box = ctk.CTkFrame(card, fg_color="#0B1120", corner_radius=8, border_width=0)
+        body_box.pack(fill="both", expand=True, padx=18, pady=(2, 4))
+
+        sb = ctk.CTkScrollbar(
+            body_box,
+            fg_color="transparent",
+            button_color="#283244",
+            button_hover_color="#3B4963",
+            width=12,
+        )
+        sb.pack(side="right", fill="y", padx=(0, 4), pady=6)
+
+        txt_w = tk.Text(
+            body_box,
+            bg="#0B1120",
+            fg="#CBD5E1",
+            bd=0,
+            highlightthickness=0,
+            wrap="word",
+            font=("Segoe UI", 10),
+            padx=16,
+            pady=12,
+            cursor="arrow",
+            selectbackground="#1E293B",
+            selectforeground="#F8FAFC",
+            yscrollcommand=sb.set,
+        )
+        txt_w.pack(side="left", fill="both", expand=True)
+        sb.configure(command=txt_w.yview)
+
+        txt_w.tag_configure(
+            "ver_hdr",
+            font=("Segoe UI", 12, "bold"),
+            foreground=cam["accent"],
+            spacing1=8,
+            spacing3=4,
+        )
+        txt_w.tag_configure(
+            "ver_hdr_first",
+            font=("Segoe UI", 12, "bold"),
+            foreground=cam["accent"],
+            spacing1=0,
+            spacing3=4,
+        )
+        txt_w.tag_configure(
+            "sub_hdr",
+            font=("Segoe UI", 9, "bold"),
+            foreground="#94A3B8",
+            spacing1=6,
+            spacing3=4,
+        )
+        txt_w.tag_configure(
+            "b0_dot",
+            font=("Segoe UI", 10, "bold"),
+            foreground=cam["accent"],
+            lmargin1=4,
+            lmargin2=18,
+            spacing1=5,
+            spacing2=2,
+            spacing3=2,
+        )
+        txt_w.tag_configure(
+            "b0_body",
+            font=("Segoe UI", 10),
+            foreground="#CBD5E1",
+            lmargin1=4,
+            lmargin2=18,
+            spacing1=5,
+            spacing2=2,
+            spacing3=2,
+        )
+        txt_w.tag_configure(
+            "b0_bold",
+            font=("Segoe UI", 10, "bold"),
+            foreground="#F8FAFC",
+            lmargin1=4,
+            lmargin2=18,
+            spacing1=5,
+            spacing2=2,
+            spacing3=2,
+        )
+        txt_w.tag_configure(
+            "b0_code",
+            font=("Consolas", 9, "bold"),
+            background="#162033",
+            foreground="#E2E8F0",
+            lmargin1=4,
+            lmargin2=18,
+            spacing1=5,
+            spacing2=2,
+            spacing3=2,
+        )
+        txt_w.tag_configure(
+            "b1_dot",
+            font=("Segoe UI", 10),
+            foreground="#64748B",
+            lmargin1=22,
+            lmargin2=36,
+            spacing1=2,
+            spacing2=2,
+            spacing3=2,
+        )
+        txt_w.tag_configure(
+            "b1_body",
+            font=("Segoe UI", 10),
+            foreground="#94A3B8",
+            lmargin1=22,
+            lmargin2=36,
+            spacing1=2,
+            spacing2=2,
+            spacing3=2,
+        )
+        txt_w.tag_configure(
+            "b1_bold",
+            font=("Segoe UI", 10, "bold"),
+            foreground="#E2E8F0",
+            lmargin1=22,
+            lmargin2=36,
+            spacing1=2,
+            spacing2=2,
+            spacing3=2,
+        )
+        txt_w.tag_configure(
+            "b1_code",
+            font=("Consolas", 9, "bold"),
+            background="#162033",
+            foreground="#E2E8F0",
+            lmargin1=22,
+            lmargin2=36,
+            spacing1=2,
+            spacing2=2,
+            spacing3=2,
+        )
+        txt_w.tag_configure("sep_line", font=("Segoe UI", 6), spacing1=4, spacing3=4)
+
+        token_re = re.compile(r"(\*\*`[^`]+`\*\*|`[^`]+`|\*\*[^*]+\*\*)")
+
+        def _insert_formatted_line(raw_s, prefix_tag):
+            clean_s = str(raw_s or "").replace(r"\*", "*")
+            pos = 0
+            for m in token_re.finditer(clean_s):
+                if m.start() > pos:
+                    txt_w.insert("end", clean_s[pos:m.start()], f"{prefix_tag}_body")
+                tok = m.group(0)
+                if tok.startswith("**`") and tok.endswith("`**"):
+                    txt_w.insert("end", f" {tok[3:-3]} ", f"{prefix_tag}_code")
+                elif tok.startswith("`") and tok.endswith("`"):
+                    txt_w.insert("end", f" {tok[1:-1]} ", f"{prefix_tag}_code")
+                elif tok.startswith("**") and tok.endswith("**"):
+                    txt_w.insert("end", tok[2:-2], f"{prefix_tag}_bold")
+                pos = m.end()
+            if pos < len(clean_s):
+                txt_w.insert("end", clean_s[pos:], f"{prefix_tag}_body")
+            txt_w.insert("end", "\n", f"{prefix_tag}_body")
+
+        mode_state = [bool(latest_only)]
+
+        def _populate_changelog():
+            show_latest = mode_state[0]
+            vis_sections = sections[:1] if show_latest else sections
+
+            if show_latest:
+                lbl_title.configure(text=f"WHAT'S NEW IN GATEFINDER V{APP_VERSION}")
+                lbl_sub.configure(text="Summary of new features, improvements, and fixes included in this update.")
+            else:
+                lbl_title.configure(text="GATEFINDER RELEASE CHANGELOG")
+                lbl_sub.configure(text="Complete version history across GateFinder updates.")
+
+            txt_w.configure(state="normal")
+            txt_w.delete("1.0", "end")
+
+            for idx_s, sec in enumerate(vis_sections):
+                if not show_latest or len(vis_sections) > 1:
+                    h_tag = "ver_hdr_first" if idx_s == 0 else "ver_hdr"
+                    if idx_s > 0:
+                        txt_w.insert("end", "\n", "sep_line")
+                    txt_w.insert("end", f"{sec['title']}\n", h_tag)
+                for b_kind, b_text in sec["blocks"]:
+                    if b_kind == "subhdr":
+                        txt_w.insert("end", f"{b_text}\n", "sub_hdr")
+                    elif b_kind == "bullet0":
+                        txt_w.insert("end", "•  ", "b0_dot")
+                        _insert_formatted_line(b_text, "b0")
+                    else:
+                        txt_w.insert("end", "–  ", "b1_dot")
+                        _insert_formatted_line(b_text, "b1")
+
+            txt_w.configure(state="disabled")
+            txt_w.yview_moveto(0.0)
+
+        if len(sections) > 1:
+            btn_toggle = ctk.CTkButton(
+                ftr_row,
+                text="Show All Versions" if mode_state[0] else "Latest Version Only",
+                width=158,
+                height=34,
+                corner_radius=7,
+                fg_color="#2B303B",
+                hover_color="#383E4C",
+                border_width=0,
+                text_color="#E2E8F0",
+                font=ctk.CTkFont(size=12, weight="bold"),
+            )
+
+            def _toggle_mode():
+                mode_state[0] = not mode_state[0]
+                btn_toggle.configure(text="Show All Versions" if mode_state[0] else "Latest Version Only")
+                _populate_changelog()
+
+            btn_toggle.configure(command=_toggle_mode)
+            btn_toggle.pack(side="left")
+
+        btn_close = ctk.CTkButton(
+            ftr_row,
+            text="Continue",
+            width=124,
+            height=34,
+            corner_radius=7,
+            fg_color="#0A86C2",
+            hover_color="#0A6E9E",
+            border_width=0,
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            command=_close_changelog,
+        )
+        btn_close.pack(side="right")
+
+        _populate_changelog()
+        dlg.bind("<Return>", lambda e: _close_changelog())
+        dlg.bind("<Escape>", lambda e: _close_changelog())
+        self.after(60, btn_close.focus_set)
 
     def change_arrival_airport_ui(self, target_icao, silent_bg=False):
         if getattr(self, "_is_importing_ofp", False):

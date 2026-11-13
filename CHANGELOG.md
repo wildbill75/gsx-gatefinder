@@ -9,10 +9,14 @@
   - Added a direct **`Set Arrival`** action button on the EFB/Panel startup screen when `Auto-fetch latest SimBrief OFP on startup` is disabled.
 - **`Auto-fetch latest SimBrief OFP on startup` Fix:**
   - Fixed all three paths (`GUIApp.__init__` session timestamp check, `show_main_view` Settings return check, and background SimConnect tarmac mismatch peeking) that could still fetch the last active SimBrief OFP when `Auto-fetch latest SimBrief OFP on startup` was turned off.
-- **Dead-End Taxiway Stub Pruning (`_prune_dangling_taxiway_stubs`):**
+- **Dead-End Taxiway Stub Pruning & Apron Loop-Free A\* Routing:**
   - Eliminated dangling dead-end OSM taxiway stubs and orphaned grass holding points worldwide (such as at `EGCC` and `EBBR`) via iterative topological leaf pruning while preserving parallel unnamed parking combs, apron exits, and stand connectors across all cached and newly generated charts.
+  - Prevented A\* taxi routing from detouring through drive-through stand parking bays as U-turn roundabouts, added topological loop/spur stripping (`_strip_route_loops`), and improved SayIntentions `taxi_path` projection along unnamed apron taxilanes so side-exit fillets (such as `C` at `LDDU`) are never falsely injected into the clearance.
+  - Added legacy **`GWI` (`Germanwings` / `4U`)** recognition with automatic sister-airline gate/terminal fallback onto **`EWG` (`Eurowings`)**.
 - **Dynamic Viewport-Clamped Runway QFU Pills & Enhanced Airline Badges:**
   - Runway threshold QFU badges now remain visible at all zoom levels, sliding smoothly along each runway centerline toward the screen border when zoomed in (both during pan and after mouse release) with crisp larger typography and refined thin cyan rims, alongside larger high-legibility airline logo badges at gate zoom levels.
+- **Automatic "What's New" Changelog Popup on Update:**
+  - Automatically displays a clean summary of new features and fixes once after each GateFinder version update (respecting Cockpit/VR popup suppression), with a **`Changelog`** button in Settings to review release notes at any time.
 
 ---
 

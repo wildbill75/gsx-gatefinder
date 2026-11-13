@@ -53,7 +53,7 @@
      - Click **Auto-Detect** next to **GSX Profile Path** (default: `%APPDATA%\Virtuali\GSX\MSFS`).
      - Verify your **Primary Community Folder** and/or **Secondary / MSFS 2024 Folder** (automatically detected from your MSFS `UserCfg.opt`).
 5. **Install the MSFS In-Game Panel / MSFS 2024 EFB / Fenix EFB**:
-   - Click **Install Panel**. GateFinder deploys the `gatefinder-ingame-panel` package (`GATEFINDER V2.0.7`) into your Community folder(s), enabling both the **MSFS Toolbar Panel**, the **native MSFS 2024 EFB App**, and (when enabled) the **Fenix A320 EFB App**.
+   - Click **Install Panel**. GateFinder deploys the `gatefinder-ingame-panel` package (`GATEFINDER V2.0.8`) into your Community folder(s), enabling both the **MSFS Toolbar Panel**, the **native MSFS 2024 EFB App**, and (when enabled) the **Fenix A320 EFB App**.
 6. **Return to Main View**:
    - Click **Back** in the top-right corner—all settings are saved automatically.
 

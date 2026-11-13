@@ -3353,11 +3353,14 @@ class TaxiRouter:
 
         twy_edges_by_norm = {}
         spatial_grid = {}
+        taxilane_only_nodes = set()
         for u_idx, (nlat, nlon) in enumerate(nodes):
             edges = adj.get(u_idx)
             if not edges:
                 continue
             is_rwy_only = all(e[4] == "runway" for e in edges)
+            if all(e[4] == "taxilane" for e in edges):
+                taxilane_only_nodes.add(u_idx)
             cell_k = (int(math.floor(nlat / 0.002)), int(math.floor(nlon / 0.002)))
             spatial_grid.setdefault(cell_k, []).append((u_idx, nlat, nlon, is_rwy_only))
             for v_idx, _, _, ref, etype in edges:
@@ -3365,6 +3368,22 @@ class TaxiRouter:
                     rn = re.sub(r'[\s_\-]+', '', str(ref)).upper()
                     if rn and not rn.startswith("RWY"):
                         twy_edges_by_norm.setdefault(rn, []).append((u_idx, v_idx, ref))
+
+        stand_bay_nodes = set()
+        if taxilane_only_nodes:
+            for st in (chart.get("stands") or ()):
+                slat = st.get("lat")
+                slon = st.get("lon")
+                if slat is None or slon is None:
+                    continue
+                r_st = int(math.floor(slat / 0.002))
+                c_st = int(math.floor(slon / 0.002))
+                for dr in (-1, 0, 1):
+                    for dc in (-1, 0, 1):
+                        for u_idx, nlat, nlon, _ in spatial_grid.get((r_st + dr, c_st + dc), ()):
+                            if u_idx in taxilane_only_nodes and abs(nlat - slat) <= 0.00016 and abs(nlon - slon) <= 0.00025:
+                                if haversine_m(slat, slon, nlat, nlon) <= 14.0:
+                                    stand_bay_nodes.add(u_idx)
 
         graph = {
             "nodes": nodes,
@@ -3374,6 +3393,7 @@ class TaxiRouter:
             "link_refs": link_refs,
             "twy_edges_by_norm": twy_edges_by_norm,
             "spatial_grid": spatial_grid,
+            "stand_bay_nodes": stand_bay_nodes,
             "_rwy_exit_refs_cache": {},
         }
         if icao:
@@ -3863,6 +3883,7 @@ class TaxiRouter:
         feeder_refs = graph.get("feeder_refs", set())
         collector_refs = graph.get("collector_refs", set())
         link_refs = graph.get("link_refs", set())
+        stand_bay_nodes = graph.get("stand_bay_nodes") or ()
         link_norms = {re.sub(r'[\s_\-]+', '', r).upper() for r in link_refs}
 
         via_set = {re.sub(r'[\s_\-]+', '', str(t)).upper() for t in (atc_taxi_via or []) if t}
@@ -3948,6 +3969,10 @@ class TaxiRouter:
                     if angle_diff_deg(out_bearing, goal_in_heading) > 65.0:
                         turn_penalty += 2500.0
 
+                if stand_bay_nodes and v in stand_bay_nodes:
+                    if haversine_m(vlat, vlon, slat, slon) > 62.0 and haversine_m(vlat, vlon, glat, glon) > 62.0:
+                        turn_penalty += 950.0
+
                 ref_u = (ref or "").upper()
                 last_ref_u = (last_ref or "").upper()
                 ref_norm = re.sub(r'[\s_\-]+', '', ref_u)
@@ -3991,6 +4016,35 @@ class TaxiRouter:
 
         return [], []
 
+    def _strip_route_loops(self, coords, edge_refs):
+        """
+        Eliminates any closed topological loop or out-and-back dead-end spur (P -> ... -> P)
+        where the route revisits the same node (within 3.5m) after >= 2 segments.
+        """
+        if not coords or len(coords) < 4 or len(edge_refs) != len(coords) - 1:
+            return coords, edge_refs
+        out_c = list(coords)
+        out_r = list(edge_refs)
+        changed = True
+        while changed and len(out_c) >= 4:
+            changed = False
+            n_pts = len(out_c)
+            for i in range(n_pts - 2):
+                la_i, lo_i = out_c[i]
+                found_j = None
+                for j in range(n_pts - 1, i + 1, -1):
+                    la_j, lo_j = out_c[j]
+                    if abs(la_i - la_j) <= 0.000035 and abs(lo_i - lo_j) <= 0.000055:
+                        if haversine_m(la_i, lo_i, la_j, lo_j) <= 3.5:
+                            found_j = j
+                            break
+                if found_j is not None:
+                    del out_c[i + 1:found_j + 1]
+                    del out_r[i:found_j]
+                    changed = True
+                    break
+        return out_c, out_r
+
     def _astar_path(self, graph, start_idx, goal_idx, allow_runway_start=False, goal_in_heading=None, start_out_heading=None, atc_taxi_via=None):
         coords, edge_refs = self._astar_single_leg(
             graph, start_idx, goal_idx,
@@ -3999,6 +4053,7 @@ class TaxiRouter:
             start_out_heading=start_out_heading,
             atc_taxi_via=atc_taxi_via
         )
+        coords, edge_refs = self._strip_route_loops(coords, edge_refs)
         if not atc_taxi_via or start_idx is None or goal_idx is None or start_idx == goal_idx:
             return coords, edge_refs
 
@@ -4168,6 +4223,7 @@ class TaxiRouter:
                 all_refs.extend(fin_refs)
 
         if len(all_coords) >= 2 and len(all_refs) == len(all_coords) - 1:
+            all_coords, all_refs = self._strip_route_loops(all_coords, all_refs)
             return all_coords, all_refs
         return coords, edge_refs
 
