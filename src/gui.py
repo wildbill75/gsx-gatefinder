@@ -29,6 +29,42 @@ def _compact_gate_label(raw_gate):
     s = re.sub(r'^([A-Za-z]+)\s+(\d+[A-Za-z]*)$', r'\1\2', s)
     return s
 
+
+def _get_tk_dpi_scale(widget) -> float:
+    """
+    Returns CustomTkinter's live Per-Monitor DPI widget scaling factor (>= 1.0)
+    so raw `tkinter` widgets (`Canvas`, `Toplevel`/`Label` tooltips, `Text` views)
+    render at the exact same physical scale on 125%–300% High-DPI / 4K displays
+    while remaining 1.0 on standard 100% displays.
+    """
+    try:
+        sc = float(ctk.ScalingTracker.get_widget_scaling(widget))
+        if sc > 0.0:
+            return max(1.0, sc)
+    except Exception:
+        pass
+    try:
+        top = widget.winfo_toplevel()
+        sc = float(ctk.ScalingTracker.get_window_scaling(top))
+        if sc > 0.0:
+            return max(1.0, sc)
+    except Exception:
+        pass
+    return 1.0
+
+
+def _tk_scaled_font(scale: float, family: str, pt_size: int, *styles):
+    """
+    Preserves exact point-based font tuples at 100% scaling (`scale == 1.0`) for zero
+    regression, and uses pixel-exact negative font sizes (`-px`) on scaled displays
+    (`125%`..`300%`) because CustomTkinter locks Tk's internal `tk scaling` to 96 DPI.
+    """
+    if abs(float(scale) - 1.0) <= 0.02:
+        return (family, int(pt_size), *styles) if styles else (family, int(pt_size))
+    px = max(8, int(round(float(pt_size) * (96.0 / 72.0) * float(scale))))
+    return (family, -px, *styles) if styles else (family, -px)
+
+
 class Tooltip:
     def __init__(self, widget, text):
         self.widget = widget
@@ -67,22 +103,71 @@ class Tooltip:
     def show_tip(self, event=None):
         if self.tip_window or not self.text:
             return
+        dpi_sc = _get_tk_dpi_scale(self.widget)
+        off_xy = int(round(15 * dpi_sc))
         if event:
-            x = event.x_root + 15
-            y = event.y_root + 15
+            x = event.x_root + off_xy
+            y = event.y_root + off_xy
         else:
-            x = self.widget.winfo_rootx() + 20
-            y = self.widget.winfo_rooty() + 25
+            x = self.widget.winfo_rootx() + int(round(20 * dpi_sc))
+            y = self.widget.winfo_rooty() + int(round(25 * dpi_sc))
 
         self.tip_window = tw = tkinter.Toplevel(self.widget)
         tw.wm_overrideredirect(True)
-        tw.wm_geometry(f"+{x}+{y}")
         label = tkinter.Label(
-            tw, text=self.text, justify="left", wraplength=440,
-            background="#1E293B", foreground="#F8FAFC", relief="flat", borderwidth=0,
-            font=("Segoe UI", 10), padx=12, pady=8
+            tw,
+            text=self.text,
+            justify="left",
+            wraplength=int(round(440 * dpi_sc)),
+            background="#1E293B",
+            foreground="#F8FAFC",
+            relief="flat",
+            borderwidth=0,
+            font=_tk_scaled_font(dpi_sc, "Segoe UI", 10),
+            padx=int(round(12 * dpi_sc)),
+            pady=int(round(8 * dpi_sc)),
         )
         label.pack(ipadx=1)
+        try:
+            tw.update_idletasks()
+            tw_w = tw.winfo_reqwidth()
+            tw_h = tw.winfo_reqheight()
+            import ctypes
+            from ctypes import wintypes
+
+            class _POINT(ctypes.Structure):
+                _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+            class _RECT(ctypes.Structure):
+                _fields_ = [
+                    ("left", ctypes.c_long),
+                    ("top", ctypes.c_long),
+                    ("right", ctypes.c_long),
+                    ("bottom", ctypes.c_long),
+                ]
+
+            class _MONITORINFO(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", wintypes.DWORD),
+                    ("rcMonitor", _RECT),
+                    ("rcWork", _RECT),
+                    ("dwFlags", wintypes.DWORD),
+                ]
+
+            u32 = ctypes.windll.user32
+            hmon = u32.MonitorFromPoint(_POINT(int(x), int(y)), 2)
+            if hmon:
+                mi = _MONITORINFO()
+                mi.cbSize = ctypes.sizeof(_MONITORINFO)
+                if u32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+                    pad_m = int(round(8 * dpi_sc))
+                    if x + tw_w > mi.rcWork.right - pad_m:
+                        x = max(mi.rcWork.left + pad_m, mi.rcWork.right - tw_w - pad_m)
+                    if y + tw_h > mi.rcWork.bottom - pad_m:
+                        y = max(mi.rcWork.top + pad_m, (event.y_root if event else y) - tw_h - off_xy)
+        except Exception:
+            pass
+        tw.wm_geometry(f"+{int(x)}+{int(y)}")
 
     def hide_tip(self, event=None):
         tw = self.tip_window
@@ -1728,6 +1813,7 @@ class SettingsView(ctk.CTkFrame):
                 for label_bold, body_txt in items:
                     full_len = len(label_bold or "") + len(body_txt or "")
                     est_lines = max(1, int((full_len + 86) // 82))
+                    rt_sc = _get_tk_dpi_scale(scroll_body)
                     rt = tk.Text(
                         scroll_body,
                         height=est_lines,
@@ -1736,17 +1822,17 @@ class SettingsView(ctk.CTkFrame):
                         bd=0,
                         highlightthickness=0,
                         wrap="word",
-                        font=("Segoe UI", 10),
-                        padx=8,
-                        pady=2,
+                        font=_tk_scaled_font(rt_sc, "Segoe UI", 10),
+                        padx=int(round(8 * rt_sc)),
+                        pady=int(round(2 * rt_sc)),
                         cursor="arrow",
-                        spacing1=2,
-                        spacing2=3,
-                        spacing3=2,
+                        spacing1=int(round(2 * rt_sc)),
+                        spacing2=int(round(3 * rt_sc)),
+                        spacing3=int(round(2 * rt_sc)),
                     )
-                    rt.tag_configure("bold_hdr", font=("Segoe UI", 10, "bold"), foreground="#F8FAFC")
-                    rt.tag_configure("body_txt", font=("Segoe UI", 10), foreground="#94A3B8")
-                    rt.tag_configure("code_pill", font=("Consolas", 9, "bold"), background="#161E2E", foreground="#E2E8F0")
+                    rt.tag_configure("bold_hdr", font=_tk_scaled_font(rt_sc, "Segoe UI", 10, "bold"), foreground="#F8FAFC")
+                    rt.tag_configure("body_txt", font=_tk_scaled_font(rt_sc, "Segoe UI", 10), foreground="#94A3B8")
+                    rt.tag_configure("code_pill", font=_tk_scaled_font(rt_sc, "Consolas", 9, "bold"), background="#161E2E", foreground="#E2E8F0")
                     if label_bold:
                         rt.insert("end", label_bold + " ", "bold_hdr")
                     if "GateFinder.exe" in body_txt:
@@ -2337,6 +2423,12 @@ class LidoVectorChart(ctk.CTkFrame):
         self._stable_ac_anchor = (flat, flon, fhdg)
         return u_ac
 
+    def _get_canvas_scale(self) -> float:
+        return _get_tk_dpi_scale(self)
+
+    def _cfont(self, family: str, pt_size: int, *styles):
+        return _tk_scaled_font(self._get_canvas_scale(), family, pt_size, *styles)
+
     def _compute_base_draw_sig(self):
         ap = self.airport_data or {}
         tr = ap.get("taxi_route") or {}
@@ -2373,6 +2465,7 @@ class LidoVectorChart(ctk.CTkFrame):
             round(float(self.center_lat), 7),
             round(float(self.center_lon), 7),
             round(float(self.meters_per_pixel), 4),
+            round(self._get_canvas_scale(), 2),
             getattr(self.backend, "logo_generation", 0) if self.backend else 0,
             self.canvas.winfo_width(),
             self.canvas.winfo_height(),
@@ -2444,6 +2537,7 @@ class LidoVectorChart(ctk.CTkFrame):
         heading-invariant radial distance curve to the active stopping point (Runway Hold-Short
         point on departure, Runway Exit on landing roll, or Assigned Stand on taxi-in).
         """
+        s_dpi = self._get_canvas_scale()
         pan_lat = float(getattr(self, "_follow_pan_lat_offset", 0.0) or 0.0)
         pan_lon = float(getattr(self, "_follow_pan_lon_offset", 0.0) or 0.0)
         user_zoom = getattr(self, "_follow_user_zoom_mpp", None)
@@ -2452,7 +2546,7 @@ class LidoVectorChart(ctk.CTkFrame):
             if self.airport_data and self.airport_data.get("lat") is not None:
                 self.center_lat = float(self.airport_data["lat"]) + pan_lat
                 self.center_lon = float(self.airport_data["lon"]) + pan_lon
-                self.meters_per_pixel = float(user_zoom) if user_zoom is not None else 0.85
+                self.meters_per_pixel = float(user_zoom) if user_zoom is not None else (0.85 / s_dpi)
             return
 
         ac_lat = float(self.user_aircraft["lat"])
@@ -2512,7 +2606,7 @@ class LidoVectorChart(ctk.CTkFrame):
                     tgt_lon = float(r_pts[-1][1])
 
         if tgt_lat is None or tgt_lon is None:
-            self.meters_per_pixel = 0.85
+            self.meters_per_pixel = 0.85 / s_dpi
             return
 
         tgt_lat = float(tgt_lat)
@@ -2523,21 +2617,21 @@ class LidoVectorChart(ctk.CTkFrame):
         dist_m = math.hypot(dx_m, dy_m)
 
         if dist_m > 12000.0:
-            self.meters_per_pixel = 0.85
+            self.meters_per_pixel = 0.85 / s_dpi
             return
 
         # Heading-invariant radial Smart Zoom:
         # Uses min(w, h) so turning the aircraft 90°/180° never causes zoom pumping,
-        # and caps max mpp at 2.65 m/px (below the 3.2 m/px LOD threshold) so stands,
+        # and caps logical mpp at 2.65 m/px (below the 3.2 m/px LOD threshold) so stands,
         # hold-short bars, and taxiway labels remain 100% visible while progressively
         # zooming in down to 0.50 m/px as the aircraft approaches the stopping point.
-        w = max(self.canvas.winfo_width(), 540)
-        h = max(self.canvas.winfo_height(), 420)
+        w = max(self.canvas.winfo_width(), int(round(540 * s_dpi)))
+        h = max(self.canvas.winfo_height(), int(round(420 * s_dpi)))
         eff_dist_m = dist_m if dist_m <= 500.0 else (500.0 + (dist_m - 500.0) * 0.35)
-        radius_px = max(150.0, min(w, h) * 0.40)
-        target_mpp = max(0.50, min(2.65, eff_dist_m / radius_px))
+        radius_px = max(150.0 * s_dpi, min(w, h) * 0.40)
+        target_mpp = max(0.50 / s_dpi, min(2.65 / s_dpi, eff_dist_m / radius_px))
 
-        if snap or self.meters_per_pixel <= 0.0 or abs(self.meters_per_pixel - target_mpp) < 0.003:
+        if snap or self.meters_per_pixel <= 0.0 or abs(self.meters_per_pixel - target_mpp) < (0.003 / s_dpi):
             self.meters_per_pixel = target_mpp
         else:
             self.meters_per_pixel = (0.76 * self.meters_per_pixel) + (0.24 * target_mpp)
@@ -2633,6 +2727,7 @@ class LidoVectorChart(ctk.CTkFrame):
                 self.redraw()
 
     def fit_terminal_view(self):
+        s_dpi = self._get_canvas_scale()
         self.view_mode = "terminal"
         self.follow_aircraft = False
         self.heading_up = False
@@ -2645,14 +2740,15 @@ class LidoVectorChart(ctk.CTkFrame):
         if glat is not None and glon is not None:
             self.center_lat = float(glat)
             self.center_lon = float(glon)
-            self.meters_per_pixel = 1.15
+            self.meters_per_pixel = 1.15 / s_dpi
         elif self.chart_data:
             self.center_lat = self.chart_data.get("center_lat", 0.0)
             self.center_lon = self.chart_data.get("center_lon", 0.0)
-            self.meters_per_pixel = 2.5
+            self.meters_per_pixel = 2.5 / s_dpi
         self.redraw()
 
     def fit_route_view(self):
+        s_dpi = self._get_canvas_scale()
         self.view_mode = "route"
         self.follow_aircraft = False
         self.heading_up = False
@@ -2684,23 +2780,26 @@ class LidoVectorChart(ctk.CTkFrame):
             max_lon = max(p[1] for p in pts)
             self.center_lat = (min_lat + max_lat) / 2.0
             self.center_lon = (min_lon + max_lon) / 2.0
-            w = max(self.canvas.winfo_width(), 780)
-            h = max(self.canvas.winfo_height(), 520)
+            w = max(self.canvas.winfo_width(), int(round(780 * s_dpi)))
+            h = max(self.canvas.winfo_height(), int(round(520 * s_dpi)))
             span_y_m = max(450.0, (max_lat - min_lat) * 111320.0 * 1.26)
             span_x_m = max(450.0, (max_lon - min_lon) * 111320.0 * max(0.2, math.cos(math.radians(self.center_lat))) * 1.26)
-            self.meters_per_pixel = max(span_x_m / max(200, w - 64), span_y_m / max(200, h - 64), 0.9)
+            pad_px = 64.0 * s_dpi
+            min_box_px = 200.0 * s_dpi
+            self.meters_per_pixel = max(span_x_m / max(min_box_px, w - pad_px), span_y_m / max(min_box_px, h - pad_px), 0.9 / s_dpi)
         elif len(pts) == 1:
             self.center_lat, self.center_lon = pts[0]
-            self.meters_per_pixel = 1.8
+            self.meters_per_pixel = 1.8 / s_dpi
         elif self.chart_data:
             self.center_lat = self.chart_data.get("center_lat", 0.0)
             self.center_lon = self.chart_data.get("center_lon", 0.0)
-            self.meters_per_pixel = 3.8
+            self.meters_per_pixel = 3.8 / s_dpi
         self.redraw()
 
     def zoom_by(self, factor):
+        s_dpi = self._get_canvas_scale()
         self._close_stand_context_modal()
-        self.meters_per_pixel = max(0.22, min(25.0, self.meters_per_pixel * factor))
+        self.meters_per_pixel = max(0.22 / s_dpi, min(25.0 / s_dpi, self.meters_per_pixel * factor))
         if self.follow_aircraft:
             self._follow_user_zoom_mpp = self.meters_per_pixel
         self._update_theme_buttons()
@@ -2757,9 +2856,10 @@ class LidoVectorChart(ctk.CTkFrame):
     def _adapt_header_bar_layout(self, width_px):
         if not hasattr(self, "btn_updater") or not self.btn_updater.winfo_exists():
             return
-        if width_px >= 990:
+        logical_w = float(width_px) / self._get_canvas_scale()
+        if logical_w >= 990:
             mode = "full"
-        elif width_px >= 860:
+        elif logical_w >= 860:
             mode = "compact"
         else:
             mode = "hidden"
@@ -2818,32 +2918,22 @@ class LidoVectorChart(ctk.CTkFrame):
                 self.redraw()
 
     def _draw_drag_cursor(self, hx, hy):
+        s = self._get_canvas_scale()
+        r_ov = 15.0 * s
         self.canvas.delete("drag_cursor")
         self.canvas.create_oval(
-            hx - 15, hy - 15, hx + 15, hy + 15,
-            fill="#0F172A", outline="#38BDF8", width=2, tags=("drag_cursor",)
+            hx - r_ov, hy - r_ov, hx + r_ov, hy + r_ov,
+            fill="#0F172A", outline="#38BDF8", width=2.0 * s, tags=("drag_cursor",)
         )
-        hand_pts = [
-            hx - 5, hy + 2,
-            hx - 7, hy - 2,
-            hx - 5, hy - 4,
-            hx - 4, hy - 1,
-            hx - 4, hy - 8,
-            hx - 1, hy - 8,
-            hx - 1, hy - 1,
-            hx - 1, hy - 9,
-            hx + 2, hy - 9,
-            hx + 2, hy - 1,
-            hx + 2, hy - 8,
-            hx + 5, hy - 8,
-            hx + 5, hy - 1,
-            hx + 5, hy - 6,
-            hx + 8, hy - 6,
-            hx + 8, hy + 3,
-            hx + 5, hy + 8,
-            hx - 2, hy + 8
-        ]
-        self.canvas.create_polygon(hand_pts, fill="#F8FAFC", outline="#0F172A", width=1, tags=("drag_cursor",))
+        raw_hand = (
+            (-5, 2), (-7, -2), (-5, -4), (-4, -1), (-4, -8), (-1, -8),
+            (-1, -1), (-1, -9), (2, -9), (2, -1), (2, -8), (5, -8),
+            (5, -1), (5, -6), (8, -6), (8, 3), (5, 8), (-2, 8)
+        )
+        hand_pts = []
+        for ox, oy in raw_hand:
+            hand_pts.extend((hx + ox * s, hy + oy * s))
+        self.canvas.create_polygon(hand_pts, fill="#F8FAFC", outline="#0F172A", width=max(1.0, s), tags=("drag_cursor",))
 
     def _on_drag_start(self, event):
         self._drag_start = (event.x, event.y)
@@ -2860,7 +2950,8 @@ class LidoVectorChart(ctk.CTkFrame):
     def _on_drag_motion(self, event):
         if not self._drag_start:
             return
-        if self._click_origin and math.hypot(event.x - self._click_origin[0], event.y - self._click_origin[1]) > 5.0:
+        s_dpi = self._get_canvas_scale()
+        if self._click_origin and math.hypot(event.x - self._click_origin[0], event.y - self._click_origin[1]) > (5.0 * s_dpi):
             self._did_drag = True
             self._close_stand_context_modal()
         dx = event.x - self._drag_start[0]
@@ -2892,7 +2983,7 @@ class LidoVectorChart(ctk.CTkFrame):
 
         self._pan_accum_px = float(getattr(self, "_pan_accum_px", 0.0) or 0.0) + math.hypot(dx, dy)
         now_p = time.perf_counter()
-        if self._pan_accum_px >= 145.0 and (now_p - float(getattr(self, "_last_drag_redraw_ts", 0.0))) >= 0.065:
+        if self._pan_accum_px >= (145.0 * s_dpi) and (now_p - float(getattr(self, "_last_drag_redraw_ts", 0.0))) >= 0.065:
             self._pan_accum_px = 0.0
             self._last_drag_redraw_ts = now_p
             self.redraw()
@@ -2936,11 +3027,14 @@ class LidoVectorChart(ctk.CTkFrame):
         self.canvas.delete("drag_cursor")
         self.canvas.configure(cursor="arrow")
         if not was_drag:
+            s_dpi = self._get_canvas_scale()
+            rwy_pad = 4.0 * s_dpi
+            st_pad = 5.0 * s_dpi
             mx, my = event.x, event.y
             if self.on_runway_click and self._rwy_hitboxes:
                 for rhb in reversed(self._rwy_hitboxes):
                     rx0, ry0, rx1, ry1, end_id, is_act = rhb
-                    if (rx0 - 4) <= mx <= (rx1 + 4) and (ry0 - 4) <= my <= (ry1 + 4):
+                    if (rx0 - rwy_pad) <= mx <= (rx1 + rwy_pad) and (ry0 - rwy_pad) <= my <= (ry1 + rwy_pad):
                         self._close_stand_context_modal()
                         if not is_act and end_id:
                             self.on_runway_click(end_id)
@@ -2954,7 +3048,7 @@ class LidoVectorChart(ctk.CTkFrame):
                         self.canvas.delete("stand_hover_tooltip")
                         self.on_taxiway_click(twy_ref)
                         return
-            hb = self._pick_stand_hitbox_at(mx, my, pad=5.0)
+            hb = self._pick_stand_hitbox_at(mx, my, pad=st_pad)
             if hb is not None:
                 self.canvas.delete("stand_hover_tooltip")
                 self._open_stand_context_modal(hb)
@@ -2964,7 +3058,7 @@ class LidoVectorChart(ctk.CTkFrame):
 
     def _on_right_click(self, event):
         mx, my = event.x, event.y
-        hb = self._pick_stand_hitbox_at(mx, my, pad=5.0)
+        hb = self._pick_stand_hitbox_at(mx, my, pad=5.0 * self._get_canvas_scale())
         if hb is not None:
             self.canvas.delete("stand_hover_tooltip")
             self._open_stand_context_modal(hb)
@@ -3050,18 +3144,22 @@ class LidoVectorChart(ctk.CTkFrame):
             btn_sel.pack(fill="x", padx=12, pady=(0, 10))
 
         card.update_idletasks()
-        cw = max(215, card.winfo_reqwidth())
-        ch = max(78, card.winfo_reqheight())
-        w_can = max(self.canvas.winfo_width(), 400)
-        h_can = max(self.canvas.winfo_height(), 320)
+        s_dpi = self._get_canvas_scale()
+        cw = max(int(round(215 * s_dpi)), card.winfo_reqwidth())
+        ch = max(int(round(78 * s_dpi)), card.winfo_reqheight())
+        w_can = max(self.canvas.winfo_width(), int(round(400 * s_dpi)))
+        h_can = max(self.canvas.winfo_height(), int(round(320 * s_dpi)))
+        margin_px = int(round(10 * s_dpi))
 
         px = int(cx - (cw / 2.0))
-        py = int(y0 - ch - 10)
-        if py < 10:
-            py = int(y1 + 10)
-        px = max(10, min(w_can - cw - 10, px))
-        py = max(10, min(h_can - ch - 10, py))
-        card.place(x=px, y=py)
+        py = int(y0 - ch - margin_px)
+        if py < margin_px:
+            py = int(y1 + margin_px)
+        px = max(margin_px, min(w_can - cw - margin_px, px))
+        py = max(margin_px, min(h_can - ch - margin_px, py))
+        # Note: CTkFrame.place() multiplies `x` and `y` by `_apply_argument_scaling` (`s_dpi`),
+        # whereas canvas coordinates `(px, py)` are already in physical pixels.
+        card.place(x=int(round(px / s_dpi)), y=int(round(py / s_dpi)))
 
     def _hide_gate_toast(self, event=None):
         after_id = getattr(self, "_gate_toast_after_id", None)
@@ -3096,7 +3194,7 @@ class LidoVectorChart(ctk.CTkFrame):
             except Exception:
                 pass
 
-        txt = str(toast_info.get("text") or toast_info.get("message") or toast_info.get("title") or "GSX Pro Armed").strip()
+        txt = str(toast_info.get("text") or toast_info.get("message") or toast_info.get("title") or "Gate Active").strip()
         pill_txt = f"   {txt}   "
         canvas_bg = self._get_palette().get("bg", "#2B353E")
 
@@ -3158,11 +3256,13 @@ class LidoVectorChart(ctk.CTkFrame):
     def _on_mouse_motion(self, event):
         if self._drag_start:
             return
+        s_dpi = self._get_canvas_scale()
+        pad_3 = 3.0 * s_dpi
         mx, my = event.x, event.y
         hit = None
         for rhb in reversed(self._rwy_hitboxes):
             rx0, ry0, rx1, ry1, end_id, is_act = rhb
-            if (rx0 - 3) <= mx <= (rx1 + 3) and (ry0 - 3) <= my <= (ry1 + 3):
+            if (rx0 - pad_3) <= mx <= (rx1 + pad_3) and (ry0 - pad_3) <= my <= (ry1 + pad_3):
                 hit = ("rwy", rx0, ry0, rx1, ry1, end_id, is_act)
                 break
         if hit is None:
@@ -3172,7 +3272,7 @@ class LidoVectorChart(ctk.CTkFrame):
                     hit = ("twy", tx0, ty0, tx1, ty1, twy_ref, is_sel_twy, sel_ord)
                     break
         if hit is None:
-            hit = self._pick_stand_hitbox_at(mx, my, pad=3.0)
+            hit = self._pick_stand_hitbox_at(mx, my, pad=pad_3)
         if hit != self._hovered_stand_info:
             self._hovered_stand_info = hit
             if hit is not None:
@@ -3186,6 +3286,7 @@ class LidoVectorChart(ctk.CTkFrame):
         self.canvas.delete("stand_hover_tooltip")
         if not self._hovered_stand_info or self._drag_start:
             return
+        s = self._get_canvas_scale()
         if self._hovered_stand_info[0] == "rwy":
             _, x0, y0, x1, y1, end_id, is_assigned = self._hovered_stand_info
             cx = (x0 + x1) / 2.0
@@ -3219,28 +3320,30 @@ class LidoVectorChart(ctk.CTkFrame):
                     al_names.append(str(al_c))
             al_line = "  ".join(al_names) if al_names else "General Commercial Stand"
 
-        w_can = max(self.canvas.winfo_width(), 400)
-        h_can = max(self.canvas.winfo_height(), 320)
-        box_w = max(190, len(hdr_line) * 6.8 + 28, len(al_line) * 7.6 + 28)
-        box_h = 46
+        w_can = max(self.canvas.winfo_width(), int(round(400 * s)))
+        h_can = max(self.canvas.winfo_height(), int(round(320 * s)))
+        box_w = max(190.0, len(hdr_line) * 6.8 + 28.0, len(al_line) * 7.6 + 28.0) * s
+        box_h = 46.0 * s
+        gap_y = 9.0 * s
+        edge_pad = 8.0 * s
         tx0 = cx - (box_w / 2.0)
         tx1 = cx + (box_w / 2.0)
-        ty1 = y0 - 9
+        ty1 = y0 - gap_y
         ty0 = ty1 - box_h
-        if ty0 < 44:
-            ty0 = y1 + 9
+        if ty0 < (44.0 * s):
+            ty0 = y1 + gap_y
             ty1 = ty0 + box_h
-        if tx0 < 8:
-            tx1 += (8 - tx0)
-            tx0 = 8
-        if tx1 > w_can - 8:
-            tx0 -= (tx1 - (w_can - 8))
-            tx1 = w_can - 8
+        if tx0 < edge_pad:
+            tx1 += (edge_pad - tx0)
+            tx0 = edge_pad
+        if tx1 > w_can - edge_pad:
+            tx0 -= (tx1 - (w_can - edge_pad))
+            tx1 = w_can - edge_pad
         tcx = (tx0 + tx1) / 2.0
         cam = self._get_airline_camaieu()
         hdr_col = cam["accent"] if is_assigned else "#38BDF8"
         self.canvas.create_rectangle(
-            tx0 + 2, ty0 + 3, tx1 + 2, ty1 + 3,
+            tx0 + 2.0 * s, ty0 + 3.0 * s, tx1 + 2.0 * s, ty1 + 3.0 * s,
             fill="#020617", outline="", tags="stand_hover_tooltip"
         )
         self.canvas.create_rectangle(
@@ -3248,13 +3351,13 @@ class LidoVectorChart(ctk.CTkFrame):
             fill="#0F172A", outline="", tags="stand_hover_tooltip"
         )
         self.canvas.create_text(
-            tcx, ty0 + 14,
-            text=hdr_line, fill=hdr_col, font=("Consolas", 9, "bold"),
+            tcx, ty0 + 14.0 * s,
+            text=hdr_line, fill=hdr_col, font=self._cfont("Consolas", 9, "bold"),
             tags="stand_hover_tooltip"
         )
         self.canvas.create_text(
-            tcx, ty0 + 32,
-            text=al_line, fill="#FFFFFF", font=("Arial", 10, "bold"),
+            tcx, ty0 + 32.0 * s,
+            text=al_line, fill="#FFFFFF", font=self._cfont("Arial", 10, "bold"),
             tags="stand_hover_tooltip"
         )
 
@@ -3308,7 +3411,8 @@ class LidoVectorChart(ctk.CTkFrame):
             def _proj(lat, lon):
                 return half_w + (lon - c_lon) * scale_x, half_h - (lat - c_lat) * scale_y
 
-        max_rad_px = math.hypot(half_w + 90.0, half_h + 90.0)
+        frust_pad = 90.0 * self._get_canvas_scale()
+        max_rad_px = math.hypot(half_w + frust_pad, half_h + frust_pad)
         vis_dlat = max_rad_px / scale_y
         vis_dlon = max_rad_px / scale_x
         frustum = (c_lat - vis_dlat, c_lat + vis_dlat, c_lon - vis_dlon, c_lon + vis_dlon)
@@ -3524,17 +3628,20 @@ class LidoVectorChart(ctk.CTkFrame):
         return (cur_base_sig, tail_pts_t, ro_pts_t)
 
     def _draw_route_arrows_on_pts(self, pts_xy, pal, arrow_tags):
+        s = self._get_canvas_scale()
+        step_px = 70.0 * s
+        min_seg_px = 4.0 * s
+        sz = 6.0 * s
         accum = 0.0
         for i in range(len(pts_xy) - 1):
             x1, y1 = pts_xy[i]
             x2, y2 = pts_xy[i + 1]
             seg = math.hypot(x2 - x1, y2 - y1)
             accum += seg
-            if accum >= 70.0 and seg > 4.0:
+            if accum >= step_px and seg > min_seg_px:
                 accum = 0.0
                 mx, my = (x1 + x2) * 0.5, (y1 + y2) * 0.5
                 ang = math.atan2(y2 - y1, x2 - x1)
-                sz = 6.0
                 p_tip = (mx + sz * math.cos(ang), my + sz * math.sin(ang))
                 p_l = (mx + sz * math.cos(ang + 2.4), my + sz * math.sin(ang + 2.4))
                 p_r = (mx + sz * math.cos(ang - 2.4), my + sz * math.sin(ang - 2.4))
@@ -3546,13 +3653,16 @@ class LidoVectorChart(ctk.CTkFrame):
     def _draw_route_head(self, _proj, pal, head_pts):
         if len(head_pts) < 2:
             return []
+        s = self._get_canvas_scale()
+        lmpp = max(0.05, self.meters_per_pixel * s)
         p0 = _proj(head_pts[0][0], head_pts[0][1])
         p1 = _proj(head_pts[1][0], head_pts[1][1])
         head_xy = [p0, p1]
         head_flat = [p0[0], p0[1], p1[0], p1[1]]
-        route_w = max(5.0, min(11.0, 14.0 / self.meters_per_pixel))
+        route_w = max(5.0, min(11.0, 14.0 / lmpp)) * s
+        glow_extra = 4.0 * s
         self.canvas.create_line(
-            head_flat, fill=pal["route_glow"], width=route_w + 4.0,
+            head_flat, fill=pal["route_glow"], width=route_w + glow_extra,
             capstyle="round", joinstyle="round",
             tags=("dyn_route", "dyn_route_head", "dyn_route_head_glow", "map_pan")
         )
@@ -3568,6 +3678,8 @@ class LidoVectorChart(ctk.CTkFrame):
         return head_xy
 
     def _draw_route_layer(self, _proj, pal):
+        s = self._get_canvas_scale()
+        lmpp = max(0.05, self.meters_per_pixel * s)
         tr = (self.airport_data.get("taxi_route") or {}) if self.airport_data else {}
         rollout_pts = tr.get("rollout_points", [])
         route_pts = tr.get("route_points", [])
@@ -3577,7 +3689,8 @@ class LidoVectorChart(ctk.CTkFrame):
             for p in route_pts:
                 xy_pts.append(_proj(p[0], p[1]))
 
-            route_w = max(5.0, min(11.0, 14.0 / self.meters_per_pixel))
+            route_w = max(5.0, min(11.0, 14.0 / lmpp)) * s
+            glow_extra = 4.0 * s
             head_xy = xy_pts[0:2]
             tail_xy = xy_pts[1:] if len(xy_pts) >= 3 else []
             head_flat = [head_xy[0][0], head_xy[0][1], head_xy[1][0], head_xy[1][1]]
@@ -3588,12 +3701,12 @@ class LidoVectorChart(ctk.CTkFrame):
             # 1. Glow strokes (tail + head)
             if len(tail_xy) >= 2:
                 self.canvas.create_line(
-                    tail_flat, fill=pal["route_glow"], width=route_w + 4.0,
+                    tail_flat, fill=pal["route_glow"], width=route_w + glow_extra,
                     capstyle="round", joinstyle="round",
                     tags=("dyn_route", "dyn_route_tail", "map_pan")
                 )
             self.canvas.create_line(
-                head_flat, fill=pal["route_glow"], width=route_w + 4.0,
+                head_flat, fill=pal["route_glow"], width=route_w + glow_extra,
                 capstyle="round", joinstyle="round",
                 tags=("dyn_route", "dyn_route_head", "dyn_route_head_glow", "map_pan")
             )
@@ -3628,7 +3741,8 @@ class LidoVectorChart(ctk.CTkFrame):
                 rx, ry = _proj(p[0], p[1])
                 r_flat.extend((rx, ry))
             self.canvas.create_line(
-                r_flat, fill=pal["rollout"], width=3.5, dash=(10, 6),
+                r_flat, fill=pal["rollout"], width=3.5 * s,
+                dash=(max(2, int(round(10 * s))), max(2, int(round(6 * s)))),
                 capstyle="round",
                 tags=("dyn_route", "dyn_route_tail", "dyn_route_over_main", "map_pan")
             )
@@ -3637,15 +3751,20 @@ class LidoVectorChart(ctk.CTkFrame):
 
     def _draw_aircraft_layer(self, _proj, w, h, use_hdg_up):
         if not self._is_airborne() and self.user_aircraft and self.user_aircraft.get("connected") and self.user_aircraft.get("lat") is not None:
+            s = self._get_canvas_scale()
+            pad_vis = 100.0 * s
             ulat = self.user_aircraft["lat"]
             ulon = self.user_aircraft["lon"]
             uhdg = float(self.user_aircraft.get("heading") or 0.0)
             ax, ay = _proj(ulat, ulon)
-            if -100 <= ax <= w + 100 and -100 <= ay <= h + 100:
+            if -pad_vis <= ax <= w + pad_vis and -pad_vis <= ay <= h + pad_vis:
+                r_ring = 18.0 * s
                 # GPS pulse ring
                 self.canvas.create_oval(
-                    ax - 18, ay - 18, ax + 18, ay + 18,
-                    outline="#38BDF8", width=2, dash=(4, 3), tags=("dyn_aircraft", "map_pan")
+                    ax - r_ring, ay - r_ring, ax + r_ring, ay + r_ring,
+                    outline="#38BDF8", width=2.0 * s,
+                    dash=(max(2, int(round(4 * s))), max(2, int(round(3 * s)))),
+                    tags=("dyn_aircraft", "map_pan")
                 )
                 # Swept-wing jet silhouette rotated by true heading (or pointing straight up in Follow + Hdg Up mode)
                 vis_hdg = 0.0 if use_hdg_up else uhdg
@@ -3654,7 +3773,9 @@ class LidoVectorChart(ctk.CTkFrame):
                 s_r = math.sin(rad)
 
                 def rot(px, py):
-                    return ax + px * c_r - py * s_r, ay + px * s_r + py * c_r
+                    px_s = px * s
+                    py_s = py * s
+                    return ax + px_s * c_r - py_s * s_r, ay + px_s * s_r + py_s * c_r
 
                 jet_shape = [
                     rot(14, 0),    # Nose
@@ -3703,11 +3824,19 @@ class LidoVectorChart(ctk.CTkFrame):
     def _compute_runway_pill_badges(self, _proj, w, h):
         if not self.chart_data:
             return []
+        s = self._get_canvas_scale()
         active_rwy = (self.airport_data.get("selected_runway") or "").upper() if self.airport_data else ""
-        bx0 = 26.0
-        bx1 = max(27.0, w - 26.0)
-        by0 = 26.0
-        by1 = max(27.0, h - 26.0)
+        pad_b = 26.0 * s
+        bx0 = pad_b
+        bx1 = max(pad_b + 1.0, w - pad_b)
+        by0 = pad_b
+        by1 = max(pad_b + 1.0, h - pad_b)
+        vis_pad = 12.0 * s
+        leg_x = 236.0 * s
+        leg_y = 46.0 * s
+        leg_clip_y = 48.0 * s
+        min_sep_px = 42.0 * s
+        half_sep_px = 20.0 * s
         badges = []
 
         for rwy in self.chart_data.get("runways", []):
@@ -3719,7 +3848,7 @@ class LidoVectorChart(ctk.CTkFrame):
             p1_ll = pts[-1]
             x0, y0 = _proj(p0_ll[0], p0_ll[1])
             x1, y1 = _proj(p1_ll[0], p1_ll[1])
-            vis_clip = self._clip_segment_rect(x0, y0, x1, y1, -12.0, -12.0, w + 12.0, h + 12.0)
+            vis_clip = self._clip_segment_rect(x0, y0, x1, y1, -vis_pad, -vis_pad, w + vis_pad, h + vis_pad)
             if vis_clip is None:
                 continue
             dx = x1 - x0
@@ -3727,13 +3856,13 @@ class LidoVectorChart(ctk.CTkFrame):
             safe_clip = self._clip_segment_rect(x0, y0, x1, y1, bx0, by0, bx1, by1)
             if safe_clip is not None:
                 t0, t1 = safe_clip
-                if h > 96.0:
+                if h > (96.0 * s):
                     px0_t, py0_t = x0 + t0 * dx, y0 + t0 * dy
                     px1_t, py1_t = x0 + t1 * dx, y0 + t1 * dy
-                    in_leg0 = (px0_t > w - 236.0 and py0_t > h - 46.0)
-                    in_leg1 = (px1_t > w - 236.0 and py1_t > h - 46.0)
+                    in_leg0 = (px0_t > w - leg_x and py0_t > h - leg_y)
+                    in_leg1 = (px1_t > w - leg_x and py1_t > h - leg_y)
                     if in_leg0 or in_leg1:
-                        alt_clip = self._clip_segment_rect(x0, y0, x1, y1, bx0, by0, bx1, h - 48.0)
+                        alt_clip = self._clip_segment_rect(x0, y0, x1, y1, bx0, by0, bx1, h - leg_clip_y)
                         if alt_clip is not None:
                             if in_leg0:
                                 t0 = alt_clip[0]
@@ -3771,7 +3900,7 @@ class LidoVectorChart(ctk.CTkFrame):
 
             if start_slot is not None and end_slot is not None:
                 sep_px = math.hypot(pe[0] - ps[0], pe[1] - ps[1])
-                if sep_px < 42.0:
+                if sep_px < min_sep_px:
                     if t0 <= 1e-4 and t1 >= 1.0 - 1e-4:
                         seg_l = math.hypot(dx, dy)
                         if seg_l > 1e-3:
@@ -3780,8 +3909,8 @@ class LidoVectorChart(ctk.CTkFrame):
                             ux_s, uy_s = 1.0, 0.0
                         mx_s = 0.5 * (ps[0] + pe[0])
                         my_s = 0.5 * (ps[1] + pe[1])
-                        ps = (max(bx0, min(bx1, mx_s - ux_s * 20.0)), max(by0, min(by1, my_s - uy_s * 20.0)))
-                        pe = (max(bx0, min(bx1, mx_s + ux_s * 20.0)), max(by0, min(by1, my_s + uy_s * 20.0)))
+                        ps = (max(bx0, min(bx1, mx_s - ux_s * half_sep_px)), max(by0, min(by1, my_s - uy_s * half_sep_px)))
+                        pe = (max(bx0, min(bx1, mx_s + ux_s * half_sep_px)), max(by0, min(by1, my_s + uy_s * half_sep_px)))
                         badges.append((ps[0], ps[1], start_slot[0], start_slot[1], start_slot[2]))
                         badges.append((pe[0], pe[1], end_slot[0], end_slot[1], end_slot[2]))
                     else:
@@ -3804,21 +3933,24 @@ class LidoVectorChart(ctk.CTkFrame):
         self._rwy_hitboxes = []
         if not self.chart_data:
             return
+        s = self._get_canvas_scale()
+        pill_font = self._cfont("Arial", 11, "bold")
         pill_tags = ("rwy_pills",)
         badges = precomputed_badges if precomputed_badges is not None else self._compute_runway_pill_badges(_proj, w, h)
 
         for ex, ey, end_id, is_act, rwy_hdg in badges:
-            rad_c = 19 if is_act else 17
+            rad_c = (19.0 if is_act else 17.0) * s
+            ring_pad = 3.5 * s
             fill_c = cam["s1"] if is_act else pal["rwy_circle_fill"]
             ring_c = pal["rwy_circle_ring"]
             if is_act:
                 self.canvas.create_oval(
-                    ex - (rad_c + 3.5), ey - (rad_c + 3.5), ex + (rad_c + 3.5), ey + (rad_c + 3.5),
-                    fill="", outline=ring_c, width=1.0, tags=pill_tags
+                    ex - (rad_c + ring_pad), ey - (rad_c + ring_pad), ex + (rad_c + ring_pad), ey + (rad_c + ring_pad),
+                    fill="", outline=ring_c, width=1.0 * s, tags=pill_tags
                 )
             self.canvas.create_oval(
                 ex - rad_c, ey - rad_c, ex + rad_c, ey + rad_c,
-                fill=fill_c, outline=ring_c, width=1.3, tags=pill_tags
+                fill=fill_c, outline=ring_c, width=1.3 * s, tags=pill_tags
             )
             vis_r_hdg = (rwy_hdg - ac_hdg_s) if use_hdg_up else rwy_hdg
             r_rad = math.radians(vis_r_hdg - 90.0)
@@ -3833,7 +3965,7 @@ class LidoVectorChart(ctk.CTkFrame):
                 ex, ey,
                 text=str(end_id),
                 fill="#FFFFFF",
-                font=("Arial", 11, "bold"),
+                font=pill_font,
                 angle=r_ang,
                 tags=pill_tags
             )
@@ -3926,12 +4058,13 @@ class LidoVectorChart(ctk.CTkFrame):
             self._last_canvas_bg = pal["bg"]
             self.canvas.configure(bg=pal["bg"])
 
-        w = max(self.canvas.winfo_width(), 400)
-        h = max(self.canvas.winfo_height(), 320)
+        s = self._get_canvas_scale()
+        w = max(self.canvas.winfo_width(), int(round(400 * s)))
+        h = max(self.canvas.winfo_height(), int(round(320 * s)))
         cos_lat = max(0.15, math.cos(math.radians(self.center_lat)))
 
         # Subtle Lido Coordinate Grid Lines
-        grid_step = 90
+        grid_step = max(45, int(round(90 * s)))
         for gx in range(0, w, grid_step):
             self.canvas.create_line(gx, 0, gx, h, fill=pal["grid_line"], width=1)
         for gy in range(0, h, grid_step):
@@ -3943,7 +4076,7 @@ class LidoVectorChart(ctk.CTkFrame):
             self.canvas.create_text(
                 w / 2, h / 2,
                 text="Vector Ground Chart loading or unavailable for this airport",
-                fill="#94A3B8", font=("Arial", 14, "bold")
+                fill="#94A3B8", font=self._cfont("Arial", 14, "bold")
             )
             return
 
@@ -3951,9 +4084,11 @@ class LidoVectorChart(ctk.CTkFrame):
         v_min_lat, v_max_lat, v_min_lon, v_max_lon = frustum
         rc = self._ensure_chart_render_caches()
         map_tags = ("map_pan",)
+        cull_pad = 60.0 * s
 
         # 1. Draw Aprons (Polygon layer with geographic + screen frustum culling)
         apron_label_candidates = []
+        min_ap_span = 55.0 * s
         for pts, min_la, max_la, min_lo, max_lo, ap_lbl_u in rc["aprons_meta"]:
             if max_la < v_min_lat or min_la > v_max_lat or max_lo < v_min_lon or min_lo > v_max_lon:
                 continue
@@ -3975,21 +4110,25 @@ class LidoVectorChart(ctk.CTkFrame):
                     min_y = y
                 if y > max_y:
                     max_y = y
-            if max_x < -60 or min_x > w + 60 or max_y < -60 or min_y > h + 60:
+            if max_x < -cull_pad or min_x > w + cull_pad or max_y < -cull_pad or min_y > h + cull_pad:
                 continue
             self.canvas.create_polygon(flat, fill=pal["apron_fill"], outline="", tags=map_tags)
-            if ap_lbl_u and (max_x - min_x >= 55 or max_y - min_y >= 55):
+            if ap_lbl_u and (max_x - min_x >= min_ap_span or max_y - min_y >= min_ap_span):
                 n_ap = len(pts)
                 apron_label_candidates.append((ap_lbl_u, sum_x / n_ap, sum_y / n_ap))
 
         # 2. Draw Taxiways & Taxilanes (3-pass seamless pavement: Borders -> Fills -> Centerlines, with frustum culling)
         mpp = self.meters_per_pixel
-        twy_width = max(2.5, min(14.0, 18.0 / mpp))
-        twy_border_w = twy_width + 2.0
+        lmpp = max(0.05, mpp * s)
+        twy_width = max(2.5, min(14.0, 18.0 / lmpp)) * s
+        twy_border_w = twy_width + 2.0 * s
         twy_label_positions = []
         twy_labels_by_ref = {}
         twy_draw_items = []
-        lane_w_line = max(1.8, twy_width * 0.65)
+        lane_w_line = max(1.8 * s, twy_width * 0.65)
+        twy_edge_m = 30.0 * s
+        twy_same_d = 155.0 * s
+        twy_other_d = 32.0 * s
 
         for pts, min_la, max_la, min_lo, max_lo, is_lane, ref, ref_norm, cand_indices in rc["twys_meta"]:
             if max_la < v_min_lat or min_la > v_max_lat or max_lo < v_min_lon or min_lo > v_max_lon:
@@ -4008,7 +4147,7 @@ class LidoVectorChart(ctk.CTkFrame):
                     min_ty = y
                 if y > max_ty:
                     max_ty = y
-            if max_tx < -60 or min_tx > w + 60 or max_ty < -60 or min_ty > h + 60:
+            if max_tx < -cull_pad or min_tx > w + cull_pad or max_ty < -cull_pad or min_ty > h + cull_pad:
                 continue
             w_line = lane_w_line if is_lane else twy_width
             twy_draw_items.append((flat, is_lane, w_line))
@@ -4017,16 +4156,16 @@ class LidoVectorChart(ctk.CTkFrame):
                 for ci in cand_indices:
                     mx = flat[ci * 2]
                     my = flat[ci * 2 + 1]
-                    if 30 < mx < w - 30 and 30 < my < h - 30:
+                    if twy_edge_m < mx < w - twy_edge_m and twy_edge_m < my < h - twy_edge_m:
                         same_list = twy_labels_by_ref.get(ref, ())
-                        if any(math.hypot(mx - px, my - py) < 155.0 for px, py in same_list):
+                        if any(math.hypot(mx - px, my - py) < twy_same_d for px, py in same_list):
                             continue
-                        if any(math.hypot(mx - ox, my - oy) < 32.0 for _, ox, oy, _ in twy_label_positions):
+                        if any(math.hypot(mx - ox, my - oy) < twy_other_d for _, ox, oy, _ in twy_label_positions):
                             continue
                         twy_labels_by_ref.setdefault(ref, []).append((mx, my))
                         twy_label_positions.append((ref, mx, my, ref_norm))
 
-        if mpp < 5.0:
+        if lmpp < 5.0:
             for flat, is_lane, _ in twy_draw_items:
                 if not is_lane:
                     self.canvas.create_line(
@@ -4038,13 +4177,14 @@ class LidoVectorChart(ctk.CTkFrame):
                 flat, fill=pal["twy_fill"], width=w_line,
                 capstyle="round", joinstyle="round", tags=map_tags
             )
-        if mpp < 3.8:
-            center_w = 1.35 if mpp < 1.8 else 1.15
+        if lmpp < 3.8:
+            center_w = (1.35 if lmpp < 1.8 else 1.15) * s
+            lane_cw = 1.0 * s
             for flat, is_lane, _ in twy_draw_items:
                 self.canvas.create_line(
                     flat,
                     fill=pal["twy_center"],
-                    width=1.0 if is_lane else center_w,
+                    width=lane_cw if is_lane else center_w,
                     capstyle="round",
                     joinstyle="round",
                     tags=map_tags
@@ -4053,6 +4193,7 @@ class LidoVectorChart(ctk.CTkFrame):
         # 3. Draw Terminal Buildings (Pitch-black Lido AMM silhouettes) & collect Terminal / Pier labels
         term_poly_labels = []
         seen_term_labels = set()
+        min_term_span = 36.0 * s
         for pts, min_la, max_la, min_lo, max_lo, clean_tn in rc["terms_meta"]:
             if max_la < v_min_lat or min_la > v_max_lat or max_lo < v_min_lon or min_lo > v_max_lon:
                 continue
@@ -4074,10 +4215,10 @@ class LidoVectorChart(ctk.CTkFrame):
                     min_y = y
                 if y > max_y:
                     max_y = y
-            if max_x < -60 or min_x > w + 60 or max_y < -60 or min_y > h + 60:
+            if max_x < -cull_pad or min_x > w + cull_pad or max_y < -cull_pad or min_y > h + cull_pad:
                 continue
-            self.canvas.create_polygon(flat, fill=pal["term_fill"], outline=pal["term_outline"], width=1, tags=map_tags)
-            if clean_tn and (max_x - min_x >= 36 or max_y - min_y >= 36):
+            self.canvas.create_polygon(flat, fill=pal["term_fill"], outline=pal["term_outline"], width=max(1.0, s), tags=map_tags)
+            if clean_tn and (max_x - min_x >= min_term_span or max_y - min_y >= min_term_span):
                 if clean_tn == "ORLY 1 ET 2":
                     sw_x = min_x + 0.34 * (max_x - min_x)
                     sw_y = min_y + 0.68 * (max_y - min_y)
@@ -4095,7 +4236,8 @@ class LidoVectorChart(ctk.CTkFrame):
                     seen_term_labels.add(clean_tn)
 
         # 4. Draw Runways (Authentic Lido AMM / Navigraph Runway Surface, Edge Stripes, Piano Keys, Aiming Points & Crisp Vector Centerline)
-        rwy_w = max(8.0, min(34.0, 45.0 / mpp))
+        rwy_w_l = max(8.0, min(34.0, 45.0 / lmpp))
+        rwy_w = rwy_w_l * s
         active_rwy = (self.airport_data.get("selected_runway") or "").upper() if self.airport_data else ""
 
         for rwy in self.chart_data.get("runways", []):
@@ -4110,7 +4252,7 @@ class LidoVectorChart(ctk.CTkFrame):
                 screen_rwy_pts.append((x, y))
             is_selected_rwy = active_rwy in rwy.get("ends", {})
             outline_col = pal["rwy_circle_ring"] if is_selected_rwy else pal["rwy_outline"]
-            border_extra = 3.2 if is_selected_rwy else 2.2
+            border_extra = (3.2 if is_selected_rwy else 2.2) * s
             self.canvas.create_line(
                 flat, fill=outline_col, width=rwy_w + border_extra,
                 capstyle="butt", joinstyle="miter", tags=map_tags
@@ -4125,7 +4267,7 @@ class LidoVectorChart(ctk.CTkFrame):
             rdx = p_end[0] - p_start[0]
             rdy = p_end[1] - p_start[1]
             rwy_px_len = math.hypot(rdx, rdy)
-            if rwy_px_len > 28.0:
+            if rwy_px_len > (28.0 * s):
                 ux = rdx / rwy_px_len
                 uy = rdy / rwy_px_len
                 nx = -uy
@@ -4139,25 +4281,25 @@ class LidoVectorChart(ctk.CTkFrame):
                     )
 
                 # 4a. Continuous White Runway Edge Stripes (inset slightly from asphalt edge)
-                if rwy_w >= 9.5 and rwy_px_len > 50.0:
-                    edge_off = (rwy_w * 0.5) - 1.3
-                    e_pad = min(16.0, rwy_px_len * 0.06)
+                if rwy_w_l >= 9.5 and rwy_px_len > (50.0 * s):
+                    edge_off = (rwy_w * 0.5) - (1.3 * s)
+                    e_pad = min(16.0 * s, rwy_px_len * 0.06)
                     for side_sign in (-1.0, 1.0):
                         ep0 = _rwy_pt(e_pad, side_sign * edge_off)
                         ep1 = _rwy_pt(rwy_px_len - e_pad, side_sign * edge_off)
                         self.canvas.create_line(
                             ep0[0], ep0[1], ep1[0], ep1[1],
-                            fill=pal.get("rwy_edge", mark_col), width=1.0, capstyle="butt", tags=map_tags
+                            fill=pal.get("rwy_edge", mark_col), width=1.0 * s, capstyle="butt", tags=map_tags
                         )
 
                 # 4b. Threshold "Piano Keys" (Peignes de seuil) at both ends
-                if rwy_w >= 9.0 and rwy_px_len > 75.0:
-                    pk_start = 17.5
-                    pk_len = max(5.5, min(13.0, 26.0 / mpp))
-                    n_pairs = 3 if rwy_w < 16.0 else 4
-                    max_lat_off = (rwy_w * 0.5) - 2.4
-                    min_lat_off = max(1.3, rwy_w * 0.08)
-                    stripe_w = max(1.0, min(1.8, (rwy_w / 14.0)))
+                if rwy_w_l >= 9.0 and rwy_px_len > (75.0 * s):
+                    pk_start = 17.5 * s
+                    pk_len = max(5.5, min(13.0, 26.0 / lmpp)) * s
+                    n_pairs = 3 if rwy_w_l < 16.0 else 4
+                    max_lat_off = (rwy_w * 0.5) - (2.4 * s)
+                    min_lat_off = max(1.3 * s, rwy_w * 0.08)
+                    stripe_w = max(1.0, min(1.8, (rwy_w_l / 14.0))) * s
                     for i_pk in range(n_pairs):
                         t_frac = i_pk / float(max(1, n_pairs - 1)) if n_pairs > 1 else 0.5
                         lat_d = min_lat_off + t_frac * (max_lat_off - min_lat_off)
@@ -4170,11 +4312,11 @@ class LidoVectorChart(ctk.CTkFrame):
                             self.canvas.create_line(ke0[0], ke0[1], ke1[0], ke1[1], fill=mark_col, width=stripe_w, capstyle="butt", tags=map_tags)
 
                 # 4c. Aiming Point Blocks (~300m from threshold) & Touchdown Zone (TDZ) Bars
-                if rwy_w >= 10.0 and rwy_px_len > 140.0:
-                    aim_d = min(rwy_px_len * 0.22, max(36.0, 290.0 / mpp))
-                    aim_len = max(6.5, min(16.0, 42.0 / mpp))
+                if rwy_w_l >= 10.0 and rwy_px_len > (140.0 * s):
+                    aim_d = min(rwy_px_len * 0.22, max(36.0, 290.0 / lmpp) * s)
+                    aim_len = max(6.5, min(16.0, 42.0 / lmpp)) * s
                     aim_lat = rwy_w * 0.22
-                    aim_w = max(1.8, min(3.6, rwy_w * 0.13))
+                    aim_w = max(1.8, min(3.6, rwy_w_l * 0.13)) * s
                     for side_s in (-1.0, 1.0):
                         a0 = _rwy_pt(aim_d, side_s * aim_lat)
                         a1 = _rwy_pt(aim_d + aim_len, side_s * aim_lat)
@@ -4183,11 +4325,11 @@ class LidoVectorChart(ctk.CTkFrame):
                         ae1 = _rwy_pt(rwy_px_len - aim_d, side_s * aim_lat)
                         self.canvas.create_line(ae0[0], ae0[1], ae1[0], ae1[1], fill=mark_col, width=aim_w, capstyle="butt", tags=map_tags)
 
-                    if mpp <= 3.2 and rwy_px_len > 220.0:
-                        tdz_len = max(4.5, min(10.0, 20.0 / mpp))
-                        tdz_w = max(1.2, min(2.2, rwy_w * 0.08))
+                    if lmpp <= 3.2 and rwy_px_len > (220.0 * s):
+                        tdz_len = max(4.5, min(10.0, 20.0 / lmpp)) * s
+                        tdz_w = max(1.2, min(2.2, rwy_w_l * 0.08)) * s
                         for tdz_d in (aim_d * 0.58, aim_d * 1.42):
-                            if 30.0 < tdz_d < (rwy_px_len * 0.42):
+                            if (30.0 * s) < tdz_d < (rwy_px_len * 0.42):
                                 for side_s in (-1.0, 1.0):
                                     t0 = _rwy_pt(tdz_d, side_s * aim_lat)
                                     t1 = _rwy_pt(tdz_d + tdz_len, side_s * aim_lat)
@@ -4197,17 +4339,17 @@ class LidoVectorChart(ctk.CTkFrame):
                                     self.canvas.create_line(te0[0], te0[1], te1[0], te1[1], fill=mark_col, width=tdz_w, capstyle="butt", tags=map_tags)
 
                 # 4d. Crisp Vector Long Runway Centerline Dashes (no broken Windows GDI dots)
-                cl_margin = min(rwy_px_len * 0.42, 34.0 if rwy_w >= 9.0 else 20.0)
+                cl_margin = min(rwy_px_len * 0.42, (34.0 if rwy_w_l >= 9.0 else 20.0) * s)
                 cl_span = rwy_px_len - (2.0 * cl_margin)
-                if cl_span > 12.0:
-                    dash_len = max(13.0, min(26.0, 32.0 / mpp))
-                    gap_len = max(8.5, min(17.0, 20.0 / mpp))
+                if cl_span > (12.0 * s):
+                    dash_len = max(13.0, min(26.0, 32.0 / lmpp)) * s
+                    gap_len = max(8.5, min(17.0, 20.0 / lmpp)) * s
                     step_len = dash_len + gap_len
-                    cl_w = 1.6 if rwy_w >= 12.0 else 1.25
+                    cl_w = (1.6 if rwy_w_l >= 12.0 else 1.25) * s
                     cur_d = cl_margin
-                    while cur_d < (rwy_px_len - cl_margin - 3.0):
+                    while cur_d < (rwy_px_len - cl_margin - 3.0 * s):
                         seg_end = min(rwy_px_len - cl_margin, cur_d + dash_len)
-                        if (seg_end - cur_d) >= 4.0:
+                        if (seg_end - cur_d) >= (4.0 * s):
                             c0 = _rwy_pt(cur_d, 0.0)
                             c1 = _rwy_pt(seg_end, 0.0)
                             self.canvas.create_line(
@@ -4217,18 +4359,19 @@ class LidoVectorChart(ctk.CTkFrame):
                         cur_d += step_len
 
         # 4e. Draw Perpendicular ICAO Hold-Short Bars across taxiways at holding points
-        if mpp <= 3.8:
-            hb_half = max(3.6, min(8.0, twy_width * 0.52))
-            max_hold_dist_m = min(15.0, 18.0 * mpp)
+        if lmpp <= 3.8:
+            hb_half = max(3.6 * s, min(8.0 * s, twy_width * 0.52))
+            max_hold_dist_m = min(15.0, 18.0 * lmpp)
             hb_border_col = pal.get("hold_bar_border", "#090D16")
             hb_col = pal["hold_bar"]
+            hb_edge = 10.0 * s
             for hlat, hlon, best_dist_m, tx_n, ty_n in rc["holding_meta"]:
                 if best_dist_m > max_hold_dist_m:
                     continue
                 if hlat < v_min_lat or hlat > v_max_lat or hlon < v_min_lon or hlon > v_max_lon:
                     continue
                 hx, hy = _proj(hlat, hlon)
-                if 10 < hx < w - 10 and 10 < hy < h - 10:
+                if hb_edge < hx < w - hb_edge and hb_edge < hy < h - hb_edge:
                     if use_hdg_up:
                         best_tx = tx_n * cos_a - ty_n * sin_a
                         best_ty = tx_n * sin_a + ty_n * cos_a
@@ -4242,18 +4385,18 @@ class LidoVectorChart(ctk.CTkFrame):
                     hy1 = hy + best_ny * hb_half
                     self.canvas.create_line(
                         hx0, hy0, hx1, hy1,
-                        fill=hb_border_col, width=3.4, capstyle="butt", tags=map_tags
+                        fill=hb_border_col, width=3.4 * s, capstyle="butt", tags=map_tags
                     )
                     self.canvas.create_line(
                         hx0, hy0, hx1, hy1,
-                        fill=hb_col, width=1.9, capstyle="butt", tags=map_tags
+                        fill=hb_col, width=1.9 * s, capstyle="butt", tags=map_tags
                     )
-                    if mpp <= 1.8:
-                        off_t = 2.4
+                    if lmpp <= 1.8:
+                        off_t = 2.4 * s
                         self.canvas.create_line(
                             hx0 + best_tx * off_t, hy0 + best_ty * off_t,
                             hx1 + best_tx * off_t, hy1 + best_ty * off_t,
-                            fill=hb_col, width=1.4, capstyle="butt", tags=map_tags
+                            fill=hb_col, width=1.4 * s, capstyle="butt", tags=map_tags
                         )
 
         # 5. Draw Stands (Authentic Lido AMM Oriented Pentagonal / Triangular-Nose Stand Tags)
@@ -4271,14 +4414,15 @@ class LidoVectorChart(ctk.CTkFrame):
             cos_r, sin_r = math.cos(s_rad), math.sin(s_rad)
             perp_x, perp_y = -sin_r, cos_r
 
-            sc = max(0.70, min(1.38, (1.05 / (max(0.24, mpp) ** 0.28)) * sc_mult))
+            sc = max(0.70, min(1.38, (1.05 / (max(0.24, lmpp) ** 0.28)) * sc_mult))
             font_sz = 9 if sc >= 1.02 else (8 if sc >= 0.82 else 7)
-            half_w = max(6.8, min(12.0, 8.4 * sc))
-            text_len = max(17.0, len(s_disp) * (font_sz * 0.72) + 7.5)
+            half_w = max(6.8, min(12.0, 8.4 * sc)) * s
+            text_len = max(17.0, len(s_disp) * (font_sz * 0.72) + 7.5) * s
             body_back = text_len * 0.52
             body_front = text_len * 0.48
-            nose_len = max(7.0, min(13.5, 9.2 * sc))
-            tail_line = body_back + max(5.0, min(16.0, 8.0 / max(0.35, mpp)))
+            nose_len = max(7.0, min(13.5, 9.2 * sc)) * s
+            tail_line = body_back + max(5.0, min(16.0, 8.0 / max(0.35, lmpp))) * s
+            bw_s = border_w * s
 
             def _pt(along, across):
                 return (
@@ -4289,7 +4433,7 @@ class LidoVectorChart(ctk.CTkFrame):
             # 1. Yellow/Amber stand lead-in line from taxilane into rear of stand tag
             t0x, t0y = _pt(-tail_line, 0.0)
             t1x, t1y = _pt(-body_back, 0.0)
-            self.canvas.create_line(t0x, t0y, t1x, t1y, fill=pal["twy_center"], width=1.4, capstyle="round", tags=item_tags)
+            self.canvas.create_line(t0x, t0y, t1x, t1y, fill=pal["twy_center"], width=1.4 * s, capstyle="round", tags=item_tags)
 
             # 2. Rectangular body of the Lido AMM stand tag
             b_rl = _pt(-body_back, -half_w)
@@ -4298,14 +4442,14 @@ class LidoVectorChart(ctk.CTkFrame):
             b_rr = _pt(-body_back, +half_w)
             self.canvas.create_polygon(
                 [b_rl[0], b_rl[1], b_fl[0], b_fl[1], b_fr[0], b_fr[1], b_rr[0], b_rr[1]],
-                fill=fill_col, outline=border_col, width=border_w, joinstyle="miter", tags=item_tags
+                fill=fill_col, outline=border_col, width=bw_s, joinstyle="miter", tags=item_tags
             )
 
             # 3. Triangular directional nose cone sharing the front edge of the tag body
             n_tip = _pt(body_front + nose_len, 0.0)
             self.canvas.create_polygon(
                 [b_fl[0], b_fl[1], n_tip[0], n_tip[1], b_fr[0], b_fr[1]],
-                fill=fill_col, outline=border_col, width=border_w, joinstyle="miter", tags=item_tags
+                fill=fill_col, outline=border_col, width=bw_s, joinstyle="miter", tags=item_tags
             )
 
             # 4. Rotated stand designator text (always right-side-up)
@@ -4321,7 +4465,7 @@ class LidoVectorChart(ctk.CTkFrame):
                 sx, sy,
                 text=s_disp,
                 fill=fg_col,
-                font=("Arial", font_sz, "bold"),
+                font=self._cfont("Arial", font_sz, "bold"),
                 angle=txt_angle,
                 tags=item_tags
             )
@@ -4330,12 +4474,13 @@ class LidoVectorChart(ctk.CTkFrame):
             all_y = [b_rl[1], b_fl[1], b_fr[1], b_rr[1], n_tip[1]]
 
             # 5. Airline icon(s) displayed right in front of the triangular tip ("devant la pointe des markers")
-            if logo_codes and self.backend and (sc_mult > 1.05 or mpp <= 3.2):
-                logo_zoom_mult = 1.0 + 0.40 * max(0.0, min(1.0, (2.6 - mpp) / 2.2))
-                raw_lh = (22.5 if sc_mult > 1.05 else 17.8) * sc * logo_zoom_mult
-                max_lh_cap = 38 if sc_mult > 1.05 else 32
-                logo_h = max(16, min(max_lh_cap, int(round(raw_lh / 2.0)) * 2))
-                max_logos = 2 if (mpp <= 0.85 and sc_mult <= 1.05) else 1
+            if logo_codes and self.backend and (sc_mult > 1.05 or lmpp <= 3.2):
+                logo_zoom_mult = 1.0 + 0.40 * max(0.0, min(1.0, (2.6 - lmpp) / 2.2))
+                raw_lh = (22.5 if sc_mult > 1.05 else 17.8) * sc * logo_zoom_mult * s
+                max_lh_cap = int(round((38 if sc_mult > 1.05 else 32) * s))
+                min_lh_floor = int(round(16 * s))
+                logo_h = max(min_lh_floor, min(max_lh_cap, int(round(raw_lh / 2.0)) * 2))
+                max_logos = 2 if (lmpp <= 0.85 and sc_mult <= 1.05) else 1
                 logo_imgs = []
                 for al_c in logo_codes:
                     tk_l = self._get_tk_logo(al_c, size=logo_h)
@@ -4345,7 +4490,7 @@ class LidoVectorChart(ctk.CTkFrame):
                             break
                 tip_along = body_front + nose_len
                 for idx_l, tk_l in enumerate(logo_imgs):
-                    l_along = tip_along + 3.2 + (logo_h * 0.60) + idx_l * (logo_h * 1.18 + 2.5)
+                    l_along = tip_along + (3.2 * s) + (logo_h * 0.60) + idx_l * (logo_h * 1.18 + 2.5 * s)
                     lx, ly = _pt(l_along, 0.0)
                     self.canvas.create_image(lx, ly, image=tk_l, tags=item_tags)
 
@@ -4356,21 +4501,22 @@ class LidoVectorChart(ctk.CTkFrame):
         n_total_stands = len(self.chart_data.get("stands") or ())
         is_sparse_airport = n_total_stands <= 15
         max_stand_lod_mpp = 5.5 if n_total_stands <= 65 else 3.2
-        pin_cull_px = 6.0 if is_sparse_airport else 16.0
-        if mpp <= max_stand_lod_mpp:
+        pin_cull_px = (6.0 if is_sparse_airport else 16.0) * s
+        st_edge = 14.0 * s
+        if lmpp <= max_stand_lod_mpp:
             if is_sparse_airport:
-                lat_thr = 6.0
-                lon_thr = 8.0
+                lat_thr = 6.0 * s
+                lon_thr = 8.0 * s
             else:
-                lat_thr = 11.5 if mpp < 1.2 else (14.5 if mpp <= 2.0 else 20.0)
-                lon_thr = 22.0 if mpp < 1.2 else 28.0
+                lat_thr = (11.5 if lmpp < 1.2 else (14.5 if lmpp <= 2.0 else 20.0)) * s
+                lon_thr = (22.0 if lmpp < 1.2 else 28.0) * s
             for slat, slon, s_ref, s_clean, s_norm, s_disp, s_hdg, st_als, st_term in all_stands_meta:
                 if slat < v_min_lat or slat > v_max_lat or slon < v_min_lon or slon > v_max_lon:
                     continue
                 if s_clean == assigned_gate or s_norm == assigned_norm or (assigned_digits and s_clean == assigned_digits):
                     continue
                 sx, sy = _proj(slat, slon)
-                if not (14 < sx < w - 14 and 14 < sy < h - 14):
+                if not (st_edge < sx < w - st_edge and st_edge < sy < h - st_edge):
                     continue
                 if gx_pin is not None and math.hypot(sx - gx_pin, sy - gy_pin) < pin_cull_px:
                     continue
@@ -4402,16 +4548,24 @@ class LidoVectorChart(ctk.CTkFrame):
 
         # 5b. Draw Terminal / Pier Names & Apron Names (ORLY 3, ORLY 4, APRON B, APRON C, etc.)
         drawn_area_labels = []
-        if mpp <= 6.5:
+        sh_off = max(1, int(round(s)))
+        lbl_mx = 35.0 * s
+        lbl_my = 25.0 * s
+        if lmpp <= 6.5:
+            term_font = self._cfont("Arial", 10, "bold")
             all_term_labels = list(term_poly_labels)
-            shift_px = max(24.0, min(52.0, 36.0 / max(0.4, mpp)))
+            shift_px = max(24.0, min(52.0, 36.0 / max(0.4, lmpp))) * s
+            term_sep = 85.0 * s
             for t_name, avg_lat, avg_lon, sum_cr_n, sum_sr_n, n_none_h, cnt in rc["term_clusters"]:
                 avg_x, avg_y = _proj(avg_lat, avg_lon)
                 if use_hdg_up:
                     rot_cr = sum_cr_n * cos_a - sum_sr_n * sin_a
+                else:
+                    rot_cr = sum_cr_n
+                if use_hdg_up:
                     rot_sr = sum_cr_n * sin_a + sum_sr_n * cos_a
                 else:
-                    rot_cr, rot_sr = sum_cr_n, sum_sr_n
+                    rot_sr = sum_sr_n
                 avg_cr = rot_cr / cnt
                 avg_sr = (rot_sr - n_none_h) / cnt
                 norm_len = math.hypot(avg_cr, avg_sr) or 1.0
@@ -4420,19 +4574,23 @@ class LidoVectorChart(ctk.CTkFrame):
                 all_term_labels.append((t_name, tx_lbl, ty_lbl))
 
             for t_lbl, tx_l, ty_l in all_term_labels:
-                if not (35 < tx_l < w - 35 and 25 < ty_l < h - 25):
+                if not (lbl_mx < tx_l < w - lbl_mx and lbl_my < ty_l < h - lbl_my):
                     continue
                 if any(
-                    t_lbl == prev_t or math.hypot(tx_l - px, ty_l - py) < 85.0
+                    t_lbl == prev_t or math.hypot(tx_l - px, ty_l - py) < term_sep
                     for prev_t, px, py in drawn_area_labels
                 ):
                     continue
                 drawn_area_labels.append((t_lbl, tx_l, ty_l))
-                self.canvas.create_text(tx_l + 1, ty_l + 1, text=t_lbl, fill="#000000", font=("Arial", 10, "bold"), tags=map_tags)
-                self.canvas.create_text(tx_l, ty_l, text=t_lbl, fill=pal["term_text"], font=("Arial", 10, "bold"), tags=map_tags)
+                self.canvas.create_text(tx_l + sh_off, ty_l + sh_off, text=t_lbl, fill="#000000", font=term_font, tags=map_tags)
+                self.canvas.create_text(tx_l, ty_l, text=t_lbl, fill=pal["term_text"], font=term_font, tags=map_tags)
 
-        if mpp <= 3.0:
-            back_px = max(22.0, min(44.0, 28.0 / max(0.45, mpp)))
+        if lmpp <= 3.0:
+            apron_font = self._cfont("Arial", 8, "bold")
+            back_px = max(22.0, min(44.0, 28.0 / max(0.45, lmpp))) * s
+            ap_st_clear = 20.0 * s
+            ap_st_push = 16.0 * s
+            ap_sep = 70.0 * s
             for ap_lbl, avg_lat, avg_lon, sum_cr_n, sum_sr_n, n_none_h, cnt in rc["apron_clusters"]:
                 avg_x, avg_y = _proj(avg_lat, avg_lon)
                 if use_hdg_up:
@@ -4446,23 +4604,23 @@ class LidoVectorChart(ctk.CTkFrame):
                 ax_l = avg_x - (avg_cr / norm_len) * back_px
                 ay_l = avg_y - (avg_sr / norm_len) * back_px
                 for ox, oy in drawn_stand_boxes:
-                    if math.hypot(ax_l - ox, ay_l - oy) < 20.0:
-                        ax_l -= (avg_cr / norm_len) * 16.0
-                        ay_l -= (avg_sr / norm_len) * 16.0
+                    if math.hypot(ax_l - ox, ay_l - oy) < ap_st_clear:
+                        ax_l -= (avg_cr / norm_len) * ap_st_push
+                        ay_l -= (avg_sr / norm_len) * ap_st_push
                         break
                 apron_label_candidates.append((ap_lbl, ax_l, ay_l))
 
             for ap_lbl, ax_l, ay_l in apron_label_candidates:
-                if not (35 < ax_l < w - 35 and 25 < ay_l < h - 25):
+                if not (lbl_mx < ax_l < w - lbl_mx and lbl_my < ay_l < h - lbl_my):
                     continue
                 if any(
-                    ap_lbl == prev_t or math.hypot(ax_l - px, ay_l - py) < 70.0
+                    ap_lbl == prev_t or math.hypot(ax_l - px, ay_l - py) < ap_sep
                     for prev_t, px, py in drawn_area_labels
                 ):
                     continue
                 drawn_area_labels.append((ap_lbl, ax_l, ay_l))
-                self.canvas.create_text(ax_l + 1, ay_l + 1, text=ap_lbl, fill="#090D14", font=("Arial", 8, "bold"), tags=map_tags)
-                self.canvas.create_text(ax_l, ay_l, text=ap_lbl, fill=pal["apron_text"], font=("Arial", 8, "bold"), tags=map_tags)
+                self.canvas.create_text(ax_l + sh_off, ay_l + sh_off, text=ap_lbl, fill="#090D14", font=apron_font, tags=map_tags)
+                self.canvas.create_text(ax_l, ay_l, text=ap_lbl, fill=pal["apron_text"], font=apron_font, tags=map_tags)
 
         # 6. Draw Active A* Taxi Route & Rollout Line
         xy_pts = self._draw_route_layer(_proj, pal)
@@ -4470,15 +4628,19 @@ class LidoVectorChart(ctk.CTkFrame):
         # 7. Draw Taxiway Labels (Authentic Aviation Amber-Yellow EFB Sign Badges + Route-Directional Selection Highlight)
         rwy_threshold_badges = self._compute_runway_pill_badges(_proj, w, h)
         above_tags = ("above_route", "map_pan")
-        if mpp < 8.5:
+        if lmpp < 8.5:
+            twy_font = self._cfont("Arial", 8, "bold")
             lbl_border = pal.get("twy_label_border", "#0B111A")
             is_custom_twy = bool((self.airport_data or {}).get("custom_taxi_mode"))
             custom_via_raw = (self.airport_data or {}).get("atc_taxi_via") or []
             custom_via_norms = [re.sub(r'[\s_\-]+', '', str(t).upper()) for t in custom_via_raw if t]
+            rwy_clear_d = 28.0 * s
+            on_route_d = 13.0 * s
+            twy_hb_pad = 3.0 * s
 
             vis_twy_badges = []
             for ref, mx, my, ref_norm in twy_label_positions:
-                if any(math.hypot(mx - rx, my - ry) < 28.0 for rx, ry, _, _, _ in rwy_threshold_badges):
+                if any(math.hypot(mx - rx, my - ry) < rwy_clear_d for rx, ry, _, _, _ in rwy_threshold_badges):
                     continue
                 vis_twy_badges.append((ref, mx, my, ref_norm))
 
@@ -4510,7 +4672,7 @@ class LidoVectorChart(ctk.CTkFrame):
                     ]
                     if not cands:
                         continue
-                    on_route_idxs = [idx_b for idx_b, d_px in cands if d_px <= 13.0]
+                    on_route_idxs = [idx_b for idx_b, d_px in cands if d_px <= on_route_d]
                     if on_route_idxs:
                         selected_badge_indices.update(on_route_idxs)
                     else:
@@ -4520,9 +4682,9 @@ class LidoVectorChart(ctk.CTkFrame):
             for idx_b, (ref, mx, my, ref_norm) in enumerate(vis_twy_badges):
                 is_sel_twy = (idx_b in selected_badge_indices)
                 sel_ord = (custom_via_norms.index(ref_norm) + 1) if (is_sel_twy and ref_norm in custom_via_norms) else 0
-                rw = max(8.5, len(ref) * 3.8 + 4.5)
-                rh = 6.5
-                c_cut = 2.0
+                rw = max(8.5, len(ref) * 3.8 + 4.5) * s
+                rh = 6.5 * s
+                c_cut = 2.0 * s
                 self.canvas.create_polygon(
                     [
                         mx - rw + c_cut, my - rh,
@@ -4536,17 +4698,17 @@ class LidoVectorChart(ctk.CTkFrame):
                     ],
                     fill="#10B981" if is_sel_twy else pal["twy_label_bg"],
                     outline="#A7F3D0" if is_sel_twy else lbl_border,
-                    width=1.8 if is_sel_twy else 1.2,
+                    width=(1.8 if is_sel_twy else 1.2) * s,
                     tags=above_tags
                 )
                 self.canvas.create_text(
                     mx, my,
                     text=ref,
                     fill="#FFFFFF" if is_sel_twy else pal["twy_label_fg"],
-                    font=("Arial", 8, "bold"),
+                    font=twy_font,
                     tags=above_tags
                 )
-                self._twy_hitboxes.append((mx - rw - 3, my - rh - 3, mx + rw + 3, my + rh + 3, ref, is_sel_twy, sel_ord))
+                self._twy_hitboxes.append((mx - rw - twy_hb_pad, my - rh - twy_hb_pad, mx + rw + twy_hb_pad, my + rh + twy_hb_pad, ref, is_sel_twy, sel_ord))
 
         # 7b. Draw Interactive Circular Runway Badges (Viewport-Clamped Lido AMM Cyan-Ringed Circles)
         self._draw_runway_pills_layer(_proj, w, h, use_hdg_up, ac_hdg_s, pal, cam, precomputed_badges=rwy_threshold_badges)
@@ -4596,11 +4758,11 @@ class LidoVectorChart(ctk.CTkFrame):
         self._draw_aircraft_layer(_proj, w, h, use_hdg_up)
 
         # 10. Bottom-Right Lido Legend & Status Overlay
-        self.canvas.create_rectangle(w - 225, h - 28, w - 8, h - 6, fill="#0F172A", outline="", tags=("hud_top",))
+        self.canvas.create_rectangle(w - 225.0 * s, h - 28.0 * s, w - 8.0 * s, h - 6.0 * s, fill="#0F172A", outline="", tags=("hud_top",))
         self.canvas.create_text(
-            w - 116, h - 17,
+            w - 116.5 * s, h - 17.0 * s,
             text="Scroll: Zoom  |  Drag: Pan  |  Lido Vector",
-            fill="#94A3B8", font=("Arial", 9, "bold"), tags=("hud_top",)
+            fill="#94A3B8", font=self._cfont("Arial", 9, "bold"), tags=("hud_top",)
         )
 
         self._base_canvas_valid = True
@@ -4736,7 +4898,7 @@ class GUIApp(ctk.CTk):
         self._geom_save_after_id = None
 
         self.configure(fg_color="#121418")
-        self.title("MSFS 2024 - GateFinder V2.0.8")
+        self.title("MSFS 2024 - GateFinder V2.1.0")
         win_scale, work_left, work_top, work_w_phys, work_h_phys, logical_w, logical_h = self._get_dpi_work_area()
 
         min_w = min(1180, max(860, int(logical_w * 0.78)))
@@ -5501,7 +5663,7 @@ class GUIApp(ctk.CTk):
     def check_for_updates(self, manual=False):
         import urllib.request
         import json
-        current_ver = "2.0.8"
+        current_ver = "2.1.0"
         t0 = time.monotonic()
         found_update = False
         found_tag = ""
@@ -5519,7 +5681,7 @@ class GUIApp(ctk.CTk):
             req = urllib.request.Request(
                 "https://api.github.com/repos/wildbill75/gsx-gatefinder/releases/latest",
                 headers={
-                    "User-Agent": "GateFinder-Updater/2.0.8",
+                    "User-Agent": "GateFinder-Updater/2.1.0",
                     "Accept": "application/vnd.github+json",
                 },
             )
@@ -5611,7 +5773,7 @@ class GUIApp(ctk.CTk):
                 os.makedirs(staging_dir, exist_ok=True)
 
                 dl_file = os.path.join(staging_dir, "release_pkg.zip" if asset_kind == "zip" else "GateFinder.exe")
-                req = urllib.request.Request(dl_url, headers={"User-Agent": "GateFinder-Updater/2.0.8"})
+                req = urllib.request.Request(dl_url, headers={"User-Agent": "GateFinder-Updater/2.1.0"})
                 with urllib.request.urlopen(req, timeout=30) as resp, open(dl_file, "wb") as out_f:
                     total_sz = int(resp.headers.get("Content-Length") or 0)
                     read_sz = 0
@@ -5800,7 +5962,7 @@ class GUIApp(ctk.CTk):
         self.flight_strip_frame.pack(side="left", padx=(16, 8), pady=12)
         ctk.CTkLabel(
             self.flight_strip_frame,
-            text="GATEFINDER V2.0.8  •  SIMBRIEF EFB DISPATCH",
+            text="GATEFINDER V2.1.0  •  SIMBRIEF EFB DISPATCH",
             height=46,
             fg_color="#2B303B",
             text_color="#94A3B8",
@@ -6321,7 +6483,7 @@ class GUIApp(ctk.CTk):
         _render_blue_gradient_bar(0.06)
 
         lbl_ver_ftr = ctk.CTkLabel(
-            prog_card, text="V2.0.8 • © 2026 Sidestick Priority",
+            prog_card, text="V2.1.0 • © 2026 Sidestick Priority",
             font=ctk.CTkFont(size=11), text_color="#475569"
         )
         lbl_ver_ftr.place(relx=1.0, rely=1.0, x=-20, y=-12, anchor="se")
@@ -6334,7 +6496,7 @@ class GUIApp(ctk.CTk):
             return sp
         sp_w, sp_h = 520, 330
         splash = ctk.CTkToplevel(self)
-        splash.title("GateFinder V2.0.8")
+        splash.title("GateFinder V2.1.0")
         splash.overrideredirect(True)
         splash.configure(fg_color="#0B0E14")
         self._apply_window_icon(splash)
@@ -7430,6 +7592,7 @@ class GUIApp(ctk.CTk):
         )
         sb.pack(side="right", fill="y", padx=(0, 4), pady=6)
 
+        cl_sc = _get_tk_dpi_scale(dlg)
         txt_w = tk.Text(
             body_box,
             bg="#0B1120",
@@ -7437,9 +7600,9 @@ class GUIApp(ctk.CTk):
             bd=0,
             highlightthickness=0,
             wrap="word",
-            font=("Segoe UI", 10),
-            padx=16,
-            pady=12,
+            font=_tk_scaled_font(cl_sc, "Segoe UI", 10),
+            padx=int(round(16 * cl_sc)),
+            pady=int(round(12 * cl_sc)),
             cursor="arrow",
             selectbackground="#1E293B",
             selectforeground="#F8FAFC",
@@ -7448,110 +7611,120 @@ class GUIApp(ctk.CTk):
         txt_w.pack(side="left", fill="both", expand=True)
         sb.configure(command=txt_w.yview)
 
+        m0_1 = int(round(4 * cl_sc))
+        m0_2 = int(round(18 * cl_sc))
+        m1_1 = int(round(22 * cl_sc))
+        m1_2 = int(round(36 * cl_sc))
+        sp_2 = int(round(2 * cl_sc))
+        sp_4 = int(round(4 * cl_sc))
+        sp_5 = int(round(5 * cl_sc))
+        sp_6 = int(round(6 * cl_sc))
+        sp_8 = int(round(8 * cl_sc))
+
         txt_w.tag_configure(
             "ver_hdr",
-            font=("Segoe UI", 12, "bold"),
+            font=_tk_scaled_font(cl_sc, "Segoe UI", 12, "bold"),
             foreground=cam["accent"],
-            spacing1=8,
-            spacing3=4,
+            spacing1=sp_8,
+            spacing3=sp_4,
         )
         txt_w.tag_configure(
             "ver_hdr_first",
-            font=("Segoe UI", 12, "bold"),
+            font=_tk_scaled_font(cl_sc, "Segoe UI", 12, "bold"),
             foreground=cam["accent"],
             spacing1=0,
-            spacing3=4,
+            spacing3=sp_4,
         )
         txt_w.tag_configure(
             "sub_hdr",
-            font=("Segoe UI", 9, "bold"),
+            font=_tk_scaled_font(cl_sc, "Segoe UI", 9, "bold"),
             foreground="#94A3B8",
-            spacing1=6,
-            spacing3=4,
+            spacing1=sp_6,
+            spacing3=sp_4,
         )
         txt_w.tag_configure(
             "b0_dot",
-            font=("Segoe UI", 10, "bold"),
+            font=_tk_scaled_font(cl_sc, "Segoe UI", 10, "bold"),
             foreground=cam["accent"],
-            lmargin1=4,
-            lmargin2=18,
-            spacing1=5,
-            spacing2=2,
-            spacing3=2,
+            lmargin1=m0_1,
+            lmargin2=m0_2,
+            spacing1=sp_5,
+            spacing2=sp_2,
+            spacing3=sp_2,
         )
         txt_w.tag_configure(
             "b0_body",
-            font=("Segoe UI", 10),
+            font=_tk_scaled_font(cl_sc, "Segoe UI", 10),
             foreground="#CBD5E1",
-            lmargin1=4,
-            lmargin2=18,
-            spacing1=5,
-            spacing2=2,
-            spacing3=2,
+            lmargin1=m0_1,
+            lmargin2=m0_2,
+            spacing1=sp_5,
+            spacing2=sp_2,
+            spacing3=sp_2,
         )
         txt_w.tag_configure(
             "b0_bold",
-            font=("Segoe UI", 10, "bold"),
+            font=_tk_scaled_font(cl_sc, "Segoe UI", 10, "bold"),
             foreground="#F8FAFC",
-            lmargin1=4,
-            lmargin2=18,
-            spacing1=5,
-            spacing2=2,
-            spacing3=2,
+            lmargin1=m0_1,
+            lmargin2=m0_2,
+            spacing1=sp_5,
+            spacing2=sp_2,
+            spacing3=sp_2,
         )
         txt_w.tag_configure(
             "b0_code",
-            font=("Consolas", 9, "bold"),
+            font=_tk_scaled_font(cl_sc, "Consolas", 9, "bold"),
             background="#162033",
             foreground="#E2E8F0",
-            lmargin1=4,
-            lmargin2=18,
-            spacing1=5,
-            spacing2=2,
-            spacing3=2,
+            lmargin1=m0_1,
+            lmargin2=m0_2,
+            spacing1=sp_5,
+            spacing2=sp_2,
+            spacing3=sp_2,
         )
         txt_w.tag_configure(
             "b1_dot",
-            font=("Segoe UI", 10),
+            font=_tk_scaled_font(cl_sc, "Segoe UI", 10),
             foreground="#64748B",
-            lmargin1=22,
-            lmargin2=36,
-            spacing1=2,
-            spacing2=2,
-            spacing3=2,
+            lmargin1=m1_1,
+            lmargin2=m1_2,
+            spacing1=sp_2,
+            spacing2=sp_2,
+            spacing3=sp_2,
         )
         txt_w.tag_configure(
             "b1_body",
-            font=("Segoe UI", 10),
+            font=_tk_scaled_font(cl_sc, "Segoe UI", 10),
             foreground="#94A3B8",
-            lmargin1=22,
-            lmargin2=36,
-            spacing1=2,
-            spacing2=2,
-            spacing3=2,
+            lmargin1=m1_1,
+            lmargin2=m1_2,
+            spacing1=sp_2,
+            spacing2=sp_2,
+            spacing3=sp_2,
         )
         txt_w.tag_configure(
             "b1_bold",
-            font=("Segoe UI", 10, "bold"),
+            font=_tk_scaled_font(cl_sc, "Segoe UI", 10, "bold"),
             foreground="#E2E8F0",
-            lmargin1=22,
-            lmargin2=36,
-            spacing1=2,
-            spacing2=2,
-            spacing3=2,
+            lmargin1=m1_1,
+            lmargin2=m1_2,
+            spacing1=sp_2,
+            spacing2=sp_2,
+            spacing3=sp_2,
         )
         txt_w.tag_configure(
             "b1_code",
-            font=("Consolas", 9, "bold"),
+            font=_tk_scaled_font(cl_sc, "Consolas", 9, "bold"),
             background="#162033",
             foreground="#E2E8F0",
-            lmargin1=22,
-            lmargin2=36,
-            spacing1=2,
-            spacing2=2,
-            spacing3=2,
+            lmargin1=m1_1,
+            lmargin2=m1_2,
+            spacing1=sp_2,
+            spacing2=sp_2,
+            spacing3=sp_2,
         )
-        txt_w.tag_configure("sep_line", font=("Segoe UI", 6), spacing1=4, spacing3=4)
+        txt_w.tag_configure("sep_line", font=_tk_scaled_font(cl_sc, "Segoe UI", 6), spacing1=sp_4, spacing3=sp_4)
 
         token_re = re.compile(r"(\*\*`[^`]+`\*\*|`[^`]+`|\*\*[^*]+\*\*)")
 
@@ -8183,7 +8356,8 @@ class GUIApp(ctk.CTk):
         dlg = ctk.CTkToplevel(self)
         self._apply_window_icon(dlg)
         phase_lbl = "DEPARTURE" if target_phase == "departure" else "ARRIVAL"
-        dlg.title(f"GSX/GateFinder Position Selector - {icao}")
+        gsx_inst = bool((self.last_flight_data.get("gsx") or {}).get("installed", True))
+        dlg.title(f"{'GSX/GateFinder' if gsx_inst else 'GateFinder'} Position Selector - {icao}")
         dlg_w, dlg_h = 540, 470
         dlg.geometry(f"{dlg_w}x{dlg_h}")
         dlg.resizable(False, False)
@@ -9057,7 +9231,7 @@ class GUIApp(ctk.CTk):
 
         self._last_clearance_args = (clearance_str, cam, sel_rwy, det_exit)
         sb_w = int(getattr(self, "_sidebar_width", 356) or 356)
-        max_row_w = max(295, sb_w - 34)
+        max_row_w = max(260, sb_w - 36)
 
         pool = (
             cam["s1"],
@@ -9073,7 +9247,7 @@ class GUIApp(ctk.CTk):
         cur_plan_row = []
         cur_w = 0
         for idx, (kind, tok, tip_txt) in enumerate(pill_items):
-            est_w = max(56, len(tok) * 9.5 + 34)
+            est_w = max(84, len(tok) * 9.8 + 38)
             if cur_plan_row and (cur_w + est_w > max_row_w):
                 rows_plan.append(cur_plan_row)
                 cur_plan_row = []

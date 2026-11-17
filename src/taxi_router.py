@@ -212,9 +212,9 @@ class TaxiRouter:
                 modified = True
 
         # 4. Globally prune dangling dead-end taxiway cul-de-sacs & orphaned grass holding points
-        if chart.get("_deadend_pruned_v") != 2:
+        if chart.get("_deadend_pruned_v") != 3:
             pc_tw, pc_hp = self._prune_dangling_taxiway_stubs(chart)
-            chart["_deadend_pruned_v"] = 2
+            chart["_deadend_pruned_v"] = 3
             modified = True
             if pc_tw > 0 or pc_hp > 0:
                 chart.pop("_apron_hull_sig", None)
@@ -712,6 +712,7 @@ class TaxiRouter:
             "LSZH": (47.464700, 8.549200),
             "LFPO": (48.725300, 2.359400),
             "RKSI": (37.469100, 126.450500),
+            "ZGGG": (23.392436, 113.298786),
         }
         if (center_lat is None or center_lon is None) and icao in mega_default_coords:
             center_lat, center_lon = mega_default_coords[icao]
@@ -744,12 +745,16 @@ class TaxiRouter:
             "VIDP": 4, "KDTW": 6, "KSFO": 4, "ZBAA": 3, "KCLT": 3,
             "KJFK": 4, "WSSS": 3, "WMKP": 1, "LEBL": 3, "EDDM": 2,
             "FAOR": 2, "RCTP": 2, "RPLL": 2, "VHHH": 3, "LOWW": 2,
-            "LSZH": 3, "LFPO": 3, "RKSI": 4,
+            "LSZH": 3, "LFPO": 3, "RKSI": 4, "ZGGG": 4,
             "KLAS": 4, "KLAX": 4, "KBOS": 5,
         }
 
         def _is_chart_complete(c_dict):
             if not c_dict or not c_dict.get("runways") or c_dict.get("geom_v") != 4:
+                return False
+            if icao in ("EHAM", "ZGGG", "KSFO", "KBFI") and int(c_dict.get("_chart_rev") or 0) < 2:
+                return False
+            if icao in mega_min_runways and len(c_dict.get("osm_stands") or c_dict.get("stands") or ()) < 25 and int(c_dict.get("_chart_rev") or 0) < 2:
                 return False
             if len(c_dict.get("runways", [])) < mega_min_runways.get(icao, 1):
                 return False
@@ -1581,8 +1586,8 @@ class TaxiRouter:
                 b = _to_m(rpts[i + 1][0], rpts[i + 1][1])
                 rid = len(rwy_segs_m)
                 rwy_segs_m.append((a, b))
-                for gx in range(int((min(a[0], b[0]) - 42.0) // 80.0), int((max(a[0], b[0]) + 42.0) // 80.0) + 1):
-                    for gy in range(int((min(a[1], b[1]) - 42.0) // 80.0), int((max(a[1], b[1]) + 42.0) // 80.0) + 1):
+                for gx in range(int((min(a[0], b[0]) - 50.0) // 80.0), int((max(a[0], b[0]) + 50.0) // 80.0) + 1):
+                    for gy in range(int((min(a[1], b[1]) - 50.0) // 80.0), int((max(a[1], b[1]) + 50.0) // 80.0) + 1):
                         rwy_grid.setdefault((gx, gy), []).append(rid)
         rwy_ends_m = [
             _to_m(float(ei["lat"]), float(ei["lon"]))
@@ -1590,12 +1595,12 @@ class TaxiRouter:
             if ei.get("lat") is not None and ei.get("lon") is not None
         ]
 
-        def _near_runway(px, py, lim=38.0):
+        def _near_runway(px, py, lim=45.0):
             for rid in rwy_grid.get((int(px // 80.0), int(py // 80.0)), ()):
                 if _seg_proj_m(px, py, rwy_segs_m[rid][0], rwy_segs_m[rid][1])[0] <= lim:
                     return True
             for ex, ey in rwy_ends_m:
-                if (px - ex) ** 2 + (py - ey) ** 2 <= 58.0 ** 2:
+                if (px - ex) ** 2 + (py - ey) ** 2 <= 68.0 ** 2:
                     return True
             return False
 
@@ -1613,11 +1618,11 @@ class TaxiRouter:
                     b = _to_m(pts[i + 1][0], pts[i + 1][1])
                     eid = len(ap_edges)
                     ap_edges.append((a, b))
-                    for gx in range(int((min(a[0], b[0]) - 16.0) // 60.0), int((max(a[0], b[0]) + 16.0) // 60.0) + 1):
-                        for gy in range(int((min(a[1], b[1]) - 16.0) // 60.0), int((max(a[1], b[1]) + 16.0) // 60.0) + 1):
+                    for gx in range(int((min(a[0], b[0]) - 46.0) // 60.0), int((max(a[0], b[0]) + 46.0) // 60.0) + 1):
+                        for gy in range(int((min(a[1], b[1]) - 46.0) // 60.0), int((max(a[1], b[1]) + 46.0) // 60.0) + 1):
                             ap_edge_grid.setdefault((gx, gy), []).append(eid)
 
-        def _in_or_near_apron(px, py, edge_lim=12.0):
+        def _in_or_near_apron(px, py, edge_lim=42.0):
             if ap_boxes:
                 la = c_lat + py / sy
                 lo = c_lon + px / sx
@@ -1640,15 +1645,19 @@ class TaxiRouter:
             return False
 
         stand_m = [_to_m(float(s["lat"]), float(s["lon"])) for s in stands_all if s.get("lat") is not None and s.get("lon") is not None]
+        for tw_s in twys_in:
+            if tw_s.get("is_stand_leadin"):
+                for p_s in (tw_s.get("points") or ()):
+                    stand_m.append(_to_m(p_s[0], p_s[1]))
         stand_grid = {}
         for sx0, sy0 in stand_m:
             stand_grid.setdefault((int(sx0 // 60.0), int(sy0 // 60.0)), []).append((sx0, sy0))
 
-        def _near_stand(px, py, lim=42.0):
+        def _near_stand(px, py, lim=105.0):
             gx, gy = int(px // 60.0), int(py // 60.0)
             d2 = lim * lim
-            for dx in (-1, 0, 1):
-                for dy in (-1, 0, 1):
+            for dx in (-2, -1, 0, 1, 2):
+                for dy in (-2, -1, 0, 1, 2):
                     for sx0, sy0 in stand_grid.get((gx + dx, gy + dy), ()):
                         if (px - sx0) ** 2 + (py - sy0) ** 2 <= d2:
                             return True
@@ -1663,11 +1672,11 @@ class TaxiRouter:
                 b = _to_m(pts[i + 1][0], pts[i + 1][1])
                 tid = len(term_edges)
                 term_edges.append((a, b))
-                for gx in range(int((min(a[0], b[0]) - 24.0) // 60.0), int((max(a[0], b[0]) + 24.0) // 60.0) + 1):
-                    for gy in range(int((min(a[1], b[1]) - 24.0) // 60.0), int((max(a[1], b[1]) + 24.0) // 60.0) + 1):
+                for gx in range(int((min(a[0], b[0]) - 52.0) // 60.0), int((max(a[0], b[0]) + 52.0) // 60.0) + 1):
+                    for gy in range(int((min(a[1], b[1]) - 52.0) // 60.0), int((max(a[1], b[1]) + 52.0) // 60.0) + 1):
                         term_grid.setdefault((gx, gy), []).append(tid)
 
-        def _near_terminal(px, py, lim=22.0):
+        def _near_terminal(px, py, lim=48.0):
             for tid in term_grid.get((int(px // 60.0), int(py // 60.0)), ()):
                 if _seg_proj_m(px, py, term_edges[tid][0], term_edges[tid][1])[0] <= lim:
                     return True
@@ -1704,7 +1713,7 @@ class TaxiRouter:
             pts = tw.get("points") or []
             if len(pts) < 2:
                 continue
-            if tw.get("_synth_bgl"):
+            if tw.get("_synth_bgl") or tw.get("is_stand_leadin"):
                 synth_ways.append(tw)
                 continue
             pts_m = [_to_m(p[0], p[1]) for p in pts]
@@ -1721,14 +1730,14 @@ class TaxiRouter:
                 a, b = nodes_xy[u], nodes_xy[v]
                 sid = len(init_segs)
                 init_segs.append((w_idx, k, u, v, a, b))
-                for gx in range(int((min(a[0], b[0]) - 8.0) // 40.0), int((max(a[0], b[0]) + 8.0) // 40.0) + 1):
-                    for gy in range(int((min(a[1], b[1]) - 8.0) // 40.0), int((max(a[1], b[1]) + 8.0) // 40.0) + 1):
+                for gx in range(int((min(a[0], b[0]) - 8.0) // 25.0), int((max(a[0], b[0]) + 8.0) // 25.0) + 1):
+                    for gy in range(int((min(a[1], b[1]) - 8.0) // 25.0), int((max(a[1], b[1]) + 8.0) // 25.0) + 1):
                         seg_grid.setdefault((gx, gy), []).append(sid)
 
         seg_splits = {}
         for n_idx, (nx, ny) in enumerate(nodes_xy):
             seen_sids = set()
-            for sid in seg_grid.get((int(nx // 40.0), int(ny // 40.0)), ()):
+            for sid in seg_grid.get((int(nx // 25.0), int(ny // 25.0)), ()):
                 if sid in seen_sids:
                     continue
                 seen_sids.add(sid)
@@ -1743,7 +1752,7 @@ class TaxiRouter:
         checked_pairs = set()
         for cell_sids in seg_grid.values():
             nc = len(cell_sids)
-            if nc < 2 or nc > 80:
+            if nc < 2 or nc > 500:
                 continue
             for i in range(nc):
                 s1 = cell_sids[i]
@@ -1816,24 +1825,29 @@ class TaxiRouter:
             if vlen < 1e-4:
                 return False
             ux, uy = vx / vlen, vy / vlen
-            for eid in edge_grid.get((int(tx // 45.0), int(ty // 45.0)), ()):
-                if not edges[eid][4] or eid in own_eids:
-                    continue
-                eu, ev = edges[eid][1], edges[eid][2]
-                if eu in (prev_nid, tip_nid, junc_nid) or ev in (prev_nid, tip_nid, junc_nid):
-                    continue
-                pa, pb = nodes_xy[eu], nodes_xy[ev]
-                sx_e, sy_e = pb[0] - pa[0], pb[1] - pa[1]
-                denom = ux * sy_e - uy * sx_e
-                if abs(denom) > 1e-5:
-                    ox, oy = pa[0] - tx, pa[1] - ty
-                    s_ray = (ox * sy_e - oy * sx_e) / denom
-                    t_seg = (ox * uy - oy * ux) / denom
-                    if 0.0 <= s_ray <= 18.5 and -0.08 <= t_seg <= 1.08:
-                        return True
-                d, _, cx, cy = _seg_proj_m(tx, ty, pa, pb)
-                if d <= 9.5 and ((cx - tx) * ux + (cy - ty) * uy) >= 0.5:
-                    return True
+            gx0, gy0 = int(tx // 45.0), int(ty // 45.0)
+            seen_e = set()
+            for dx_e in (-1, 0, 1):
+                for dy_e in (-1, 0, 1):
+                    for eid in edge_grid.get((gx0 + dx_e, gy0 + dy_e), ()):
+                        if eid in seen_e or not edges[eid][4] or eid in own_eids:
+                            continue
+                        seen_e.add(eid)
+                        eu, ev = edges[eid][1], edges[eid][2]
+                        if eu in (prev_nid, tip_nid, junc_nid) or ev in (prev_nid, tip_nid, junc_nid):
+                            continue
+                        pa, pb = nodes_xy[eu], nodes_xy[ev]
+                        sx_e, sy_e = pb[0] - pa[0], pb[1] - pa[1]
+                        denom = ux * sy_e - uy * sx_e
+                        if abs(denom) > 1e-5:
+                            ox, oy = pa[0] - tx, pa[1] - ty
+                            s_ray = (ox * sy_e - oy * sx_e) / denom
+                            t_seg = (ox * uy - oy * ux) / denom
+                            if 0.0 <= s_ray <= 28.0 and -0.08 <= t_seg <= 1.08:
+                                return True
+                        d, _, cx, cy = _seg_proj_m(tx, ty, pa, pb)
+                        if d <= 15.0 and ((cx - tx) * ux + (cy - ty) * uy) >= 0.5:
+                            return True
             return False
 
         pair_edges = {}
@@ -1939,6 +1953,14 @@ class TaxiRouter:
                 continue
 
             chain_len = sum(edges[pair_edges[pk][0]][3] for pk in chain_pairs)
+            has_named_ref = any(
+                bool(raw_ways_m[edges[eid][0]][0].get("ref")) and raw_ways_m[edges[eid][0]][0].get("type") != "taxilane"
+                for eid in chain_eids
+            )
+            if has_named_ref and chain_len > 75.0:
+                continue
+            if not has_named_ref and chain_len > 165.0:
+                continue
             if not orig_aprons and (pruned_len + chain_len) > total_len * 0.40:
                 continue
 
@@ -1971,6 +1993,9 @@ class TaxiRouter:
         new_twys = list(synth_ways)
         for w_idx, (orig_tw, _, _) in enumerate(raw_ways_m):
             eids = way_edge_lists[w_idx]
+            if not eids or all(edges[eid][4] for eid in eids):
+                new_twys.append(orig_tw)
+                continue
             cur_run = []
             last_v = None
             for eid in eids:
@@ -2915,11 +2940,58 @@ class TaxiRouter:
                         if best_r:
                             tw["ref"] = best_r
 
-        # Resolve way["aeroway"="parking_position"] into oriented stands
-        tw_pts = []
+        # Resolve way["aeroway"="parking_position"] into oriented stands + Lido stand lead-in taxilanes
+        tw_segs = []
+        tw_seg_grid = {}
+        tl_pt_grid = {}
         for tw in taxiways:
-            for p in tw.get("points", []):
-                tw_pts.append(p)
+            pts_tw = tw.get("points") or []
+            is_tl = (tw.get("type") == "taxilane")
+            for k_tw in range(len(pts_tw)):
+                if is_tl:
+                    p_tk = pts_tw[k_tw]
+                    tl_pt_grid.setdefault((int(math.floor(p_tk[0] / 0.001)), int(math.floor(p_tk[1] / 0.001))), []).append(p_tk)
+                if k_tw + 1 < len(pts_tw):
+                    pa_tw, pb_tw = pts_tw[k_tw], pts_tw[k_tw + 1]
+                    sid_tw = len(tw_segs)
+                    tw_segs.append((pa_tw, pb_tw))
+                    r0_t = int(math.floor(min(pa_tw[0], pb_tw[0]) / 0.002)) - 1
+                    r1_t = int(math.floor(max(pa_tw[0], pb_tw[0]) / 0.002)) + 1
+                    c0_t = int(math.floor(min(pa_tw[1], pb_tw[1]) / 0.002)) - 1
+                    c1_t = int(math.floor(max(pa_tw[1], pb_tw[1]) / 0.002)) + 1
+                    for gr_t in range(r0_t, r1_t + 1):
+                        for gc_t in range(c0_t, c1_t + 1):
+                            tw_seg_grid.setdefault((gr_t, gc_t), []).append(sid_tw)
+
+        def _dist_to_tw_seg(pt):
+            if not tw_segs:
+                return 0.0
+            gr_q = int(math.floor(pt[0] / 0.002))
+            gc_q = int(math.floor(pt[1] / 0.002))
+            best_d = float('inf')
+            for sid_q in tw_seg_grid.get((gr_q, gc_q), ()):
+                sa, sb = tw_segs[sid_q]
+                d_q = point_to_segment_projection(pt[0], pt[1], sa[0], sa[1], sb[0], sb[1])[3]
+                if d_q < best_d:
+                    best_d = d_q
+                    if best_d <= 0.5:
+                        return best_d
+            if best_d < float('inf'):
+                return best_d
+            return min(
+                point_to_segment_projection(pt[0], pt[1], sa[0], sa[1], sb[0], sb[1])[3]
+                for sa, sb in tw_segs[::max(1, len(tw_segs) // 160)]
+            )
+
+        def _near_existing_tl(pt, lim_m=2.2):
+            gr_l = int(math.floor(pt[0] / 0.001))
+            gc_l = int(math.floor(pt[1] / 0.001))
+            for dr_l in (-1, 0, 1):
+                for dc_l in (-1, 0, 1):
+                    for tp_l in tl_pt_grid.get((gr_l + dr_l, gc_l + dc_l), ()):
+                        if haversine_m(pt[0], pt[1], tp_l[0], tp_l[1]) <= lim_m:
+                            return True
+            return False
 
         for ref, pts in parking_ways:
             is_closed_poly = len(pts) >= 4 and (
@@ -2956,27 +3028,77 @@ class TaxiRouter:
 
             p_first = pts[0]
             p_last = pts[-1]
-            if tw_pts:
-                d_first = min(haversine_m(p_first[0], p_first[1], tp[0], tp[1]) for tp in tw_pts)
-                d_last = min(haversine_m(p_last[0], p_last[1], tp[0], tp[1]) for tp in tw_pts)
-                if d_first <= d_last:
-                    entry_pt, stop_pt = p_first, p_last
-                else:
-                    entry_pt, stop_pt = p_last, p_first
+            if tw_segs:
+                d_first = _dist_to_tw_seg(p_first)
+                d_last = _dist_to_tw_seg(p_last)
+                ordered_pts = list(pts) if d_first <= d_last else list(reversed(pts))
             else:
-                entry_pt, stop_pt = p_first, p_last
+                d_first, d_last = 999.0, 999.0
+                ordered_pts = list(pts)
 
-            len_m = 0.0
-            for i in range(len(pts) - 1):
-                len_m += haversine_m(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1])
-            hdg = bearing_deg(entry_pt[0], entry_pt[1], stop_pt[0], stop_pt[1])
-            s_lat = round(entry_pt[0] + 0.82 * (stop_pt[0] - entry_pt[0]), 6)
-            s_lon = round(entry_pt[1] + 0.82 * (stop_pt[1] - entry_pt[1]), 6)
-            has_jw = any(haversine_m(s_lat, s_lon, jb[0], jb[1]) <= 80.0 for jb in jet_bridges)
+            cum_d = [0.0]
+            for i in range(len(ordered_pts) - 1):
+                cum_d.append(cum_d[-1] + haversine_m(ordered_pts[i][0], ordered_pts[i][1], ordered_pts[i + 1][0], ordered_pts[i + 1][1]))
+            len_m = cum_d[-1]
+
+            def _interp_along(target_m):
+                if len_m <= 1e-6 or target_m <= 0.0:
+                    return ordered_pts[0], 0
+                if target_m >= len_m:
+                    return ordered_pts[-1], max(0, len(ordered_pts) - 2)
+                for k_i in range(len(cum_d) - 1):
+                    d0_i, d1_i = cum_d[k_i], cum_d[k_i + 1]
+                    if target_m <= d1_i or k_i == len(cum_d) - 2:
+                        span_i = d1_i - d0_i
+                        frac_i = 0.0 if span_i <= 1e-6 else max(0.0, min(1.0, (target_m - d0_i) / span_i))
+                        pa_i, pb_i = ordered_pts[k_i], ordered_pts[k_i + 1]
+                        return [pa_i[0] + frac_i * (pb_i[0] - pa_i[0]), pa_i[1] + frac_i * (pb_i[1] - pa_i[1])], k_i
+                return ordered_pts[-1], max(0, len(ordered_pts) - 2)
+
+            s_pt, cut_idx = _interp_along(0.82 * len_m)
+            s_lat = round(s_pt[0], 6)
+            s_lon = round(s_pt[1], 6)
+            stop_end = ordered_pts[-1]
+            h0_pt, _ = _interp_along(0.62 * len_m)
+            if haversine_m(h0_pt[0], h0_pt[1], stop_end[0], stop_end[1]) >= 2.5:
+                hdg = bearing_deg(h0_pt[0], h0_pt[1], stop_end[0], stop_end[1])
+            else:
+                hdg = bearing_deg(ordered_pts[0][0], ordered_pts[0][1], stop_end[0], stop_end[1])
+
+            if 8.0 <= len_m <= 320.0:
+                is_rollthrough = bool(tw_segs and d_first <= 4.5 and d_last <= 4.5)
+                if is_rollthrough:
+                    leadin_pts = [[round(p[0], 6), round(p[1], 6)] for p in ordered_pts]
+                else:
+                    leadin_pts = [[round(p[0], 6), round(p[1], 6)] for p in ordered_pts[:cut_idx + 1]]
+                    if haversine_m(leadin_pts[-1][0], leadin_pts[-1][1], s_lat, s_lon) >= 0.8 or len(leadin_pts) == 1:
+                        leadin_pts.append([s_lat, s_lon])
+                    else:
+                        leadin_pts[-1] = [s_lat, s_lon]
+                mid_lp = leadin_pts[len(leadin_pts) // 2]
+                if len(leadin_pts) >= 2 and not (
+                    _near_existing_tl(leadin_pts[0]) and _near_existing_tl(leadin_pts[-1]) and _near_existing_tl(mid_lp)
+                ):
+                    tw_lead = {
+                        "ref": "",
+                        "type": "taxilane",
+                        "points": leadin_pts,
+                        "is_stand_leadin": True,
+                    }
+                    if is_rollthrough:
+                        tw_lead["is_rollthrough_leadin"] = True
+                    taxiways.append(tw_lead)
+
+            has_jw = any(
+                min(haversine_m(s_lat, s_lon, jb[0], jb[1]), haversine_m(stop_end[0], stop_end[1], jb[0], jb[1])) <= 80.0
+                for jb in jet_bridges
+            )
             if not ref:
                 unnamed_stands.append({
                     "lat": s_lat,
                     "lon": s_lon,
+                    "_stop_lat": round(stop_end[0], 6),
+                    "_stop_lon": round(stop_end[1], 6),
                     "heading": round(hdg, 1),
                     "length_m": round(len_m, 1),
                     "has_jetway": has_jw
@@ -3005,23 +3127,84 @@ class TaxiRouter:
             if canon_r:
                 stand_by_ref[canon_r] = new_st
 
-        # Fallback 1: If no named parking_position exists in OSM (e.g. LOWI Innsbruck), assign sequential numbers to unnamed parking_positions
-        if not stands and unnamed_stands:
-            unnamed_stands.sort(key=lambda u: (round(u["lat"], 4), round(u["lon"], 4)))
-            for idx_u, u_st in enumerate(unnamed_stands, 1):
-                u_copy = dict(u_st)
-                u_copy["ref"] = str(idx_u)
+        # Hybrid & Fallback Stand Resolution:
+        # Handles airports where OSM places stand designators on terminal aeroway=gate nodes alongside unnamed
+        # parking_position ways (e.g. ZGGG T1/T2/T3), or where all parking_positions are unnamed (e.g. LOWI).
+        orig_named_count = len(stands)
+        need_hybrid_stands = (
+            not stands
+            or len(unnamed_stands) >= max(10, int(orig_named_count * 0.25))
+            or (gate_nodes and orig_named_count < int(len(gate_nodes) * 0.35))
+        )
+        matched_unnamed_idxs = set()
+        if need_hybrid_stands and gate_nodes:
+            # Step A: Greedily pair unmatched terminal gate_nodes to nearest unnamed_stands (<= 125m)
+            cand_pairs = []
+            for g_idx, g_nd in enumerate(gate_nodes):
+                c_r = self._canon_stand_ref(g_nd.get("ref"))
+                if not c_r or c_r in stand_by_ref:
+                    continue
+                glat, glon = g_nd["lat"], g_nd["lon"]
+                if any(haversine_m(glat, glon, st["lat"], st["lon"]) <= 22.0 for st in stands):
+                    continue
+                for u_idx, u_st in enumerate(unnamed_stands):
+                    if abs(glat - u_st["lat"]) > 0.0016 or abs(glon - u_st["lon"]) > 0.0020:
+                        continue
+                    d_u = haversine_m(glat, glon, u_st["lat"], u_st["lon"])
+                    if "_stop_lat" in u_st:
+                        d_u = min(d_u, haversine_m(glat, glon, u_st["_stop_lat"], u_st["_stop_lon"]))
+                    if d_u <= 125.0:
+                        cand_pairs.append((d_u, g_idx, u_idx))
+            cand_pairs.sort(key=lambda x: x[0])
+            used_gates = set()
+            for _, g_idx, u_idx in cand_pairs:
+                if g_idx in used_gates or u_idx in matched_unnamed_idxs:
+                    continue
+                g_nd = gate_nodes[g_idx]
+                c_r = self._canon_stand_ref(g_nd.get("ref"))
+                if not c_r or c_r in stand_by_ref:
+                    continue
+                used_gates.add(g_idx)
+                matched_unnamed_idxs.add(u_idx)
+                u_copy = {k: v for k, v in unnamed_stands[u_idx].items() if not k.startswith("_")}
+                u_copy["ref"] = g_nd["ref"]
+                u_copy["has_jetway"] = True
                 if u_copy.get("heading") is None:
                     u_copy.pop("heading", None)
                 stands.append(u_copy)
+                stand_by_ref[c_r] = u_copy
 
-        # Fallback 2: If still no stands, use terminal aeroway=gate nodes if present
-        if not stands and gate_nodes:
-            for g_nd in gate_nodes:
-                c_r = self._canon_stand_ref(g_nd["ref"])
-                if c_r and c_r not in stand_by_ref:
+            # Step B: Add remaining airside gate_nodes when terminal piers have no parking_position ways yet (e.g. ZGGG T3)
+            if orig_named_count < max(20, int(len(gate_nodes) * 0.45)):
+                for g_idx, g_nd in enumerate(gate_nodes):
+                    if g_idx in used_gates:
+                        continue
+                    c_r = self._canon_stand_ref(g_nd.get("ref"))
+                    if not c_r or c_r in stand_by_ref:
+                        continue
+                    glat, glon = g_nd["lat"], g_nd["lon"]
+                    if any(haversine_m(glat, glon, st["lat"], st["lon"]) <= 20.0 for st in stands):
+                        continue
+                    if tw_segs and _dist_to_tw_seg((glat, glon)) > 185.0:
+                        continue
                     stands.append(dict(g_nd))
                     stand_by_ref[c_r] = stands[-1]
+
+        # Step C: Assign sequential numbers to remaining unnamed parking_positions when aprons lack named stands
+        rem_unnamed = [u for idx_u, u in enumerate(unnamed_stands) if idx_u not in matched_unnamed_idxs]
+        if rem_unnamed and (not stands or len(rem_unnamed) >= max(8, orig_named_count)):
+            rem_unnamed.sort(key=lambda u: (round(u["lat"], 4), round(u["lon"], 4)))
+            next_seq = 1
+            for u_st in rem_unnamed:
+                while str(next_seq) in stand_by_ref:
+                    next_seq += 1
+                u_copy = {k: v for k, v in u_st.items() if not k.startswith("_")}
+                u_copy["ref"] = str(next_seq)
+                if u_copy.get("heading") is None:
+                    u_copy.pop("heading", None)
+                stands.append(u_copy)
+                stand_by_ref[str(next_seq)] = u_copy
+                next_seq += 1
 
         # Include apron/stand-adjacent airport buildings (e.g. north apron facilities/hangars tagged building=yes/warehouse)
         apron_boundary_pts = []
@@ -3091,7 +3274,8 @@ class TaxiRouter:
             "osm_stands": [dict(s) for s in stands]
         }
         self._prune_dangling_taxiway_stubs(res_chart)
-        res_chart["_deadend_pruned_v"] = 2
+        res_chart["_deadend_pruned_v"] = 3
+        res_chart["_chart_rev"] = 2
         self._ensure_complete_apron_surfaces(res_chart)
         return res_chart
 
@@ -3226,7 +3410,7 @@ class TaxiRouter:
             grid.setdefault((gx, gy), []).append(idx)
             return idx
 
-        def add_edge(u, v, ref, edge_type):
+        def add_edge(u, v, ref, edge_type, extra_cost=0.0):
             if u == v:
                 return
             lat1, lon1 = nodes[u]
@@ -3246,28 +3430,57 @@ class TaxiRouter:
                 mult = 1.12
             elif edge_type == "runway":
                 mult = 4.2  # Prefer parallel taxiways over taxiing on the runway
-            cost = dist * mult
+            cost = dist * mult + extra_cost
             adj[u].append((v, cost, dist, ref, edge_type))
             adj[v].append((u, cost, dist, ref, edge_type))
 
         # 1. Insert all taxiways and taxilanes, subdividing every 12m so LINK fillets and junctions snap cleanly
+        non_leadin_nodes = set()
+        stand_leadin_nodes = set()
+        stand_leadin_tips = set()
+        stand_leadin_entries = set()
         for twy in chart.get("taxiways", []):
             pts = twy.get("points", [])
+            if len(pts) < 2:
+                continue
             ref = twy.get("ref", "")
             etype = twy.get("type", "taxiway")
+            is_leadin = bool(twy.get("is_stand_leadin"))
+            is_rollthrough_leadin = bool(twy.get("is_rollthrough_leadin"))
+            first_u = None
+            last_v = None
             for i in range(len(pts) - 1):
                 lat1, lon1 = pts[i]
                 lat2, lon2 = pts[i + 1]
                 seg_len = haversine_m(lat1, lon1, lat2, lon2)
                 steps = max(1, int(math.ceil(seg_len / 12.0)))
                 prev_u = get_node_idx(lat1, lon1)
+                if first_u is None:
+                    first_u = prev_u
+                if is_leadin:
+                    stand_leadin_nodes.add(prev_u)
+                else:
+                    non_leadin_nodes.add(prev_u)
                 for s in range(1, steps + 1):
                     f = s / float(steps)
                     mlat = lat1 + f * (lat2 - lat1)
                     mlon = lon1 + f * (lon2 - lon1)
                     curr_v = get_node_idx(mlat, mlon)
-                    add_edge(prev_u, curr_v, ref, etype)
+                    if is_leadin:
+                        stand_leadin_nodes.add(curr_v)
+                    else:
+                        non_leadin_nodes.add(curr_v)
+                    add_edge(prev_u, curr_v, ref, etype, extra_cost=(dist_pen := (8.0 if is_leadin else 0.0)))
                     prev_u = curr_v
+                    last_v = curr_v
+            if is_leadin and first_u is not None and last_v is not None:
+                stand_leadin_entries.add(first_u)
+                if not is_rollthrough_leadin:
+                    stand_leadin_tips.add(last_v)
+                else:
+                    stand_leadin_entries.add(last_v)
+
+        stand_leadin_only_nodes = stand_leadin_nodes - non_leadin_nodes
 
         # 2. Insert all runways (subdivided every 45m so high-speed exit turnoffs connect to runway centerline)
         for rwy in chart.get("runways", []):
@@ -3292,11 +3505,14 @@ class TaxiRouter:
         num_nodes = len(nodes)
         for u in range(num_nodes):
             if len(adj[u]) <= 1:  # Dead-end or turnoff tip
+                if u in stand_leadin_tips and u not in stand_leadin_entries:
+                    continue
                 ulat, ulon = nodes[u]
                 gx = int(ulat * 20000)
                 gy = int(ulon * 20000)
                 best_v = None
                 best_score = 36.0
+                is_leadin_entry = (u in stand_leadin_entries)
                 # Exclude up to 3-hop neighbors along the same way so a fillet never bridges back onto itself
                 exclude = {u}
                 for _ in range(3):
@@ -3308,16 +3524,16 @@ class TaxiRouter:
                 for dx in range(-8, 9):
                     for dy in range(-8, 9):
                         for v in grid.get((gx + dx, gy + dy), ()):
-                            if v not in exclude:
+                            if v not in exclude and v not in stand_leadin_only_nodes:
                                 d = haversine_m(ulat, ulon, nodes[v][0], nodes[v][1])
                                 is_v_rwy = any(e[4] == "runway" for e in adj.get(v, ()))
-                                max_bridge_d = 36.0 if is_v_rwy else 20.0
+                                max_bridge_d = 36.0 if is_v_rwy else (32.0 if is_leadin_entry else 20.0)
                                 if d < max_bridge_d and d < best_score:
                                     best_score = d
                                     best_v = v
                 if best_v is not None:
                     ref_u = adj[u][0][3] if adj[u] else ""
-                    add_edge(u, best_v, ref_u, "taxiway")
+                    add_edge(u, best_v, ref_u, "taxilane" if is_leadin_entry else "taxiway")
 
         # 4. Penalize mid-runway crossings (> 75m from runway thresholds) so routes prefer perimeter taxiways (e.g. A at LFMN)
         rwys = chart.get("runways", [])
@@ -3369,7 +3585,7 @@ class TaxiRouter:
                     if rn and not rn.startswith("RWY"):
                         twy_edges_by_norm.setdefault(rn, []).append((u_idx, v_idx, ref))
 
-        stand_bay_nodes = set()
+        stand_bay_nodes = set(stand_leadin_only_nodes)
         if taxilane_only_nodes:
             for st in (chart.get("stands") or ()):
                 slat = st.get("lat")
@@ -3815,6 +4031,9 @@ class TaxiRouter:
             cand_nodes = [(idx, pt[0], pt[1]) for idx, pt in cand_nodes]
 
         if mode == "arrival":
+            fb_edges = adj.get(fallback, ())
+            if len(fb_edges) == 1 and haversine_m(gate_lat, gate_lon, nodes[fallback][0], nodes[fallback][1]) <= 4.5:
+                return fallback
             # Look for a node within 42m that has an incoming edge aligned with gate_hdg
             # and sits upstream of the stand along gate_hdg so the aircraft rolls straight in.
             best_up_idx = None
@@ -3891,6 +4110,19 @@ class TaxiRouter:
 
         glat, glon = nodes[goal_idx]
         slat, slon = nodes[start_idx]
+
+        exempt_bay_nodes = set()
+        if stand_bay_nodes:
+            for anchor_idx in (start_idx, goal_idx):
+                if anchor_idx in stand_bay_nodes:
+                    cur_b = anchor_idx
+                    prev_b = -1
+                    for _ in range(20):
+                        exempt_bay_nodes.add(cur_b)
+                        nxt_bs = [nb for nb, _, _, _, et in adj.get(cur_b, ()) if nb != prev_b and et == "taxilane" and nb in stand_bay_nodes]
+                        if len(nxt_bs) != 1:
+                            break
+                        prev_b, cur_b = cur_b, nxt_bs[0]
 
         # Check if goal_idx has at least one incoming non-runway edge aligned with goal_in_heading
         enforce_goal_hdg = False
@@ -3969,8 +4201,8 @@ class TaxiRouter:
                     if angle_diff_deg(out_bearing, goal_in_heading) > 65.0:
                         turn_penalty += 2500.0
 
-                if stand_bay_nodes and v in stand_bay_nodes:
-                    if haversine_m(vlat, vlon, slat, slon) > 62.0 and haversine_m(vlat, vlon, glat, glon) > 62.0:
+                if stand_bay_nodes and v in stand_bay_nodes and v not in exempt_bay_nodes:
+                    if haversine_m(vlat, vlon, slat, slon) > 22.0 and haversine_m(vlat, vlon, glat, glon) > 22.0:
                         turn_penalty += 950.0
 
                 ref_u = (ref or "").upper()

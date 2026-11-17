@@ -1,4 +1,4 @@
-# GateFinder — Référentiel Complet de Développement & d'Architecture (V2.0.0 → V2.0.8)
+# GateFinder — Référentiel Complet de Développement & d'Architecture (V2.0.0 → V2.1.0)
 
 > **Usage prévu de ce document :** Ce fichier sert de **base de connaissances exhaustive (System Context)** à fournir à **Gemini** afin qu'il dispose de 100 % de l'historique fonctionnel, de l'architecture du code, des API internes, des conventions UI/UX et des contraintes techniques de **GateFinder** pour rédiger des prompts chirurgicaux destinés à l'agent de code (**Antigravity**).
 
@@ -7,12 +7,12 @@
 ## 1. Identité du Projet & Écosystème d'Exécution
 
 - **Nom :** GateFinder (édité par *Sidestick Priority* — dépôt GitHub : `wildbill75/gsx-gatefinder`)
-- **Version actuelle en production :** `V2.0.8` (`V2.0.5` étant la dernière version uploadée manuellement sur `flightsim.to` ; `V2.0.6+` sont distribuées automatiquement via l'Auto-Updater GitHub intégré).
+- **Version actuelle en production :** `V2.1.0` (`V2.0.9` publiée sur `flightsim.to` ; `V2.0.6+` distribuées automatiquement via l'Auto-Updater GitHub intégré).
 - **Simulateurs cibles :** Microsoft Flight Simulator 2020 & Microsoft Flight Simulator 2024 (Store & Steam, 2D & VR).
 - **Rôle :** Compagnon tout-en-un d'assignation intelligente de portes/postes de stationnement, de cartographie vectorielle sol type Lido (Moving Map), de routage taxiway A* temps réel, et de synchronisation bidirectionnelle **SimBrief + GSX Pro + BeyondATC + SayIntentions.AI + VATSIM/IVAO + SimConnect**.
 - **5 Surfaces d'Affichage Synchronisées en Temps Réel** (alimentées par le même moteur Python local sur le port HTTP `8420`) :
   1. **Application Desktop Windows (`GateFinder.exe`)** : CustomTkinter + Canvas vectoriel GDI haute performance (`src/gui.py`), icône System Tray (`pystray`), support 4K / High-DPI (200 %–250 %+).
-  2. **MSFS In-Game Toolbar Panel (`GATEFINDER V2.0.8`)** : Panneau barre d'outils natif MSFS 2020 & 2024 (2D et VR) via CoherentGT (`GateFinderPanel.html` + `GateFinderPanel.js`).
+  2. **MSFS In-Game Toolbar Panel (`GATEFINDER V2.1.0`)** : Panneau barre d'outils natif MSFS 2020 & 2024 (2D et VR) via CoherentGT (`GateFinderPanel.html` + `GateFinderPanel.js`).
   3. **Application Native Tablette EFB MSFS 2024** : App dédiée intégrée directement dans l'EFB natif de MSFS 2024 (`GateFinderEfbApp.js` → `GateFinderEfbFrame.html`).
   4. **Application Native Cockpit EFB Fenix A320 Series (`A319` / `A320` / `A321`)** : App intégrée sur l'écran d'accueil des tablettes Captain et First Officer du Fenix (`EfbHost_Captain.html`, `EfbHost_FO.html` → `GateFinderFenixFrame.html`).
   5. **Web EFB Externe (iPad / Tablette Android / Smartphone)** : Accessible en Wi-Fi local via QR code (`http://<LAN_IP>:8420/` avec modes adaptatifs `Phone`, `Tablet`, `PC`).
@@ -114,6 +114,17 @@ Passage de l'architecture V1 (simples cartes/tuiles statiques) à une suite EFB 
    - Interdiction pour l'A\* d'emprunter les postes de stationnement traversants tiers (`stand_bay_nodes`) comme ronds-points de demi-tour, suppression topologique des boucles fermées (`_strip_route_loops`), compétition des voies d'apron non nommées dans `_process_si_taxi_path` (évitant l'accrochage latéral sur des raccords courbes comme `C` à `LDDU`), et ajout de `GWI` (`Germanwings`) dans le groupe sœur `{"EWG", "EWL", "GWI"}`.
 4. **Popup Automatique "What's New" de Changelog à Chaque Mise à Jour (`src/config.py`, `src/gui.py`, `GateFinder.spec`)** :
    - Embarquement de `CHANGELOG.md` dans `GateFinder.spec` et affichage automatique unique par version (`last_seen_changelog_version` vs `APP_VERSION`) d'une modale sans bordure présentant les nouveautés de la mise à jour (respectant `suppress_popups_in_cockpit` et `--silent`), complétée par un bouton `Changelog` dans `Settings`.
+
+---
+
+### Phase F — Version 2.0.9 (Vérification Aéroport Actif Couatl GSX Pro & Verrouillage Stand Arrivée SayIntentions.AI)
+1. **Garde d'Aéroport Actif GSX Pro / Couatl à l'Atterrissage (`src/interoperability_hub.py`)** :
+   - Lecture incrémentale de `%APPDATA%\virtuali\Couatl.err` (`[GSX] onEnteredAirport <ICAO>` / `onExitedAirport <ICAO>`) via `GSXArrivalAutomator.get_couatl_active_airport` (cache `(mtime, size)` en `O(1)`).
+   - Lorsqu'une approche survole un aérodrome voisin collé au seuil (ex. base aérienne d'Almaza `HEAZ` à `1.8 NM` du seuil `RWY 05C` du Caire `HECA`), GateFinder retarde l'ouverture du menu GSX (`GSX PRO: ARMED — WAITING FOR <ICAO>...`) tant que Couatl n'est pas effectivement entré dans l'aéroport d'arrivée, et relance automatiquement la synchronisation GSX si une transition `onEnteredAirport <ICAO>` survient après une première synchro effectuée sous un autre ICAO.
+2. **Priorité Géométrique `taxi_path`, Préfixes Terminaux & Anti-Ping-Pong `flight.json` SayIntentions.AI (`src/interoperability_hub.py`)** :
+   - Prise en charge des instructions radio préfixées par un terminal/tablier/jetée (`"Taxi to Terminal 1 Gate 10 via ..."`).
+   - En phase d'arrivée, si `taxi_path[-1]` aboutit directement sur un poste (`<= 32 m`) alors que `assigned_gate` dans `flight.json` pointe à `> 80 m` (champ obsolète non mis à jour par SayIntentions), le stand géométrique du `taxi_path` l'emporte.
+   - Suivi dédié `_last_json_assigned_gate` empêchant un `assigned_gate` obsolète de `flight.json` d'écraser en boucle un stand radio, et verrouillage stationnaire au parking (`<= 55 m`, `GS < 3 kt`) protégeant le débarquement GSX en cours.
 
 ---
 

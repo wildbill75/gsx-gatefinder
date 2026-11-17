@@ -361,7 +361,7 @@ class GSXGateFinderPanel extends TemplateElement {
 
         function forceTitle() {
             self.classList.add("is-ingame-panel");
-            let verStr = (self.currentData && self.currentData.app_version) ? String(self.currentData.app_version) : "2.0.8";
+            let verStr = (self.currentData && self.currentData.app_version) ? String(self.currentData.app_version) : "2.1.0";
             let fullTitle = "GATEFINDER V" + verStr.replace(/^V/i, "");
             let ui = document.querySelector("ingame-ui");
             if (ui) {
@@ -581,7 +581,7 @@ class GSXGateFinderPanel extends TemplateElement {
             });
             wrap.appendChild(toast);
         }
-        let lineTxt = this.sanitizeText(String(toastInfo.text || toastInfo.message || toastInfo.title || "GSX Pro Armed"));
+        let lineTxt = this.sanitizeText(String(toastInfo.text || toastInfo.message || toastInfo.title || "Gate Active"));
 
         toast.style.cssText =
             "position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);" +
@@ -841,13 +841,15 @@ class GSXGateFinderPanel extends TemplateElement {
         }
 
         let planeSvg = '<svg width="14" height="14" viewBox="0 0 24 24" style="margin-right:7px;flex-shrink:0;" fill="#FFFFFF"><path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/></svg>';
+        let gsxInst = !(this.currentData && this.currentData.gsx && this.currentData.gsx.installed === false);
+        let subHdrTxt = gsxInst ? "GSX Pro Reposition & Stand Sync" : "Stand Selection & Aircraft Reposition";
 
         modal.innerHTML =
             '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px;">' +
                 '<span style="font-size:13.5px;font-weight:700;color:#F8FAFC;">' + titleTxt + '</span>' +
                 '<span id="BtnCloseStandCtx" style="font-size:13px;font-weight:700;color:#94A3B8;cursor:pointer;padding:2px 6px;border-radius:5px;">X</span>' +
             '</div>' +
-            '<div style="font-size:11.5px;font-weight:700;color:#38BDF8;margin-bottom:10px;">GSX Pro Reposition & Stand Sync</div>' +
+            '<div style="font-size:11.5px;font-weight:700;color:#38BDF8;margin-bottom:10px;">' + subHdrTxt + '</div>' +
             '<div id="BtnWarpStandCtx" style="display:flex;align-items:center;justify-content:center;height:36px;background-color:#0284C7;color:#FFFFFF;font-size:13px;font-weight:700;border-radius:7px;cursor:pointer;padding:0 14px;margin-bottom:' + (sh.isAssigned ? '2px' : '7px') + ';">' + planeSvg + '<span>Reposition Aircraft to ' + sh.ref + '</span></div>' +
             (!sh.isAssigned
                 ? '<div id="BtnSelectStandCtx" style="display:flex;align-items:center;justify-content:center;height:32px;background-color:#1E293B;color:#E2E8F0;font-size:12.5px;font-weight:700;border-radius:7px;cursor:pointer;padding:0 14px;">Select Stand ' + sh.ref + ' Only</div>'
@@ -2179,8 +2181,8 @@ class GSXGateFinderPanel extends TemplateElement {
         ]);
 
         if (sig !== this.lastSidebarSig) {
-            this.lastSidebarSig = sig;
             this.renderSidebar(aptData, data);
+            this.lastSidebarSig = sig;
         } else {
             this.updateLiveSidebarElements(aptData, data);
         }
@@ -2710,13 +2712,14 @@ class GSXGateFinderPanel extends TemplateElement {
             ? "display:flex;flex-direction:column;align-items:center;width:100%;gap:8px;margin-bottom:8px;"
             : "display:flex;flex-direction:row;width:100%;margin-bottom:7px;";
 
+        let fdObj = flightData || this.currentData || {};
         let termStr = String(aptData.terminal || "MAIN APRON").toUpperCase();
         let hasJetway = (aptData.has_jetway !== undefined && aptData.has_jetway !== null)
             ? Boolean(aptData.has_jetway)
             : (aptData.type === "GATE" || aptData.type === "DOCK");
-        let isMil = Boolean(aptData.is_military) || termStr.indexOf("MILITARY") !== -1 || Boolean(this.flightData && this.flightData.is_military_flight);
-        let isCargo = termStr.indexOf("CARGO") !== -1 || Boolean(aptData.is_cargo) || Boolean(this.flightData && this.flightData.is_cargo_flight);
-        let isGa = Boolean(aptData.is_ga) || termStr.indexOf("GENERAL AVIATION") !== -1 || termStr.indexOf("BUSINESS AVIATION") !== -1 || Boolean(this.flightData && this.flightData.is_ga_flight);
+        let isMil = Boolean(aptData.is_military) || termStr.indexOf("MILITARY") !== -1 || Boolean(fdObj.is_military_flight);
+        let isCargo = termStr.indexOf("CARGO") !== -1 || Boolean(aptData.is_cargo) || Boolean(fdObj.is_cargo_flight);
+        let isGa = Boolean(aptData.is_ga) || termStr.indexOf("GENERAL AVIATION") !== -1 || termStr.indexOf("BUSINESS AVIATION") !== -1 || Boolean(fdObj.is_ga_flight);
         let boardingTxt;
         if (isMil) {
             boardingTxt = aptData.is_mil_stand_tagged ? "Military Stand (Mil)" : "Military Ramp";
@@ -2766,8 +2769,9 @@ class GSXGateFinderPanel extends TemplateElement {
         pSource.innerText = cleanSrc;
         row2.appendChild(pSource);
 
-        if (!isDep) {
-            let gsxSt = aptData.gsx_status || {};
+        let gsxSt = aptData.gsx_status || {};
+        let gsxVis = !isDep && (gsxSt.visible !== false) && !(fdObj.gsx && fdObj.gsx.installed === false);
+        if (gsxVis) {
             let rawGsx = String(gsxSt.label || "").toUpperCase();
             let shortGsx = "GSX Pro: Armed";
             if (rawGsx.indexOf("SELECTING") !== -1) {
@@ -3018,16 +3022,21 @@ class GSXGateFinderPanel extends TemplateElement {
         if (!isDep) {
             let pGsx = this.querySelector("#LiveGsxPill");
             if (pGsx && aptData.gsx_status) {
-                let rawGsx = String(aptData.gsx_status.label || "").toUpperCase();
-                let shortGsx = "GSX Pro: Armed";
-                if (rawGsx.indexOf("SELECTING") !== -1) {
-                    shortGsx = "GSX Pro: Selecting...";
-                } else if (rawGsx.indexOf("TIMEOUT") !== -1 || rawGsx.indexOf("CLICK TO RETRY") !== -1) {
-                    shortGsx = "GSX Pro: Retry Sync";
-                } else if (rawGsx.indexOf("INJECTED") !== -1 || rawGsx.indexOf("SYNCED") !== -1 || rawGsx.indexOf("ACTIVE") !== -1) {
-                    shortGsx = "GSX Pro: Synced";
+                let fdLive = flightData || this.currentData || {};
+                let gsxShow = (aptData.gsx_status.visible !== false) && !(fdLive.gsx && fdLive.gsx.installed === false);
+                pGsx.style.display = gsxShow ? "" : "none";
+                if (gsxShow) {
+                    let rawGsx = String(aptData.gsx_status.label || "").toUpperCase();
+                    let shortGsx = "GSX Pro: Armed";
+                    if (rawGsx.indexOf("SELECTING") !== -1) {
+                        shortGsx = "GSX Pro: Selecting...";
+                    } else if (rawGsx.indexOf("TIMEOUT") !== -1 || rawGsx.indexOf("CLICK TO RETRY") !== -1) {
+                        shortGsx = "GSX Pro: Retry Sync";
+                    } else if (rawGsx.indexOf("INJECTED") !== -1 || rawGsx.indexOf("SYNCED") !== -1 || rawGsx.indexOf("ACTIVE") !== -1) {
+                        shortGsx = "GSX Pro: Synced";
+                    }
+                    if (pGsx.innerText !== shortGsx) pGsx.innerText = shortGsx;
                 }
-                if (pGsx.innerText !== shortGsx) pGsx.innerText = shortGsx;
             }
         }
     }

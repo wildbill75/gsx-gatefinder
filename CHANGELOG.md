@@ -1,6 +1,42 @@
 # GateFinder — Changelog
 
-## Version 2.0.8 (Latest Release)
+## Version 2.1.0 (Latest Release)
+
+### 🚀 New Features, UX Enhancements & Bug Fixes
+- **MSFS In-Game Panel / EFB Left Sidebar Fix on Arrival:**
+  - Fixed a JavaScript scope regression (`ReferenceError: data is not defined` inside `renderSidebar` and `updateLiveSidebarElements`) that caused the left sidebar panel (`#LeftSidebar`) to disappear when switching to or approaching on the **`ARRIVAL`** tab in the MSFS In-Game Panel / EFB.
+- **Complete Pier Feeder Taxiways & Curved Stand Lead-In Taxilanes (`EHAM`, `ZGGG` & Global Mega-Hubs):**
+  - Preserved all pier/apron cul-de-sac feeder taxiways and runway perimeter segments (restoring `A20` for `J-Platform`/`P-Apron`, `A3` & `A4W` for `B-Pier`, `A10`/`A12`/`A13`/`A14`/`A16`/`A17` for `D`/`E`/`F` Piers & Platforms, `S`/`S2`/`S3`/`S4`/`S10` along `RWY 06/24` & `S-Apron`, and `Y`/`B`/`A`/`D`/`V` at Amsterdam Schiphol **`EHAM`**, plus full unpruned taxiway networks at `KSFO`, `KBFI`, `OMDW`, `CYMX`, `LPPR`, and `RPLL`).
+  - Extracted and rendered linear & curved `way["aeroway"="parking_position"]` polylines as Lido stand lead-in taxilanes worldwide, connecting every stand tag directly to its feeder taxiway (`0.0 m` topological snap) with accurate nose-in parking headings while preventing transit A\* routes from shortcutting through adjacent stand bays.
+- **Hybrid Terminal `aeroway=gate` + Unnamed Tarmac Stand Resolution (`ZGGG` Guangzhou Baiyun & Global Hubs):**
+  - Added automatic spatial pairing between terminal `node["aeroway"="gate"]` designators (`A101..`, `B201..`, `B801..`) and unnamed `way["aeroway"="parking_position"]` tarmac lead-ins, expanding Guangzhou Baiyun (**`ZGGG`**) from 14 remote stands to **447 routable stands across Terminals 1, 2, 3 and remote/cargo aprons** across all 5 runways (`02R/20L`, `02L/20R`, `03/21`, `01R/19L`, `01L/19R`).
+- **Desktop Sidebar ATC Clearance Pill Wrapping Fix:**
+  - Refined row-width wrapping metrics in `_render_clearance_pills` to account for `CTkLabel` horizontal padding so multi-pill taxi clearances (such as `[S7E]`) wrap cleanly onto the next line instead of clipping at the right edge of the sidebar card.
+
+---
+
+## Version 2.0.9
+
+### 🚀 New Features, UX Enhancements & Bug Fixes
+- **Seamless Zero-Reset Aircraft Reposition / Warp (Without GSX Pro & Fallback):**
+  - Clicking **`Reposition Aircraft`** on the map or **`Warp` / `Reposition`** in the stand selector now teleports and aligns your aircraft instantaneously onto the selected stand via a **2-stage SimConnect Slew/Freeze + Direct Writable SimVars Ground Warp** (`PLANE LATITUDE`, `PLANE LONGITUDE`, custom-scenery `GROUND ALTITUDE` + compressed-strut CG height, true stand heading, `STATIC PITCH`, zero velocity, and automatic AI traffic eviction)—eliminating `DATA_INITPOSITION` flight reloads (`SimStop`/`SimStart`) and preserving complex WASM aircraft systems (Fenix, PMDG, iniBuilds).
+  - Replaced all GSX-specific toast notifications, context headers, and EFB/Panel status pills with clean non-GSX labels (`Aircraft Repositioned`, `Gate Active`, `Stand Selection & Aircraft Reposition`) when GSX Pro is not installed.
+- **Headless GSX Pro Reposition via Couatl Remote API v2 & Zero Couatl Desktop Windows:**
+  - Integrated FSDT's official **Couatl Remote API v2** (`ws://127.0.0.1:8744/`) alongside `L:FSDT_GSX_SET_REMOTECONTROL` so aircraft repositioning and stand preparation (`gate.select` / `menu.search` / `Just warp me there`) execute invisibly in milliseconds without flashing the in-game GSX toolbar menu.
+  - Added a strict multi-layer firewall blocking Couatl's external desktop windows (`Reposition from Map` / `Select Parking`, `Customize Airport positions`, `Save Location`), plus instant fallback to the zero-reset Slew/SimVars warp + forced `gate.select` whenever a target stand is OSM-only or wingspan-filtered out by Couatl (e.g., widebody aircraft on narrowbody sub-stands).
+  - Added full support for `GATE_A..Z` identifiers, `None` wildcard templates (`CustomizedName("... | Gate G#§")`), and 2-letter MARS stand designators (e.g., `GB 8` ↔ `Gate G8B` / `Gate G8`) in custom `.py` GSX profiles.
+- **High-DPI & 4K Scaled Display Readability (125% – 300% Windows Scaling):**
+  - Scaled all Lido Vector Map canvas typography, stand badges, taxiway pills, terminal/apron labels, runway threshold QFU badges, hover cards, stand context popups, and **Settings / UI tooltips** dynamically with Per-Monitor DPI scaling (while preserving exact `100%` pixel rendering on standard displays).
+- **GSX Pro Arrival Sync Verification Across Neighboring Airports (`Couatl.err` Airport Guard):**
+  - Fixed an issue on approaches passing directly over a neighboring airbase or airport (such as Almaza `HEAZ` `1.8 NM` short of Cairo `HECA` `RWY 05C`) where opening GSX immediately upon touchdown injected the stand selection while Couatl was still transitioning out of the neighboring airport—leaving marshallers and ground services inactive at the destination gate despite displaying `GSX Sync`.
+  - GateFinder now verifies Couatl's active `[GSX] onEnteredAirport <ICAO>` state before firing arrival GSX injection (holding `GSX PRO: ARMED — WAITING FOR <ICAO>...` until Couatl enters the destination airport) and automatically re-syncs GSX if an airport boundary transition occurs shortly after an initial sync.
+- **SayIntentions.AI Arrival Gate Lock, Terminal-Prefixed Clearances & Stale `flight.json` Protection:**
+  - Added full parsing support for terminal/apron/pier-prefixed ATC taxi instructions (e.g., `"Taxi to Terminal 1 Gate 10 via ..."`).
+  - Prioritized the active `taxi_path` geometric stand endpoint (`<= 32 m`) over stale `flight.json` `assigned_gate` entries (`> 80 m` away), eliminated `flight.json` gate ping-pong after radio overrides, and locked out distant stale `flight.json` gate changes once parked at the arrival stand so GSX deboarding is never hijacked.
+
+---
+
+## Version 2.0.8
 
 ### 🚀 New Features, UX Enhancements & Bug Fixes
 - **Clickable Arrival Airport Switcher & 1-Click SimBrief Alternate Diversion:**

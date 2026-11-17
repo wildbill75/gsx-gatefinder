@@ -206,6 +206,183 @@ def parse_gsx_gate_tokens(gate_str: str) -> Dict[str, str]:
     return {"prefix": "", "number": s, "suffix": "", "search_query": s}
 
 
+class _CouatlRemoteClient:
+    """
+    Lightweight, zero-dependency RFC 6455 WebSocket client for FSDT's official
+    Couatl Remote API v2 (`ws://127.0.0.1:<port>/`, default port 8744 from
+    `%APPDATA%\\Virtuali\\CouatlAddons.ini` -> `[gsx] remote_server_port`).
+    """
+    def __init__(self, port: Optional[int] = None):
+        self.port: int = int(port) if port else self.discover_port()
+        self._sock = None
+        self._rx_buf = bytearray()
+
+    @staticmethod
+    def discover_port() -> int:
+        ini_path = os.path.expandvars(r"%APPDATA%\Virtuali\CouatlAddons.ini")
+        if os.path.isfile(ini_path):
+            try:
+                import configparser
+                cp = configparser.ConfigParser(interpolation=None, strict=False)
+                cp.read(ini_path, encoding="utf-8")
+                if cp.has_option("gsx", "remote_server_port"):
+                    p = int(str(cp.get("gsx", "remote_server_port")).strip())
+                    if 1024 <= p <= 65535:
+                        return p
+            except Exception:
+                pass
+        return 8744
+
+    def connect(self, timeout: float = 0.30) -> bool:
+        import socket
+        import base64
+        try:
+            sock = socket.create_connection(("127.0.0.1", self.port), timeout=timeout)
+            try:
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            except Exception:
+                pass
+            ws_key = base64.b64encode(os.urandom(16)).decode("ascii")
+            req = (
+                f"GET / HTTP/1.1\r\n"
+                f"Host: 127.0.0.1:{self.port}\r\n"
+                f"Upgrade: websocket\r\n"
+                f"Connection: Upgrade\r\n"
+                f"Sec-WebSocket-Key: {ws_key}\r\n"
+                f"Sec-WebSocket-Version: 13\r\n\r\n"
+            ).encode("ascii")
+            sock.sendall(req)
+            hdr = bytearray()
+            deadline = time.time() + max(0.15, timeout)
+            while b"\r\n\r\n" not in hdr:
+                rem = deadline - time.time()
+                if rem <= 0:
+                    sock.close()
+                    return False
+                sock.settimeout(rem)
+                chunk = sock.recv(4096)
+                if not chunk:
+                    sock.close()
+                    return False
+                hdr.extend(chunk)
+                if len(hdr) > 32768:
+                    sock.close()
+                    return False
+            sep_idx = hdr.index(b"\r\n\r\n")
+            status_line = hdr[:sep_idx].split(b"\r\n", 1)[0].decode("latin1", errors="ignore")
+            if "101" not in status_line:
+                sock.close()
+                return False
+            self._rx_buf = bytearray(hdr[sep_idx + 4:])
+            self._sock = sock
+            return True
+        except Exception:
+            self.close()
+            return False
+
+    def _send_frame(self, opcode: int, payload: bytes):
+        if not self._sock:
+            raise ConnectionError("WebSocket not connected")
+        import struct
+        mask_key = os.urandom(4)
+        plen = len(payload)
+        out = bytearray()
+        out.append(0x80 | (opcode & 0x0F))
+        if plen < 126:
+            out.append(0x80 | plen)
+        elif plen < 65536:
+            out.append(0x80 | 126)
+            out.extend(struct.pack("!H", plen))
+        else:
+            out.append(0x80 | 127)
+            out.extend(struct.pack("!Q", plen))
+        out.extend(mask_key)
+        if plen:
+            masked = bytearray(plen)
+            for i, b in enumerate(payload):
+                masked[i] = b ^ mask_key[i & 3]
+            out.extend(masked)
+        self._sock.sendall(out)
+
+    def send_json(self, obj: Dict[str, Any]):
+        raw = json.dumps(obj, separators=(",", ":")).encode("utf-8")
+        self._send_frame(0x1, raw)
+
+    def _recv_exact(self, n: int, deadline: float) -> bytes:
+        while len(self._rx_buf) < n:
+            if not self._sock:
+                raise EOFError("WebSocket closed")
+            rem = deadline - time.time()
+            if rem <= 0:
+                raise TimeoutError("WebSocket read timed out")
+            self._sock.settimeout(max(0.01, rem))
+            chunk = self._sock.recv(65536)
+            if not chunk:
+                raise EOFError("WebSocket closed by peer")
+            self._rx_buf.extend(chunk)
+        res = bytes(self._rx_buf[:n])
+        del self._rx_buf[:n]
+        return res
+
+    def recv_json(self, timeout: float = 0.45) -> Dict[str, Any]:
+        import struct
+        deadline = time.time() + max(0.02, timeout)
+        msg_chunks = bytearray()
+        in_fragment = False
+        while True:
+            hdr2 = self._recv_exact(2, deadline)
+            fin = bool(hdr2[0] & 0x80)
+            opcode = hdr2[0] & 0x0F
+            masked = bool(hdr2[1] & 0x80)
+            plen = hdr2[1] & 0x7F
+            if plen == 126:
+                plen = struct.unpack("!H", self._recv_exact(2, deadline))[0]
+            elif plen == 127:
+                plen = struct.unpack("!Q", self._recv_exact(8, deadline))[0]
+            mask_key = self._recv_exact(4, deadline) if masked else b""
+            payload = bytearray(self._recv_exact(plen, deadline)) if plen else bytearray()
+            if masked and plen:
+                for i in range(plen):
+                    payload[i] ^= mask_key[i & 3]
+
+            if opcode == 0x8:  # Close
+                raise EOFError("WebSocket close frame received")
+            if opcode == 0x9:  # Ping -> Pong
+                try:
+                    self._send_frame(0xA, bytes(payload))
+                except Exception:
+                    pass
+                continue
+            if opcode == 0xA:  # Pong
+                continue
+            if opcode == 0x1:
+                msg_chunks = bytearray(payload)
+                if fin:
+                    return json.loads(msg_chunks.decode("utf-8", errors="replace"))
+                in_fragment = True
+            elif opcode == 0x0 and in_fragment:
+                msg_chunks.extend(payload)
+                if fin:
+                    in_fragment = False
+                    return json.loads(msg_chunks.decode("utf-8", errors="replace"))
+
+    def close(self):
+        sock = self._sock
+        self._sock = None
+        self._rx_buf.clear()
+        if sock is not None:
+            try:
+                sock.settimeout(0.05)
+                mask_key = os.urandom(4)
+                sock.sendall(bytes([0x88, 0x80]) + mask_key)
+            except Exception:
+                pass
+            try:
+                sock.close()
+            except Exception:
+                pass
+
+
 class GSXArrivalAutomator:
     """
     Automates GSX Pro v3 Arrival Gate Selection + Default Handler Selection + FollowMe=No:
@@ -230,8 +407,19 @@ class GSXArrivalAutomator:
         self.status_color = "#64748B"
         self.synced_gate: Optional[str] = None
         self.synced_icao: Optional[str] = None
+        self.synced_couatl_icao: Optional[str] = None
+        self._couatl_apt_cache: Tuple[float, int, Optional[str]] = (0.0, -1, None)
+        self.couatl_err_path: str = os.path.expandvars(r"%APPDATA%\virtuali\Couatl.err")
         self._panel_dir_cache: Optional[str] = None
         self._custom_stand_cache: Dict[str, List[Dict[str, str]]] = {}
+        self._re_couatl_enter = re.compile(
+            r'\[GSX\]\s+onEnteredAirport\s+([A-Z0-9]{3,4})\b',
+            re.IGNORECASE
+        )
+        self._re_couatl_exit = re.compile(
+            r'\bonExitedAirport\s+([A-Z0-9]{3,4})\b',
+            re.IGNORECASE
+        )
         self._re_live_btn = re.compile(
             r'<button[^>]*\bdata-c="(\d+)"[^>]*>.*?<span\s+class="gl">(.*?)</span>',
             re.IGNORECASE | re.DOTALL
@@ -292,7 +480,10 @@ class GSXArrivalAutomator:
             if norm in seen:
                 continue
             seen.add(norm)
-            if os.path.isdir(norm):
+            if os.path.isdir(norm) and (
+                os.path.isfile(os.path.join(norm, "FSDT_GSX_Panel.js"))
+                or os.path.isfile(os.path.join(norm, "menu"))
+            ):
                 menu_f = os.path.join(norm, "menu")
                 mtime = os.path.getmtime(menu_f) if os.path.exists(menu_f) else 0.0
                 valid_dirs.append((mtime, norm))
@@ -307,19 +498,96 @@ class GSXArrivalAutomator:
         """Returns True if the GSX Pro InGamePanel directory is installed on this PC."""
         return self._find_gsx_panel_dir() is not None
 
+    def get_couatl_active_airport(self) -> Optional[str]:
+        """
+        Inspects Couatl's live session log (`%APPDATA%\\virtuali\\Couatl.err`) to determine which
+        airport GSX Pro currently has active:
+          - Returns 4-letter ICAO (e.g. 'HEAZ', 'HECA') when `[GSX] onEnteredAirport <ICAO>` is active.
+          - Returns '' when Couatl is running in the current session between airports (`onExitedAirport`).
+          - Returns None if `Couatl.err` is unavailable, stale from a closed session, or Couatl stopped.
+        Prevents premature arrival GSX injection into a neighboring airport (e.g. Almaza `HEAZ` right next
+        to Cairo `HECA` RWY 05C) before Couatl transitions to the destination airport.
+        """
+        c_path = self.couatl_err_path
+        if not c_path or not os.path.isfile(c_path):
+            return None
+        try:
+            st = os.stat(c_path)
+            age_sec = time.time() - st.st_mtime
+            if age_sec > 14400.0 and not is_process_running_win32((
+                "Couatl64_MSFS2024.exe", "Couatl64_MSFS.exe", "Couatl.exe"
+            )):
+                return None
+
+            c_mtime, c_size, c_val = self._couatl_apt_cache
+            if st.st_mtime == c_mtime and st.st_size == c_size:
+                return c_val
+
+            read_limit = 1048576
+            with open(c_path, "r", encoding="utf-8", errors="ignore") as f:
+                if st.st_size > read_limit:
+                    f.seek(st.st_size - read_limit)
+                text = f.read()
+
+            active_icao = ""
+            stopped = False
+            saw_session_marker = False
+            for raw_ln in text.splitlines():
+                if "panic log started" in raw_ln or "Addon GSX loaded" in raw_ln or "GSX SimStart" in raw_ln:
+                    active_icao = ""
+                    stopped = False
+                    saw_session_marker = True
+                    continue
+                if "GSX SimStop" in raw_ln or "Stopping Application..." in raw_ln:
+                    active_icao = ""
+                    stopped = True
+                    continue
+                m_en = self._re_couatl_enter.search(raw_ln)
+                if m_en:
+                    active_icao = m_en.group(1).strip().upper()
+                    stopped = False
+                    saw_session_marker = True
+                    continue
+                m_ex = self._re_couatl_exit.search(raw_ln)
+                if m_ex:
+                    ex_icao = m_ex.group(1).strip().upper()
+                    if not active_icao or active_icao == ex_icao:
+                        active_icao = ""
+                    saw_session_marker = True
+
+            res: Optional[str] = None if (stopped or not saw_session_marker) else active_icao
+            self._couatl_apt_cache = (st.st_mtime, st.st_size, res)
+            return res
+        except Exception:
+            return None
+
     def is_running_or_synced_for(self, icao: str, gate: str) -> bool:
         """Returns True if an arrival sync is currently running or already completed for this exact (icao, gate)."""
         target_tok = clean_gate_token(gate)
         if not target_tok:
             return False
+        want_icao_u = (icao or "").strip().upper()
         with self._lock:
             if not self.synced_icao or not self.synced_gate:
                 return False
-            if self.synced_icao.upper() != (icao or "").upper():
+            if self.synced_icao.upper() != want_icao_u:
                 return False
             if not gate_tokens_match(self.synced_gate, target_tok):
                 return False
-            return self._running or self.state == "SYNCED"
+            is_running = self._running
+            is_synced = (self.state == "SYNCED")
+            prev_couatl_icao = self.synced_couatl_icao
+        if is_running:
+            return True
+        if not is_synced:
+            return False
+        # If the earlier sync executed while Couatl was still inside a neighboring airport (e.g. 'HEAZ')
+        # and Couatl has since transitioned into `want_icao_u` ('HECA'), that earlier sync was wiped!
+        if prev_couatl_icao is not None and prev_couatl_icao.upper() != want_icao_u:
+            cur_couatl = self.get_couatl_active_airport()
+            if cur_couatl and cur_couatl.upper() == want_icao_u:
+                return False
+        return True
 
     def _read_menu_state(self, panel_dir: str) -> Dict[str, Any]:
         menu_file = os.path.join(panel_dir, "menu")
@@ -489,15 +757,31 @@ class GSXArrivalAutomator:
                 code_norm = re.sub(r'\b(\d+[A-Z]+)\s*:', r'"\1":', code)
 
                 class _Dummy:
-                    def __init__(self, *a, **kw):
-                        pass
+                    def __init__(self, name="", *a, **kw):
+                        self._name = str(name or "")
+                    def __str__(self):
+                        return self._name
+                    def __repr__(self):
+                        return self._name
+                    def __hash__(self):
+                        return hash(("__gsx_dummy__", self._name))
+                    def __eq__(self, other):
+                        return isinstance(other, _Dummy) and self._name == other._name
                     def __call__(self, *a, **kw):
                         return self
                     def __getattr__(self, name):
+                        return _Dummy(f"{self._name}.{name}" if self._name else name)
+                    def __getitem__(self, key):
                         return self
                     def __or__(self, other):
                         return self
+                    def __ror__(self, other):
+                        return self
                     def __add__(self, other):
+                        return self
+                    def __sub__(self, other):
+                        return self
+                    def __mul__(self, other):
                         return self
 
                 class _CustName:
@@ -517,7 +801,7 @@ class GSXArrivalAutomator:
                 for m_ident in re.finditer(r'\b([A-Za-z_][A-Za-z0-9_]*)\b', code_norm):
                     ident = m_ident.group(1)
                     if ident not in env:
-                        env[ident] = _Dummy()
+                        env[ident] = _Dummy(ident)
 
                 exec(compile(code_norm, py_path, "exec"), env)
                 parkings = env.get("parkings")
@@ -539,6 +823,26 @@ class GSXArrivalAutomator:
                                 cn_obj = val
                             if not cn_obj or not cn_obj.text:
                                 continue
+                            if num_key is None:
+                                raw_tpl = cn_obj.text
+                                if "|" in raw_tpl:
+                                    f_part, g_part = raw_tpl.split("|", 1)
+                                    f_clean = f_part.strip()
+                                    g_tpl = g_part.strip()
+                                else:
+                                    f_clean = ""
+                                    g_tpl = raw_tpl.strip()
+                                if f_clean and sec_letter:
+                                    entries.append({
+                                        "folder": f_clean,
+                                        "gate_label": "",
+                                        "raw_gate_label": g_tpl,
+                                        "bgl_id": "",
+                                        "num_key": "*",
+                                        "sec_letter": sec_letter.upper(),
+                                        "is_wildcard": True,
+                                    })
+                                continue
                             num_str = str(num_key).strip()
                             expanded = cn_obj.text.replace("#", num_str).replace("§", sec_letter)
                             if "|" in expanded:
@@ -556,6 +860,7 @@ class GSXArrivalAutomator:
                                 "bgl_id": f"{sec_letter}{num_str}".upper(),
                                 "num_key": num_str.upper(),
                                 "sec_letter": sec_letter.upper(),
+                                "is_wildcard": False,
                             })
             except Exception as exc:
                 self._log(f"Note: could not parse GSX .py profile '{os.path.basename(py_path)}': {exc}")
@@ -601,44 +906,83 @@ class GSXArrivalAutomator:
         self,
         icao: str,
         target_gate: str,
-        tokens: Dict[str, str]
+        tokens: Dict[str, str],
+        bgl_gate_hint: Optional[str] = None
     ) -> Tuple[Optional[str], Optional[str]]:
         """
         Returns `(custom_folder, custom_gate_label)` for `(icao, target_gate)` if defined in a
         local GSX `.py` or `.ini` profile (e.g. `("Apron 1 North Gates", "Gate A 142")` for `EBBR` `A 142`,
-        or `("Apron 2 North Gates", "Gate B 214")` for `EBBR` `B 214` / `214`).
+        or `("Terminal 4 G Gates", "Gate G8B")` for `WSSS` `GB 8` / `G 8`).
         """
         entries = self._load_gsx_custom_stands_for_icao(icao)
         if not entries:
             return None, None
 
-        target_tok = clean_gate_token(target_gate)
-        want_pre = (tokens.get("prefix") or "").upper()
-        want_num = (tokens.get("number") or "").upper()
-        want_suf = (tokens.get("suffix") or "").upper()
-        want_num_suf = f"{want_num}{want_suf}".upper()
+        for cand_gate in ([target_gate, bgl_gate_hint] if bgl_gate_hint and bgl_gate_hint != target_gate else [target_gate]):
+            if not cand_gate:
+                continue
+            c_toks = tokens if cand_gate == target_gate else parse_gsx_gate_tokens(cand_gate)
+            target_tok = clean_gate_token(cand_gate)
+            want_pre = (c_toks.get("prefix") or "").upper()
+            want_num = (c_toks.get("number") or "").upper()
+            want_suf = (c_toks.get("suffix") or "").upper()
+            want_num_suf = f"{want_num}{want_suf}".upper()
 
-        # Pass 1: Exact token match on expanded custom `gate_label` (e.g. "A 142" <-> "Gate A 142", "B 214" <-> "Gate B 214")
-        for e in entries:
-            if gate_tokens_match(e["gate_label"], target_tok):
-                return (e["folder"] or None), (e["gate_label"] or None)
-
-        # Pass 2: Exact match on underlying BGL ID (e.g. target "214" <-> bgl_id "214" -> "Gate B 214",
-        # or target "A 145" <-> num_key "145" -> "Gate A 145R")
-        bgl_matches = []
-        for e in entries:
-            if e["bgl_id"] == target_tok or (want_num_suf and e["num_key"] == want_num_suf) or (want_num and not want_suf and e["num_key"] == want_num):
-                bgl_matches.append(e)
-        if len(bgl_matches) == 1:
-            e = bgl_matches[0]
-            return (e["folder"] or None), (e["gate_label"] or None)
-        elif len(bgl_matches) > 1 and want_pre:
-            for e in bgl_matches:
-                t_e = parse_gsx_gate_tokens(e["gate_label"])
-                if (t_e.get("prefix") or "").upper() == want_pre or e["sec_letter"] == want_pre:
+            # Pass 1: Exact token match on expanded custom `gate_label`
+            for e in entries:
+                if e.get("is_wildcard"):
+                    continue
+                if e["gate_label"] and gate_tokens_match(e["gate_label"], target_tok):
                     return (e["folder"] or None), (e["gate_label"] or None)
 
+            # Pass 2: Exact match on underlying BGL ID
+            bgl_matches = []
+            for e in entries:
+                if e.get("is_wildcard"):
+                    continue
+                if e["bgl_id"] == target_tok or (want_num_suf and e["num_key"] == want_num_suf) or (want_num and not want_suf and e["num_key"] == want_num):
+                    bgl_matches.append(e)
+            if len(bgl_matches) == 1:
+                e = bgl_matches[0]
+                return (e["folder"] or None), (e["gate_label"] or None)
+            elif len(bgl_matches) > 1 and want_pre:
+                for e in bgl_matches:
+                    t_e = parse_gsx_gate_tokens(e["gate_label"])
+                    if (t_e.get("prefix") or "").upper() == want_pre or e["sec_letter"] == want_pre:
+                        return (e["folder"] or None), (e["gate_label"] or None)
+
+            # Pass 3: Wildcard section rule (`GATE_G: { None: CustomizedName("Terminal 4 G Gates | Gate G#§") }`)
+            if want_pre and want_num:
+                primary_pre = want_pre[0] if len(want_pre) == 2 else want_pre
+                mars_suf = want_pre[1] if (len(want_pre) == 2 and not want_suf) else want_suf
+                for e in entries:
+                    if not e.get("is_wildcard"):
+                        continue
+                    if e["sec_letter"] in (want_pre, primary_pre):
+                        tpl = e.get("raw_gate_label") or ""
+                        exp_lbl = re.sub(r'[\(\[].*?[\)\]]', '', tpl.replace("#", want_num).replace("§", mars_suf)).strip()
+                        return (e["folder"] or None), (exp_lbl or None)
+
         return None, None
+
+    @staticmethod
+    def _is_forbidden_couatl_ui_option(opt_str: str) -> bool:
+        """
+        Hard firewall against any GSX menu option that launches an external Couatl wxPython
+        desktop window (`AirportViewerDialog` / `"Select Parking"`, `ParkingEditor`, `AircraftEditor`),
+        saves/edits positions, or restarts Couatl.
+        """
+        if not opt_str:
+            return False
+        ol = opt_str.lower()
+        return bool(
+            re.search(
+                r'reposition\s+from\s+map|\bfrom\s+map\b|\bon\s+map\b|\bview\s+map\b'
+                r'|\bcustomize\b|\bsave\s+location\b|\bsaved\s+location\b'
+                r'|\btowing\b|\bprogressive\s+taxi\b|\breset\s+position\b|\brestart\s+couatl\b',
+                ol
+            )
+        )
 
     def _is_individual_gate_option(self, label: str) -> bool:
         """
@@ -649,10 +993,12 @@ class GSXArrivalAutomator:
         s = (label or "").strip()
         if not s:
             return False
+        if self._is_forbidden_couatl_ui_option(s):
+            return False
         sl = s.lower()
         if "suitable parking" in sl or "change facility" in sl:
             return False
-        if re.search(r'\b(?:next\s*page|previous|more|request\s+|revoke\s+|free\s+this|just\s+warp|show\s+me|back)\b', sl):
+        if re.search(r'\b(?:next\s*page|previous|more|request\s+|revoke\s+|free\s+this|just\s+warp|show\s+me|reposition\s+here|reposition\s+aircraft|reset\s+position|customize|back)\b', sl):
             return False
         if self._is_valid_range_match(s):
             return False
@@ -672,10 +1018,12 @@ class GSXArrivalAutomator:
         s = (label or "").strip()
         if not s:
             return True
+        if self._is_forbidden_couatl_ui_option(s):
+            return True
         sl = s.lower()
         if "suitable parking" in sl or "change facility" in sl:
             return True
-        if re.search(r'\b(?:next\s*page|previous|more|request\s+|revoke\s+|free\s+this|just\s+warp|show\s+me|back)\b', sl):
+        if re.search(r'\b(?:next\s*page|previous|more|request\s+|revoke\s+|free\s+this|just\s+warp|show\s+me|reposition\s+here|reposition\s+aircraft|reset\s+position|customize|back)\b', sl):
             return True
         if self._is_valid_range_match(s):
             return True
@@ -689,14 +1037,16 @@ class GSXArrivalAutomator:
         indexed_opts: List[Tuple[int, str]],
         target_gate: str,
         tokens: Dict[str, str],
-        custom_gate_label: Optional[str] = None
+        custom_gate_label: Optional[str] = None,
+        bgl_gate_hint: Optional[str] = None
     ) -> Optional[int]:
         target_tok = clean_gate_token(target_gate)
         custom_tok = clean_gate_token(custom_gate_label) if custom_gate_label else ""
-        if not target_tok and not custom_tok:
+        bgl_tok = clean_gate_token(bgl_gate_hint) if bgl_gate_hint else ""
+        if not target_tok and not custom_tok and not bgl_tok:
             return None
 
-        # 1. Primary pass: exact token match OR custom profile gate label match OR BGL duplicated prefix-as-suffix match
+        # 1. Primary pass: exact token match OR custom profile gate label match OR BGL raw_name match
         for idx, raw_lbl in indexed_opts:
             if not raw_lbl or self._is_group_or_range_label(raw_lbl):
                 continue
@@ -708,10 +1058,12 @@ class GSXArrivalAutomator:
                 return idx
             if custom_tok and gate_tokens_match(cand_tok, custom_tok):
                 return idx
+            if bgl_tok and gate_tokens_match(cand_tok, bgl_tok):
+                return idx
 
         # 2. Secondary pass: if target_gate has no distinct suffix (e.g. 'P8' or 'P8P' where suffix==prefix),
-        # OR if target_gate has an OSM sub-stand letter suffix (e.g. 'P2A' / 'P2B' at LFKC) while GSX BGL only
-        # defines a single base stand for that prefix+number (e.g. 'Gate P 2P' / 'Gate P 2' / 'Gate P 8G')
+        # OR if target_gate has an OSM sub-stand letter suffix (e.g. 'P2A' / 'P2B' at LFKC) or 2-letter MARS
+        # prefix (e.g. 'GB 8' at WSSS -> 'Gate G8B' or 'Gate G8')
         want_pre = (tokens.get("prefix") or "").upper()
         want_num = (tokens.get("number") or "").upper()
         want_suf = (tokens.get("suffix") or "").upper()
@@ -730,6 +1082,27 @@ class GSXArrivalAutomator:
                 for idx_m, suf_m in pre_num_matches:
                     if not suf_m or suf_m == want_pre:
                         return idx_m
+
+            # 2B. Two-letter OSM MARS prefix (e.g. 'GB 8' <-> BGL 'Gate G8B' or 'Gate G8')
+            if len(want_pre) == 2 and not want_suf:
+                mars_pre = want_pre[0]
+                mars_suf = want_pre[1]
+                mars_cands = []
+                for idx, raw_lbl in indexed_opts:
+                    if not raw_lbl or self._is_group_or_range_label(raw_lbl):
+                        continue
+                    base_lbl = self._extract_gsx_gate_label(raw_lbl)
+                    t = parse_gsx_gate_tokens(base_lbl)
+                    if (t.get("prefix") or "").upper() == mars_pre and (t.get("number") or "").upper() == want_num:
+                        mars_cands.append((idx, (t.get("suffix") or "").upper()))
+                for idx_m, suf_m in mars_cands:
+                    if suf_m == mars_suf:
+                        return idx_m
+                for idx_m, suf_m in mars_cands:
+                    if not suf_m or suf_m == mars_pre:
+                        return idx_m
+                if len(mars_cands) == 1:
+                    return mars_cands[0][0]
 
         # 3. Tertiary check: if target_gate is purely numeric (e.g. '214') and GSX lists 'Gate B 214',
         # OR if target_gate has a prefix ('B 214') and GSX lists 'Stand 214' (unprefixed) when only 1 stand with that number exists on screen
@@ -772,10 +1145,18 @@ class GSXArrivalAutomator:
         def _is_candidate_group(opt_str: str) -> bool:
             if not opt_str or _is_visited(opt_str, is_pagination=False):
                 return False
+            if self._is_forbidden_couatl_ui_option(opt_str):
+                return False
             if self._is_individual_gate_option(opt_str):
                 return False
             ol = opt_str.lower()
-            if "change facility" in ol or re.search(r'\b(?:request\s+|revoke\s+|free\s+this|just\s+warp|show\s+me|previous\s*page|next\s*page|more|back)\b', ol):
+            if (
+                "change facility" in ol
+                or re.search(
+                    r'\b(?:request\s+|revoke\s+|free\s+this|just\s+warp|show\s+me|reposition\s+here|reposition\s+from\s+map|reposition\s+aircraft|reset\s+position|customize|previous\s*page|next\s*page|more|back)\b',
+                    ol
+                )
+            ):
                 return False
             return True
 
@@ -871,25 +1252,37 @@ class GSXArrivalAutomator:
                         return idx, opt
 
         # 2. Explicit Prefix group match (e.g. "Gate E", "Gates E", "Stand E", "Pier E", "Concourse E", "Terminal E",
-        # or parenthetical hint like "Pier A (Gates A)")
+        # "Terminal 4 G Gates", or parenthetical hint like "Pier A (Gates A)")
         if want_prefix:
-            pat = re.compile(
-                rf'^(?:GATES?|STANDS?|PARKINGS?|RAMPS?|DOCKS?|PIER|CONCOURSE|TERMINAL|APRON|SECTOR|AREA)\s+{re.escape(want_prefix)}$'
-                rf'|^{re.escape(want_prefix)}\s+(?:GATES?|STANDS?|PARKINGS?|PIER|CONCOURSE|APRON)$'
-                rf'|^{re.escape(want_prefix)}$',
-                re.IGNORECASE
-            )
-            paren_pat = re.compile(
-                rf'\(\s*(?:GATES?|STANDS?|PARKINGS?|RAMPS?|PIER|CONCOURSE|APRON)?\s*{re.escape(want_prefix)}\s*\)',
-                re.IGNORECASE
-            )
-            for idx, opt in enumerate(options):
-                if not _is_candidate_group(opt):
-                    continue
-                grp_title = _clean_group_title(opt)
-                raw_head = opt.split("\t")[0].strip()
-                if pat.search(grp_title) or paren_pat.search(raw_head):
-                    return idx, opt
+            pref_cands = [want_prefix]
+            if len(want_prefix) == 2 and want_prefix[0] not in pref_cands:
+                pref_cands.append(want_prefix[0])
+            for wp_cand in pref_cands:
+                pat = re.compile(
+                    rf'^(?:GATES?|STANDS?|PARKINGS?|RAMPS?|DOCKS?|PIER|CONCOURSE|TERMINAL|APRON|SECTOR|AREA)\s+{re.escape(wp_cand)}$'
+                    rf'|^{re.escape(wp_cand)}\s+(?:GATES?|STANDS?|PARKINGS?|PIER|CONCOURSE|APRON)$'
+                    rf'|^(?:TERMINAL|PIER|CONCOURSE|APRON|SECTOR|AREA)\s+[A-Z0-9]+\s+{re.escape(wp_cand)}\s+(?:GATES?|STANDS?|PARKINGS?|RAMPS?)$'
+                    rf'|^{re.escape(wp_cand)}$',
+                    re.IGNORECASE
+                )
+                paren_pat = re.compile(
+                    rf'\(\s*(?:GATES?|STANDS?|PARKINGS?|RAMPS?|PIER|CONCOURSE|APRON)?\s*{re.escape(wp_cand)}\s*\)',
+                    re.IGNORECASE
+                )
+                for idx, opt in enumerate(options):
+                    if not _is_candidate_group(opt):
+                        continue
+                    grp_title = _clean_group_title(opt)
+                    raw_head = opt.split("\t")[0].strip()
+                    if pat.search(grp_title) or paren_pat.search(raw_head):
+                        return idx, opt
+
+        # If a specific `custom_folder` is known from the airport's GSX profile and was not on this page,
+        # paginate via "Next Page ►" before guessing generic zone/terminal numbers!
+        if custom_folder:
+            nxt_cf = _find_next_page()
+            if nxt_cf is not None:
+                return nxt_cf
 
         # 2B. Apron / Terminal / Pier / Concourse Number Correlation:
         # Many custom sceneries (e.g. EBBR Aerosoft) group Gate A (100-series) into "Apron 1 North/South Gates"
@@ -903,6 +1296,7 @@ class GSXArrivalAutomator:
             p_num = ord(want_prefix) - ord("A") + 1
             if p_num not in zone_nums:
                 zone_nums.append(p_num)
+        sub_gate_letter_re = re.compile(r'\b([A-Z])\s+(?:GATES?|STANDS?|PARKINGS?|RAMPS?)$', re.IGNORECASE)
         for z_num in zone_nums:
             z_pat = re.compile(
                 rf'^(?:APRON|TERMINAL|PIER|CONCOURSE|SECTOR|AREA)\s+0*{z_num}\b',
@@ -914,6 +1308,9 @@ class GSXArrivalAutomator:
                 if "(0 suitable parking" in opt.lower():
                     continue
                 grp_title = _clean_group_title(opt)
+                m_sgl = sub_gate_letter_re.search(grp_title)
+                if m_sgl and want_prefix and m_sgl.group(1).upper() != want_prefix[0]:
+                    continue
                 if z_pat.search(grp_title):
                     return idx, opt
 
@@ -937,6 +1334,9 @@ class GSXArrivalAutomator:
                         continue
                     m_op = other_prefix_re.match(grp_u)
                     if m_op and want_prefix and m_op.group(1).upper() != want_prefix:
+                        continue
+                    m_sgl = sub_gate_letter_re.search(grp_u)
+                    if m_sgl and want_prefix and m_sgl.group(1).upper() != want_prefix[0]:
                         continue
                     if t_clean == grp_u or (len(grp_u) >= 5 and (t_clean in grp_u or grp_u in t_clean)):
                         return idx, opt
@@ -1064,7 +1464,9 @@ class GSXArrivalAutomator:
         manual: bool = False,
         initial_delay_sec: float = 0.0,
         wait_for_batc_gsx: bool = False,
-        warp: bool = False
+        warp: bool = False,
+        fallback_warp_coords: Optional[Tuple[Optional[float], Optional[float], Optional[float]]] = None,
+        bgl_gate_hint: Optional[str] = None
     ):
         if not target_gate or target_gate in ("N/A", "No Gate Found", "No Suitable Stand"):
             return
@@ -1100,12 +1502,16 @@ class GSXArrivalAutomator:
 
         t = threading.Thread(
             target=self._run_sequence,
-            args=(run_id, icao, target_gate, terminal_hint, manual, initial_delay_sec, wait_for_batc_gsx, warp),
+            args=(
+                run_id, icao, target_gate, terminal_hint, manual,
+                initial_delay_sec, wait_for_batc_gsx, warp,
+                fallback_warp_coords, bgl_gate_hint
+            ),
             daemon=True
         )
         t.start()
 
-    def _finish(self, run_id: int, success: bool, label: str, color: str):
+    def _finish(self, run_id: int, success: bool, label: str, color: str, toast_event_type: str = "GSX_SYNCED"):
         with self._lock:
             if run_id != self._active_run_id:
                 return
@@ -1129,7 +1535,7 @@ class GSXArrivalAutomator:
                     icao=self.synced_icao,
                     gate_id=self.synced_gate,
                     source=src,
-                    event_type="GSX_SYNCED"
+                    event_type=toast_event_type
                 )
             except Exception:
                 pass
@@ -1143,7 +1549,9 @@ class GSXArrivalAutomator:
         manual: bool,
         initial_delay_sec: float = 0.0,
         wait_for_batc_gsx: bool = False,
-        warp: bool = False
+        warp: bool = False,
+        fallback_warp_coords: Optional[Tuple[Optional[float], Optional[float], Optional[float]]] = None,
+        bgl_gate_hint: Optional[str] = None
     ):
         if wait_for_batc_gsx:
             with self._lock:
@@ -1204,7 +1612,751 @@ class GSXArrivalAutomator:
             with self._lock:
                 if run_id != self._active_run_id:
                     return
-            self._run_sequence_locked(run_id, icao, target_gate, terminal_hint, manual, warp=warp)
+            self._run_sequence_locked(
+                run_id, icao, target_gate, terminal_hint, manual,
+                warp=warp, fallback_warp_coords=fallback_warp_coords, bgl_gate_hint=bgl_gate_hint
+            )
+
+    @staticmethod
+    def _apply_ws_state_msg(state: Dict[str, Any], msg: Dict[str, Any]) -> Optional[bool]:
+        """
+        Applies an incoming Couatl Remote API v2 frame (`hello`, `snapshot`, `patch`, `event`)
+        to the flat `state` dictionary (matching FSDT's `remoteClient/js/store.js` semantics).
+        Returns an updated `gsxRunning` boolean if carried by the frame, else None.
+        """
+        if not isinstance(msg, dict):
+            return None
+        mtype = msg.get("type")
+        if mtype == "hello":
+            return bool(msg.get("gsxRunning", True))
+        if mtype == "snapshot":
+            nested = msg.get("state")
+            if isinstance(nested, dict) and "menu" not in msg and "menuShown" not in msg:
+                state.clear()
+                state.update(nested)
+            else:
+                state.clear()
+                for k, v in msg.items():
+                    if k not in ("v", "type", "ts", "id", "seq"):
+                        state[k] = v
+            return None
+        if mtype == "patch":
+            def _apply_one(path_str: str, val: Any, op_str: str = "replace"):
+                p = str(path_str or "").lstrip("/")
+                if not p:
+                    if isinstance(val, dict):
+                        state.clear()
+                        state.update(val)
+                    return
+                parts = [seg.replace("~1", "/").replace("~0", "~") for seg in p.split("/")]
+                if len(parts) == 1:
+                    k0 = parts[0]
+                    if op_str == "remove" or val is None:
+                        state.pop(k0, None)
+                    else:
+                        state[k0] = val
+                    return
+                cur: Any = state
+                for seg in parts[:-1]:
+                    if isinstance(cur, dict):
+                        if seg not in cur or not isinstance(cur[seg], (dict, list)):
+                            cur[seg] = {}
+                        cur = cur[seg]
+                    elif isinstance(cur, list) and seg.isdigit():
+                        idx_s = int(seg)
+                        if 0 <= idx_s < len(cur):
+                            cur = cur[idx_s]
+                        else:
+                            return
+                    else:
+                        return
+                leaf = parts[-1]
+                if isinstance(cur, dict):
+                    if op_str == "remove" or val is None:
+                        cur.pop(leaf, None)
+                    else:
+                        cur[leaf] = val
+                elif isinstance(cur, list) and leaf.isdigit():
+                    idx_l = int(leaf)
+                    if 0 <= idx_l < len(cur):
+                        if op_str == "remove":
+                            cur.pop(idx_l)
+                        else:
+                            cur[idx_l] = val
+
+            if "path" in msg:
+                _apply_one(msg.get("path", ""), msg.get("value"), str(msg.get("op") or "replace"))
+            elif isinstance(msg.get("ops"), list):
+                for op_it in msg["ops"]:
+                    if isinstance(op_it, dict):
+                        _apply_one(op_it.get("path", ""), op_it.get("value"), str(op_it.get("op") or "replace"))
+            return None
+        if mtype == "event":
+            topic = msg.get("topic")
+            if topic == "engine" and "gsxRunning" in msg:
+                return bool(msg.get("gsxRunning"))
+            if topic == "startup":
+                state["startup"] = msg.get("model") or {"active": False}
+        return None
+
+    def _match_parking_in_handler_data(
+        self,
+        parkings: List[Dict[str, Any]],
+        target_gate: str,
+        tokens: Dict[str, str],
+        custom_gate_label: Optional[str] = None,
+        bgl_gate_hint: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Matches `target_gate` against `state['handlerData']['airport']['parkings']` from
+        Couatl Remote API v2 using the same MARS/custom/BGL token matcher as menu options.
+        """
+        if not parkings:
+            return None
+        indexed_cands: List[Tuple[int, str]] = []
+        for idx, p in enumerate(parkings):
+            if not isinstance(p, dict):
+                continue
+            seen_for_p = set()
+            for key in ("uiGateName", "gate", "uiName", "bglName"):
+                val = str(p.get(key) or "").strip()
+                if val and val.upper() not in seen_for_p:
+                    seen_for_p.add(val.upper())
+                    indexed_cands.append((idx, val))
+            if p.get("number") is not None:
+                raw_nm = str(p.get("name") or p.get("prefix") or "Gate").strip()
+                raw_nm = re.sub(r'^GATE[_\-\s]+', 'Gate ', raw_nm, flags=re.IGNORECASE)
+                comp = f"{raw_nm} {p.get('number')}{p.get('suffix') or ''}".strip()
+                if comp and comp.upper() not in seen_for_p:
+                    indexed_cands.append((idx, comp))
+        if not indexed_cands:
+            return None
+        m_idx = self._find_exact_gate_option(
+            indexed_cands, target_gate, tokens,
+            custom_gate_label=custom_gate_label, bgl_gate_hint=bgl_gate_hint
+        )
+        if m_idx is not None and 0 <= m_idx < len(parkings):
+            return parkings[m_idx]
+        return None
+
+    def _build_gsx_search_queries(
+        self,
+        target_gate: str,
+        tokens: Dict[str, str],
+        matched_parking: Optional[Dict[str, Any]] = None,
+        custom_gate_label: Optional[str] = None,
+        bgl_gate_hint: Optional[str] = None
+    ) -> List[str]:
+        """
+        Builds a concise, deduplicated list of live-search queries (`menu.search`) ordered
+        from exact stand identifier down to the bare gate number so Couatl filters the entire
+        airport parking list without paginating folders.
+        """
+        def _clean_q(raw_s: Optional[str]) -> str:
+            if not raw_s:
+                return ""
+            s = self._extract_gsx_gate_label(str(raw_s))
+            s = re.sub(r'^(?:GATE|STAND|PARKING|RAMP|DOCK)[_\-\s]+', '', s.strip(), flags=re.IGNORECASE).strip()
+            s = s.replace("_", " ").strip()
+            return s
+
+        raw_list: List[str] = []
+        if isinstance(matched_parking, dict):
+            for k in ("uiGateName", "gate", "bglName"):
+                if matched_parking.get(k):
+                    raw_list.append(_clean_q(str(matched_parking[k])))
+        if custom_gate_label:
+            raw_list.append(_clean_q(custom_gate_label))
+        if bgl_gate_hint:
+            raw_list.append(_clean_q(bgl_gate_hint))
+        raw_list.append(_clean_q(target_gate))
+
+        pre = (tokens.get("prefix") or "").strip().upper()
+        num = str(tokens.get("number") or "").strip()
+        suf = (tokens.get("suffix") or "").strip().upper()
+        if num:
+            if pre or suf:
+                raw_list.append(f"{pre}{num}{suf}")
+                if pre:
+                    raw_list.append(f"{pre} {num}{suf}")
+                if len(pre) == 2 and not suf:
+                    raw_list.append(f"{pre[0]}{num}{pre[1]}")
+                    raw_list.append(f"{pre[0]} {num}{pre[1]}")
+            raw_list.append(num)
+
+        dedup: List[str] = []
+        seen_u = set()
+        for q in raw_list:
+            q_clean = re.sub(r'\s+', ' ', q).strip()
+            if not q_clean:
+                continue
+            qu = q_clean.upper()
+            if qu not in seen_u:
+                seen_u.add(qu)
+                dedup.append(q_clean)
+
+        if len(dedup) > 4:
+            if num and num.upper() not in {x.upper() for x in dedup[:3]}:
+                dedup = dedup[:3] + [num]
+            else:
+                dedup = dedup[:4]
+        return dedup
+
+    def _try_remote_api_v2_sync(
+        self,
+        run_id: int,
+        sc: Any,
+        icao: str,
+        target_gate: str,
+        target_tok: str,
+        tokens: Dict[str, str],
+        terminal_hint: str,
+        custom_folder: Optional[str],
+        custom_gate_label: Optional[str],
+        bgl_gate_hint: Optional[str],
+        warp: bool,
+        fallback_warp_coords: Optional[Tuple[Optional[float], Optional[float], Optional[float]]],
+        try_native_warp_fallback_fn: Callable[[str], bool],
+        ws_port: Optional[int] = None,
+    ) -> str:
+        """
+        Drives GSX Pro headlessly over FSDT's official Couatl Remote API v2 (`ws://127.0.0.1:8744/`):
+          - Returns `'done'` if the sync/warp (or instant native Slew/SimVars fallback) completed.
+          - Returns `'fallback'` if the WebSocket server is unreachable/disabled so the LVar engine runs.
+        """
+        ws = _CouatlRemoteClient(port=ws_port)
+        if not ws.connect(timeout=0.28):
+            return "fallback"
+
+        cmd_seq = 0
+        state: Dict[str, Any] = {}
+        gsx_running: Optional[bool] = None
+        auth_required = False
+        capabilities = set()
+        got_snapshot = False
+
+        def _is_cancelled() -> bool:
+            with self._lock:
+                return run_id != self._active_run_id
+
+        def _menu_sig() -> Any:
+            m = state.get("menu") if isinstance(state.get("menu"), dict) else {}
+            ents = m.get("entries") if isinstance(m.get("entries"), list) else []
+            dis = m.get("disabled") if isinstance(m.get("disabled"), list) else []
+            return (
+                bool(state.get("menuShown")),
+                str(m.get("title") or ""),
+                tuple(str(x or "") for x in ents),
+                tuple(bool(x) for x in dis),
+            )
+
+        def _send_cmd(verb: str, args: Optional[Dict[str, Any]] = None) -> str:
+            nonlocal cmd_seq
+            cmd_seq += 1
+            cid = f"gf_{run_id}_{cmd_seq}"
+            payload: Dict[str, Any] = {"type": "command", "id": cid, "verb": verb}
+            if args is not None:
+                payload["args"] = args
+            ws.send_json(payload)
+            return cid
+
+        def _pump_for_cmd_or_state(
+            wait_cmd_id: Optional[str] = None,
+            prev_sig: Any = None,
+            timeout_s: float = 0.50,
+            wait_for_menu_change: bool = False,
+        ) -> Optional[Dict[str, Any]]:
+            nonlocal gsx_running, auth_required, got_snapshot
+            deadline = time.time() + max(0.03, timeout_s)
+            coalesce_deadline: Optional[float] = None
+            cmd_res: Optional[Dict[str, Any]] = None
+            while True:
+                eff_deadline = coalesce_deadline if coalesce_deadline is not None else deadline
+                rem = eff_deadline - time.time()
+                if rem <= 0 or _is_cancelled():
+                    break
+                try:
+                    msg = ws.recv_json(timeout=rem)
+                except TimeoutError:
+                    break
+                except Exception:
+                    raise
+                if not isinstance(msg, dict):
+                    continue
+                mtype = msg.get("type")
+                if mtype == "hello":
+                    auth_required = bool(msg.get("authRequired", False))
+                    caps = msg.get("capabilities")
+                    if isinstance(caps, list):
+                        capabilities.update(str(c) for c in caps)
+                elif mtype == "snapshot":
+                    got_snapshot = True
+                elif mtype == "result" and wait_cmd_id and msg.get("id") == wait_cmd_id:
+                    cmd_res = msg
+                    if not wait_for_menu_change or msg.get("ok") is False:
+                        break
+                upd_run = self._apply_ws_state_msg(state, msg)
+                if upd_run is not None:
+                    gsx_running = upd_run
+                if wait_cmd_id is None and not wait_for_menu_change and gsx_running is not None and got_snapshot:
+                    break
+                if wait_for_menu_change and prev_sig is not None and _menu_sig() != prev_sig:
+                    # Coalesce any companion patches (`/search`, `/menu`, `/menuShown`) sent in the same Couatl tick
+                    if coalesce_deadline is None:
+                        coalesce_deadline = min(deadline, time.time() + 0.018)
+            return cmd_res
+
+        def _try_gate_select_ws(matched_p: Optional[Dict[str, Any]]) -> bool:
+            gate_cands: List[str] = []
+            if isinstance(matched_p, dict):
+                for k in ("uiGateName", "gate", "uiName", "bglName"):
+                    v = str(matched_p.get(k) or "").strip()
+                    if v and v not in gate_cands:
+                        gate_cands.append(v)
+            for extra in (custom_gate_label, bgl_gate_hint, target_gate):
+                if extra and str(extra).strip() and str(extra).strip() not in gate_cands:
+                    gate_cands.append(str(extra).strip())
+            for g_arg in gate_cands[:3]:
+                cid = _send_cmd("gate.select", {"gate": g_arg, "revokeServices": True, "force": True})
+                res = _pump_for_cmd_or_state(wait_cmd_id=cid, timeout_s=0.35, wait_for_menu_change=False)
+                if isinstance(res, dict):
+                    if res.get("ok") is True:
+                        return True
+                    err = res.get("error") if isinstance(res.get("error"), dict) else {}
+                    ecode = str(err.get("code") or "").lower()
+                    if ecode in ("already_parked", "already_selected"):
+                        return True
+                    if ecode in ("unknown_verb", "not_supported", "unauthorized"):
+                        return False
+            return False
+
+        def _warp_slew_and_force_gate_select(reason_str: str, matched_p: Optional[Dict[str, Any]]) -> bool:
+            if not warp or not fallback_warp_coords:
+                return False
+            fb_lat, fb_lon, fb_hdg = fallback_warp_coords
+            if fb_lat is None or fb_lon is None or not hasattr(sc, "warp_user_aircraft"):
+                return False
+            try:
+                if state.get("menuShown"):
+                    _send_cmd("menu.close")
+            except Exception:
+                pass
+            if not sc.warp_user_aircraft(fb_lat, fb_lon, heading=fb_hdg):
+                return False
+            self.hub._last_native_warp_ts = time.time()
+            self.hub._last_ground_gps = (float(fb_lat), float(fb_lon))
+            gsx_prepared = False
+            if matched_p is not None and (not capabilities or "gate" in capabilities):
+                try:
+                    gsx_prepared = _try_gate_select_ws(matched_p)
+                except Exception:
+                    gsx_prepared = False
+            if gsx_prepared:
+                self._log(
+                    f"GSX Remote API v2 ({reason_str}) -> native Slew/SimVars repositioned aircraft to "
+                    f"{icao} Stand '{target_gate}' AND force-selected GSX gate services."
+                )
+                self._finish(run_id, True, f"GSX PRO: REPOSITIONED TO {target_gate} ✓", "#10B981")
+            else:
+                self._log(
+                    f"GSX Remote API v2 ({reason_str}) -> native Slew/SimVars repositioned aircraft to "
+                    f"{icao} Stand '{target_gate}' (lat={fb_lat:.6f}, lon={fb_lon:.6f}, hdg={fb_hdg})."
+                )
+                self._finish(
+                    run_id, True,
+                    f"REPOSITIONED TO {target_gate} (SIMCONNECT) ✓",
+                    "#10B981",
+                    toast_event_type="SIMCONNECT_WARP"
+                )
+            return True
+
+        try:
+            ws.send_json({"type": "subscribe", "channels": ["state"]})
+            sub_deadline = time.time() + 0.55
+            while (gsx_running is None or not got_snapshot) and time.time() < sub_deadline:
+                if _is_cancelled():
+                    return "done"
+                _pump_for_cmd_or_state(timeout_s=max(0.04, sub_deadline - time.time()))
+                if auth_required:
+                    return "fallback"
+
+            if auth_required or not got_snapshot:
+                return "fallback"
+
+            startup_obj = state.get("startup") if isinstance(state.get("startup"), dict) else {}
+            if gsx_running is False or bool(startup_obj.get("active")):
+                self._log(f"Couatl Remote API v2 reports gsxRunning={gsx_running}, startup={startup_obj.get('active')}.")
+                if warp and try_native_warp_fallback_fn("couatl_ws_gsx_not_ready"):
+                    return "done"
+                return "fallback"
+
+            hd = state.get("handlerData") if isinstance(state.get("handlerData"), dict) else {}
+            apt_hd = hd.get("airport") if isinstance(hd.get("airport"), dict) else {}
+            ws_icao = str(apt_hd.get("icao") or "").strip().upper()
+            if ws_icao:
+                with self._lock:
+                    if run_id == self._active_run_id:
+                        self.synced_couatl_icao = ws_icao
+
+            parkings = apt_hd.get("parkings") if isinstance(apt_hd.get("parkings"), list) else []
+            matched_parking: Optional[Dict[str, Any]] = None
+            same_apt_parkings = bool(parkings and (not ws_icao or ws_icao == icao.strip().upper()))
+            if same_apt_parkings:
+                matched_parking = self._match_parking_in_handler_data(
+                    parkings, target_gate, tokens,
+                    custom_gate_label=custom_gate_label, bgl_gate_hint=bgl_gate_hint
+                )
+
+            # 1. Fast atomic 1-shot `gate.select` when NOT warping (`warp=False`)
+            if not warp and (not capabilities or "gate" in capabilities):
+                if _try_gate_select_ws(matched_parking):
+                    if state.get("menuShown"):
+                        try:
+                            _send_cmd("menu.close")
+                        except Exception:
+                            pass
+                    self._log(f"Couatl Remote API v2 atomic gate.select succeeded for {icao} Stand '{target_gate}'.")
+                    self._finish(run_id, True, f"GSX PRO: STAND {target_gate} SYNCED ✓", "#10B981")
+                    return "done"
+
+            # 2. Instant pre-menu check when `warp=True`: if GSX has loaded this airport's parkings
+            #    and `target_gate` is not in `handlerData.airport.parkings` (OSM-only stand), warp immediately!
+            if warp and same_apt_parkings and matched_parking is None:
+                if try_native_warp_fallback_fn("stand_not_in_gsx_parkings"):
+                    return "done"
+
+            # 3. Drive invisible GSX menu over WebSocket (`menu.open` -> `menu.search` -> `menu.pick` -> `menu.close`)
+            search_queries = self._build_gsx_search_queries(
+                target_gate, tokens,
+                matched_parking=matched_parking,
+                custom_gate_label=custom_gate_label,
+                bgl_gate_hint=bgl_gate_hint,
+            )
+            tried_queries_for_session: Dict[Any, List[str]] = {}
+            visited_groups = set()
+            gate_picked = False
+            warp_picked = False
+            operator_picked = False
+            followme_picked = False
+            last_gate_pick_ts = 0.0
+            last_picked_sig: Any = None
+            last_picked_ts = 0.0
+            open_attempts = 0
+            ws_budget = 5.5 if warp else 7.5
+            ws_start = time.time()
+
+            def _pick_ws_index(idx_to_pick: int, wait_s: float = 0.55):
+                nonlocal last_picked_sig, last_picked_ts
+                sig0 = _menu_sig()
+                last_picked_sig = sig0
+                last_picked_ts = time.time()
+                cid_p = _send_cmd("menu.pick", {"index": idx_to_pick})
+                _pump_for_cmd_or_state(wait_cmd_id=cid_p, prev_sig=sig0, timeout_s=wait_s, wait_for_menu_change=True)
+
+            default_handler_re = re.compile(
+                r'\[\s*gsx\s+choice\s*\]|\bgsx\s+choice\b|\(\s*default\s*\)|\bdefault\b',
+                re.IGNORECASE
+            )
+
+            while (time.time() - ws_start) < ws_budget:
+                if _is_cancelled():
+                    return "done"
+
+                menu_shown = bool(state.get("menuShown"))
+                menu_obj = state.get("menu") if isinstance(state.get("menu"), dict) else {}
+                raw_entries = menu_obj.get("entries") if isinstance(menu_obj.get("entries"), list) else []
+                disabled_arr = menu_obj.get("disabled") if isinstance(menu_obj.get("disabled"), list) else []
+                title = str(menu_obj.get("title") or "")
+                title_l = title.lower()
+
+                enabled_opts: List[Tuple[int, str]] = []
+                for idx, raw_lbl in enumerate(raw_entries):
+                    lbl = str(raw_lbl or "").strip()
+                    if not lbl:
+                        continue
+                    is_dis = bool(idx < len(disabled_arr) and disabled_arr[idx])
+                    if is_dis:
+                        continue
+                    if self._is_forbidden_couatl_ui_option(lbl):
+                        continue
+                    enabled_opts.append((idx, lbl))
+
+                srch_active_now = bool((state.get("search") or {}).get("active")) if isinstance(state.get("search"), dict) else False
+                has_any_raw_entry = any(str(x or "").strip() for x in raw_entries)
+                if not menu_shown or (not enabled_opts and not srch_active_now and not has_any_raw_entry):
+                    if warp and warp_picked:
+                        self._log(f"Couatl Remote API v2 warp complete for {icao} Stand '{target_gate}'.")
+                        self._finish(run_id, True, f"GSX PRO: REPOSITIONED TO {target_gate} ✓", "#10B981")
+                        return "done"
+                    if not warp and gate_picked:
+                        wait_after = 0.35 if followme_picked else (0.50 if operator_picked else 0.70)
+                        if (time.time() - last_gate_pick_ts) >= wait_after:
+                            self._log(f"Couatl Remote API v2 arrival sync complete for {icao} Stand '{target_gate}'.")
+                            self._finish(run_id, True, f"GSX PRO: STAND {target_gate} SYNCED ✓", "#10B981")
+                            return "done"
+                        _pump_for_cmd_or_state(prev_sig=_menu_sig(), timeout_s=0.20, wait_for_menu_change=True)
+                        continue
+                    if open_attempts >= 3:
+                        if warp and _warp_slew_and_force_gate_select("ws_menu_not_opening", matched_parking):
+                            return "done"
+                        return "fallback"
+                    open_attempts += 1
+                    last_picked_sig = None
+                    sig0 = _menu_sig()
+                    cid_open = _send_cmd("menu.open")
+                    _pump_for_cmd_or_state(wait_cmd_id=cid_open, prev_sig=sig0, timeout_s=0.75, wait_for_menu_change=True)
+                    continue
+
+                # Never double-pick an un-transitioned menu snapshot while Couatl is building the next submenu!
+                cur_m_sig = _menu_sig()
+                if last_picked_sig is not None and cur_m_sig == last_picked_sig and (time.time() - last_picked_ts) < 0.90:
+                    _pump_for_cmd_or_state(prev_sig=cur_m_sig, timeout_s=0.25, wait_for_menu_change=True)
+                    continue
+
+                # 3A. "Just warp me there" after gate selection (or inside Change Facility / FollowMe)
+                if warp and gate_picked:
+                    warp_idx = None
+                    for idx, opt in enabled_opts:
+                        if re.search(r'just\s+warp|warp\s+me', opt, re.IGNORECASE):
+                            warp_idx = idx
+                            break
+                    if warp_idx is not None:
+                        warp_picked = True
+                        _pick_ws_index(warp_idx, wait_s=0.35)
+                        try:
+                            if state.get("menuShown"):
+                                _send_cmd("menu.close")
+                        except Exception:
+                            pass
+                        self._log(f"Couatl Remote API v2 repositioned aircraft to {icao} Stand '{target_gate}'.")
+                        self._finish(run_id, True, f"GSX PRO: REPOSITIONED TO {target_gate} ✓", "#10B981")
+                        return "done"
+
+                # 3B. FollowMe Car prompt
+                is_followme = (
+                    "followme" in title_l
+                    or "follow me" in title_l
+                    or "follow-me" in title_l
+                    or (
+                        len(enabled_opts) == 2
+                        and bool(re.match(r'^yes\b', enabled_opts[0][1], re.IGNORECASE))
+                        and bool(re.match(r'^no\b', enabled_opts[1][1], re.IGNORECASE))
+                    )
+                )
+                if is_followme:
+                    if warp:
+                        for idx, opt in enabled_opts:
+                            if re.search(r'just\s+warp|warp\s+me', opt, re.IGNORECASE):
+                                warp_picked = True
+                                _pick_ws_index(idx, wait_s=0.35)
+                                try:
+                                    if state.get("menuShown"):
+                                        _send_cmd("menu.close")
+                                except Exception:
+                                    pass
+                                self._log(f"Couatl Remote API v2 repositioned aircraft to {icao} Stand '{target_gate}'.")
+                                self._finish(run_id, True, f"GSX PRO: REPOSITIONED TO {target_gate} ✓", "#10B981")
+                                return "done"
+                    no_idx = None
+                    for idx, opt in enabled_opts:
+                        if re.match(r'^no\b', opt.strip(), re.IGNORECASE):
+                            no_idx = idx
+                            break
+                    if no_idx is None:
+                        no_idx = enabled_opts[-1][0]
+                    followme_picked = True
+                    last_gate_pick_ts = time.time()
+                    _pick_ws_index(no_idx, wait_s=0.45)
+                    continue
+
+                # 3C. Handling / Catering Operator selection prompt
+                has_def_tag = any(default_handler_re.search(opt) for _, opt in enabled_opts)
+                is_op_prompt = (
+                    "operator" in title_l
+                    or "handler" in title_l
+                    or "handling" in title_l
+                    or "catering" in title_l
+                    or (has_def_tag and "parking" not in title_l and "desired service" not in title_l)
+                )
+                if is_op_prompt:
+                    op_idx = enabled_opts[0][0]
+                    for idx, opt in enabled_opts:
+                        if default_handler_re.search(opt):
+                            op_idx = idx
+                            break
+                    operator_picked = True
+                    last_gate_pick_ts = time.time()
+                    _pick_ws_index(op_idx, wait_s=0.50)
+                    continue
+
+                # 3D. "Change Facility [...]" submenu
+                cf_idx = None
+                cf_opt = ""
+                for idx, opt in enabled_opts:
+                    if "change facility" in opt.lower():
+                        cf_idx = idx
+                        cf_opt = opt
+                        break
+                if cf_idx is not None:
+                    active_fac_gate = self._extract_change_facility_gate(cf_opt)
+                    active_fac_tok = clean_gate_token(active_fac_gate) if active_fac_gate else ""
+                    fac_matches = bool(active_fac_tok and gate_tokens_match(active_fac_tok, target_tok))
+                    if gate_clicked_ws := (gate_picked or fac_matches):
+                        if warp:
+                            for idx, opt in enabled_opts:
+                                if re.search(r'just\s+warp|warp\s+me|reposition\s+here', opt, re.IGNORECASE):
+                                    warp_picked = True
+                                    _pick_ws_index(idx, wait_s=0.35)
+                                    try:
+                                        if state.get("menuShown"):
+                                            _send_cmd("menu.close")
+                                    except Exception:
+                                        pass
+                                    self._finish(run_id, True, f"GSX PRO: REPOSITIONED TO {target_gate} ✓", "#10B981")
+                                    return "done"
+                        else:
+                            _send_cmd("menu.close")
+                            self._finish(run_id, True, f"GSX PRO: STAND {target_gate} SYNCED ✓", "#10B981")
+                            return "done"
+                    if not gate_picked:
+                        _pick_ws_index(cf_idx, wait_s=0.55)
+                        continue
+
+                # 3E. Main GSX Service Menu
+                is_main_menu = (
+                    "select desired service" in title_l
+                    or any(
+                        re.search(
+                            r'request\s+(?:deboarding|boarding|catering|pushback|refuel)|select\s+another\s+parking|change\s+parking|activate\s+services|reposition\s+aircraft',
+                            opt,
+                            re.IGNORECASE
+                        )
+                        for _, opt in enabled_opts
+                    )
+                )
+                if is_main_menu:
+                    if gate_picked and not warp:
+                        _send_cmd("menu.close")
+                        self._finish(run_id, True, f"GSX PRO: STAND {target_gate} SYNCED ✓", "#10B981")
+                        return "done"
+                    main_idx = None
+                    if warp:
+                        for idx, opt in enabled_opts:
+                            if re.search(r'reposition\s+aircraft', opt, re.IGNORECASE):
+                                main_idx = idx
+                                break
+                    if main_idx is None:
+                        for idx, opt in enabled_opts:
+                            if re.search(
+                                r'change\s+parking|select\s+another\s+parking|another\s+gate|change\s+gate|arrival\s+gate|select\s+gate|activate\s+services|change\s+facility|reposition\s+aircraft|\bparking\s+or\s+service\b',
+                                opt,
+                                re.IGNORECASE
+                            ):
+                                main_idx = idx
+                                break
+                    if main_idx is not None:
+                        _pick_ws_index(main_idx, wait_s=0.65)
+                        continue
+
+                # 3F. Parking / Gate Selection Menu (`not gate_picked`)
+                if not gate_picked:
+                    # Also handle "[0] Reposition here [Gate ...]" when already on the target stand
+                    if warp:
+                        for idx, opt in enabled_opts:
+                            m_rh = re.search(r'^reposition\s+here\s*(?:\[\s*(.+?)\s*\])?', opt, re.IGNORECASE)
+                            if m_rh and m_rh.group(1):
+                                rh_tok = clean_gate_token(m_rh.group(1))
+                                if rh_tok and gate_tokens_match(rh_tok, target_tok):
+                                    gate_picked = True
+                                    warp_picked = True
+                                    _pick_ws_index(idx, wait_s=0.35)
+                                    try:
+                                        if state.get("menuShown"):
+                                            _send_cmd("menu.close")
+                                    except Exception:
+                                        pass
+                                    self._finish(run_id, True, f"GSX PRO: REPOSITIONED TO {target_gate} ✓", "#10B981")
+                                    return "done"
+
+                    direct_idx = self._find_exact_gate_option(
+                        enabled_opts, target_gate, tokens,
+                        custom_gate_label=custom_gate_label, bgl_gate_hint=bgl_gate_hint
+                    )
+                    if direct_idx is not None:
+                        gate_picked = True
+                        last_gate_pick_ts = time.time()
+                        _pick_ws_index(direct_idx, wait_s=0.65)
+                        continue
+
+                    # Live search via `menu.search` (bypasses all terminal folders & pagination!)
+                    srch_obj = state.get("search") if isinstance(state.get("search"), dict) else {}
+                    if bool(srch_obj.get("active")) and search_queries:
+                        sess_key = srch_obj.get("session", 0)
+                        tried_q = tried_queries_for_session.setdefault(sess_key, [])
+                        next_q = next((q for q in search_queries if q not in tried_q), None)
+                        if next_q is not None:
+                            tried_q.append(next_q)
+                            last_picked_sig = None
+                            sig0 = _menu_sig()
+                            cid_s = _send_cmd("menu.search", {"text": next_q})
+                            _pump_for_cmd_or_state(wait_cmd_id=cid_s, prev_sig=sig0, timeout_s=0.22, wait_for_menu_change=True)
+                            continue
+                        # All search queries exhausted in this active search session without finding `target_gate`
+                        # (e.g., narrowbody stand `GF 30` wingspan-filtered for widebody `A350-900`, or MARS overlap):
+                        if warp and _warp_slew_and_force_gate_select("filtered_in_gsx_ws_search", matched_parking):
+                            return "done"
+                        try:
+                            _send_cmd("menu.close")
+                        except Exception:
+                            pass
+                        self._finish(run_id, False, f"GSX PRO: STAND {target_gate} UNAVAILABLE", "#F59E0B")
+                        return "done"
+
+                    # Fallback folder navigation over WS if `state.search.active` is False
+                    safe_options = [
+                        (str(raw_entries[i] or "") if (
+                            not (i < len(disabled_arr) and disabled_arr[i])
+                            and not self._is_forbidden_couatl_ui_option(str(raw_entries[i] or ""))
+                        ) else "")
+                        for i in range(len(raw_entries))
+                    ]
+                    cur_ws_sig = (title, tuple(safe_options))
+                    grp = self._find_group_or_range_option(
+                        safe_options, tokens, terminal_hint, visited_groups,
+                        cur_sig=cur_ws_sig, custom_folder=custom_folder
+                    )
+                    if grp is not None:
+                        g_idx, g_lbl = grp
+                        visited_groups.add((cur_ws_sig, g_lbl))
+                        if not re.search(r'\b(?:NEXT\s*PAGE|PREVIOUS\s*PAGE|PREVIOUS|MORE|NEXT|BACK)\b', g_lbl, re.IGNORECASE):
+                            visited_groups.add(g_lbl)
+                        _pick_ws_index(g_idx, wait_s=0.55)
+                        continue
+
+                    # Folder tree exhausted over WS
+                    if warp and _warp_slew_and_force_gate_select("stand_not_in_gsx_ws_tree", matched_parking):
+                        return "done"
+                    try:
+                        _send_cmd("menu.close")
+                    except Exception:
+                        pass
+                    return "fallback"
+
+                _pump_for_cmd_or_state(prev_sig=_menu_sig(), timeout_s=0.20, wait_for_menu_change=True)
+
+            try:
+                if state.get("menuShown"):
+                    _send_cmd("menu.close")
+            except Exception:
+                pass
+            if warp and _warp_slew_and_force_gate_select("gsx_ws_timeout", matched_parking):
+                return "done"
+            return "fallback"
+        except Exception as exc:
+            self._log(f"Couatl Remote API v2 session fallback ({exc}).")
+            return "fallback"
+        finally:
+            ws.close()
 
     def _run_sequence_locked(
         self,
@@ -1213,7 +2365,9 @@ class GSXArrivalAutomator:
         target_gate: str,
         terminal_hint: str,
         manual: bool,
-        warp: bool = False
+        warp: bool = False,
+        fallback_warp_coords: Optional[Tuple[Optional[float], Optional[float], Optional[float]]] = None,
+        bgl_gate_hint: Optional[str] = None
     ):
         sc = getattr(self.hub.backend, "simconnect_manager", None)
         if not sc or not sc.connected:
@@ -1221,28 +2375,143 @@ class GSXArrivalAutomator:
             self._finish(run_id, False, "GSX PRO: SIMCONNECT STANDBY (CLICK SYNC)", "#F59E0B")
             return
 
+        def _try_native_warp_fallback(reason_str: str) -> bool:
+            if not warp or not fallback_warp_coords:
+                return False
+            fb_lat, fb_lon, fb_hdg = fallback_warp_coords
+            if fb_lat is None or fb_lon is None or not hasattr(sc, "warp_user_aircraft"):
+                return False
+            if sc.warp_user_aircraft(fb_lat, fb_lon, heading=fb_hdg):
+                self.hub._last_native_warp_ts = time.time()
+                self.hub._last_ground_gps = (float(fb_lat), float(fb_lon))
+                self._log(
+                    f"GSX warp fallback ({reason_str}) -> native SimConnect repositioned aircraft to "
+                    f"{icao} Stand '{target_gate}' (lat={fb_lat:.6f}, lon={fb_lon:.6f}, hdg={fb_hdg})."
+                )
+                self._finish(
+                    run_id, True,
+                    f"REPOSITIONED TO {target_gate} (SIMCONNECT) ✓",
+                    "#10B981",
+                    toast_event_type="SIMCONNECT_WARP"
+                )
+                return True
+            return False
+
         panel_dir = self._find_gsx_panel_dir()
         if not panel_dir:
             self._log("GSX Panel directory not found on this PC.")
+            if _try_native_warp_fallback("panel_dir_missing"):
+                return
             self._finish(run_id, False, "GSX PRO: ADDON NOT FOUND", "#EF4444")
             return
 
         tokens = parse_gsx_gate_tokens(target_gate)
         target_tok = clean_gate_token(target_gate)
         if not tokens.get("number") or not target_tok:
+            if _try_native_warp_fallback("non_numeric_stand"):
+                return
             self._finish(run_id, False, f"GSX PRO: INVALID STAND ({target_gate})", "#EF4444")
             return
 
-        custom_folder, custom_gate_label = self._resolve_gsx_py_custom_stand(icao, target_gate, tokens)
+        custom_folder, custom_gate_label = self._resolve_gsx_py_custom_stand(
+            icao, target_gate, tokens, bgl_gate_hint=bgl_gate_hint
+        )
         if custom_gate_label:
             c_tokens = parse_gsx_gate_tokens(custom_gate_label)
             if c_tokens.get("prefix") and not tokens.get("prefix"):
                 tokens = c_tokens
+        elif bgl_gate_hint:
+            b_tokens = parse_gsx_gate_tokens(bgl_gate_hint)
+            if b_tokens.get("prefix") and (not tokens.get("prefix") or len(tokens.get("prefix", "")) == 2):
+                tokens = b_tokens
+
+        couatl_apt_init = self.get_couatl_active_airport()
+        with self._lock:
+            if run_id == self._active_run_id:
+                self.synced_couatl_icao = couatl_apt_init
 
         self._log(
             f"Starting GSX sync (run={run_id}, manual={manual}, warp={warp}) for {icao} Stand '{target_gate}' "
-            f"(token='{target_tok}', custom_folder='{custom_folder}', custom_gate='{custom_gate_label}', panel_dir='{panel_dir}')"
+            f"(token='{target_tok}', couatl_airport='{couatl_apt_init}', custom_folder='{custom_folder}', "
+            f"custom_gate='{custom_gate_label}', panel_dir='{panel_dir}')"
         )
+
+        # Engage FSDT's official headless remote-control flag (`L:FSDT_GSX_SET_REMOTECONTROL = 1`)
+        # so MSFS's in-game `FSDT_GSX_Panel.js` hides its window and tooltips while GateFinder
+        # drives Couatl invisibly, then cleanly release it to `0` once no automation is running.
+        try:
+            sc.set_lvar("L:FSDT_GSX_SET_REMOTECONTROL", 1.0)
+        except Exception:
+            pass
+
+        try:
+            ws_status = self._try_remote_api_v2_sync(
+                run_id=run_id,
+                sc=sc,
+                icao=icao,
+                target_gate=target_gate,
+                target_tok=target_tok,
+                tokens=tokens,
+                terminal_hint=terminal_hint,
+                custom_folder=custom_folder,
+                custom_gate_label=custom_gate_label,
+                bgl_gate_hint=bgl_gate_hint,
+                warp=warp,
+                fallback_warp_coords=fallback_warp_coords,
+                try_native_warp_fallback_fn=_try_native_warp_fallback,
+                ws_port=getattr(self, "_ws_port_override", None),
+            )
+            if ws_status == "done":
+                return
+
+            self._run_sequence_lvar_fallback(
+                run_id=run_id,
+                sc=sc,
+                panel_dir=panel_dir,
+                icao=icao,
+                target_gate=target_gate,
+                target_tok=target_tok,
+                tokens=tokens,
+                terminal_hint=terminal_hint,
+                custom_folder=custom_folder,
+                custom_gate_label=custom_gate_label,
+                bgl_gate_hint=bgl_gate_hint,
+                warp=warp,
+                fallback_warp_coords=fallback_warp_coords,
+                _try_native_warp_fallback=_try_native_warp_fallback,
+            )
+        finally:
+            def _release_remote_control_flag():
+                try:
+                    with self._lock:
+                        if self._running:
+                            return
+                    if sc and sc.connected:
+                        sc.set_lvar("L:FSDT_GSX_SET_REMOTECONTROL", 0.0)
+                except Exception:
+                    pass
+
+            t_rc = threading.Timer(0.25, _release_remote_control_flag)
+            t_rc.daemon = True
+            t_rc.start()
+
+    def _run_sequence_lvar_fallback(
+        self,
+        run_id: int,
+        sc: Any,
+        panel_dir: str,
+        icao: str,
+        target_gate: str,
+        target_tok: str,
+        tokens: Dict[str, str],
+        terminal_hint: str,
+        custom_folder: Optional[str],
+        custom_gate_label: Optional[str],
+        bgl_gate_hint: Optional[str],
+        warp: bool,
+        fallback_warp_coords: Optional[Tuple[Optional[float], Optional[float], Optional[float]]],
+        _try_native_warp_fallback: Callable[[str], bool],
+    ):
 
         start_ts = time.time()
         timeout_sec = 26.0
@@ -1262,6 +2531,7 @@ class GSXArrivalAutomator:
         pending_group_lbl: Optional[str] = None
         pending_group_sig: Any = None
         pending_group_tries: int = 0
+        exhausted_tree_passes: int = 0
 
         # Track the last `./menu` file modification timestamp so we NEVER click on a stale
         # `./menu` file left on disk from an earlier menu session or previous submenu page.
@@ -1308,6 +2578,13 @@ class GSXArrivalAutomator:
             with self._lock:
                 if run_id != self._active_run_id:
                     return
+            try:
+                sig_opts = sig[1] if isinstance(sig, tuple) and len(sig) > 1 else ()
+                if 0 <= choice_idx < len(sig_opts) and self._is_forbidden_couatl_ui_option(str(sig_opts[choice_idx] or "")):
+                    self._log(f"BLOCKED forbidden Couatl desktop UI option [{choice_idx}] '{sig_opts[choice_idx]}' ({reason})")
+                    return
+            except Exception:
+                pass
             self._log(f"Selecting menu choice [{choice_idx}] ({reason})")
             # IMPORTANT: Never send -1.0 before choice_idx! In GSX Pro (FSDT_GSX_Panel.js),
             # -1 is CHOICE_CANCEL which immediately dismisses the active menu in Couatl!
@@ -1337,47 +2614,16 @@ class GSXArrivalAutomator:
                     sc.set_lvar("L:FSDT_GSX_MENU_CHOICE", -1.0)
                 sc.set_lvar("L:FSDT_GSX_MENU_OPEN", 0.0)
             if post_warp:
-                mf_watch = os.path.join(panel_dir, "menu") if panel_dir else None
-                last_mf_mtime = 0.0
-                if mf_watch and os.path.exists(mf_watch):
-                    try:
-                        last_mf_mtime = os.path.getmtime(mf_watch)
-                    except Exception:
-                        pass
-                pw_start = time.time()
-                next_pulse_idx = 0
-                pulse_times = (0.45, 0.95, 1.55, 2.25, 3.05)
-                while (time.time() - pw_start) < 3.25:
-                    time.sleep(0.12)
-                    with self._lock:
-                        if run_id != self._active_run_id:
-                            return
-                        self._last_finish_ts = time.time()
-                    elapsed_pw = time.time() - pw_start
-                    menu_reopened = False
-                    if mf_watch and os.path.exists(mf_watch):
-                        try:
-                            cur_m = os.path.getmtime(mf_watch)
-                            if cur_m > last_mf_mtime:
-                                last_mf_mtime = cur_m
-                                menu_reopened = True
-                        except Exception:
-                            pass
-                    gsx_lv = getattr(sc, "gsx_lvars", {}) or {}
-                    if gsx_lv.get("menu_open") == 1.0:
-                        menu_reopened = True
-                    fire_scheduled = (
-                        next_pulse_idx < len(pulse_times)
-                        and elapsed_pw >= pulse_times[next_pulse_idx]
-                    )
-                    if fire_scheduled:
-                        next_pulse_idx += 1
-                    if menu_reopened or fire_scheduled:
-                        if hasattr(sc, "close_gsx_panel"):
-                            sc.close_gsx_panel(cancel_choice=True)
-                        else:
-                            sc.set_lvar("L:FSDT_GSX_MENU_CHOICE", -1.0)
-                            sc.set_lvar("L:FSDT_GSX_MENU_OPEN", 0.0)
+                time.sleep(0.28)
+                with self._lock:
+                    if run_id != self._active_run_id:
+                        return
+                    self._last_finish_ts = time.time()
+                if hasattr(sc, "close_gsx_panel"):
+                    sc.close_gsx_panel(cancel_choice=True)
+                else:
+                    sc.set_lvar("L:FSDT_GSX_MENU_CHOICE", -1.0)
+                    sc.set_lvar("L:FSDT_GSX_MENU_OPEN", 0.0)
 
         while time.time() - start_ts < timeout_sec:
             with self._lock:
@@ -1407,6 +2653,10 @@ class GSXArrivalAutomator:
                     wait_for_mtime_after = None
                     if not first_menu_opened:
                         first_menu_opened = True
+                        cur_c_open = self.get_couatl_active_airport()
+                        with self._lock:
+                            if run_id == self._active_run_id and cur_c_open is not None:
+                                self.synced_couatl_icao = cur_c_open
                         # Refresh timeout budget once Couatl finishes loading the airport profile
                         # (e.g. `[GSX] onEnteredAirport EHAM` on distant runways like 18R).
                         start_ts = max(start_ts, time.time() - 2.0)
@@ -1436,6 +2686,8 @@ class GSXArrivalAutomator:
                             couatl_val = gsx_lv.get("couatl_started")
                             if couatl_val is not None and float(couatl_val) == 0.0 and menu_mtime <= 0.0:
                                 self._log("Couatl engine is not running in MSFS (L:FSDT_GSX_COUATL_STARTED == 0); aborting sync.")
+                                if _try_native_warp_fallback("couatl_not_running"):
+                                    return
                                 self._finish(run_id, False, "GSX PRO: COUATL NOT RUNNING", "#64748B")
                                 return
                         reopen_wait = 2.4 if (gate_clicked or last_clicked_sig is not None) else 1.1
@@ -1469,6 +2721,10 @@ class GSXArrivalAutomator:
 
             if not first_menu_opened:
                 first_menu_opened = True
+                cur_c_open = self.get_couatl_active_airport()
+                with self._lock:
+                    if run_id == self._active_run_id and cur_c_open is not None:
+                        self.synced_couatl_icao = cur_c_open
                 start_ts = max(start_ts, time.time() - 2.0)
 
             cur_sig = (title, tuple(options))
@@ -1747,12 +3003,16 @@ class GSXArrivalAutomator:
                     continue
 
             # --------------------------------------------------------------
-            # 6. SAFETY GUARD AGAINST "CUSTOMIZE AIRPORT" SUBMENU
+            # 6. SAFETY GUARD AGAINST 2-OPTION "CUSTOMIZE AIRPORT" SUBMENU
             # --------------------------------------------------------------
-            if not is_main_menu and any(re.search(r'customize\s+airport', opt, re.IGNORECASE) for _, opt in non_empty_opts):
+            if (
+                not is_main_menu
+                and len(non_empty_opts) <= 2
+                and any(re.search(r'customize\s+airport', opt, re.IGNORECASE) for _, opt in non_empty_opts)
+            ):
                 safe_idx = None
                 for idx, opt in non_empty_opts:
-                    if not re.search(r'customize', opt, re.IGNORECASE):
+                    if not re.search(r'customize', opt, re.IGNORECASE) and not self._is_forbidden_couatl_ui_option(opt):
                         safe_idx = idx
                         break
                 if safe_idx is not None and not gate_clicked:
@@ -1762,6 +3022,11 @@ class GSXArrivalAutomator:
                     continue
                 else:
                     close_gsx_menu_window(cancel_choice=True, post_warp=False)
+                    if warp and not warp_clicked:
+                        if _try_native_warp_fallback("customize_submenu_aborted"):
+                            return
+                        self._finish(run_id, False, f"GSX PRO: RETRY SYNC ({target_gate})", "#F59E0B")
+                        return
                     self._finish(run_id, True, f"GSX PRO: STAND {target_gate} SYNCED ✓", "#10B981")
                     return
 
@@ -1771,7 +3036,8 @@ class GSXArrivalAutomator:
             if not gate_clicked:
                 # 7A. Check if target gate is directly in `./menu` options
                 direct_idx = self._find_exact_gate_option(
-                    non_empty_opts, target_gate, tokens, custom_gate_label=custom_gate_label
+                    non_empty_opts, target_gate, tokens,
+                    custom_gate_label=custom_gate_label, bgl_gate_hint=bgl_gate_hint
                 )
                 if direct_idx is not None:
                     gate_clicked = True
@@ -1785,7 +3051,8 @@ class GSXArrivalAutomator:
                 # 7B. Check if target gate is in `./menu_live.html`
                 if live_opts:
                     live_idx = self._find_exact_gate_option(
-                        live_opts, target_gate, tokens, custom_gate_label=custom_gate_label
+                        live_opts, target_gate, tokens,
+                        custom_gate_label=custom_gate_label, bgl_gate_hint=bgl_gate_hint
                     )
                     if live_idx is not None:
                         gate_clicked = True
@@ -1822,13 +3089,22 @@ class GSXArrivalAutomator:
                     continue
 
                 # 7D. Overlapping MARS / Current-Stand Proximity Fallback (when `warp=True`):
-                # In GSX Pro (Couatl), if the aircraft is currently parked on `target_gate` or an overlapping
-                # MARS stand (e.g. parked at Heavy A 4 with 32.5m radius while A 41 is 21.1m away, or vice versa),
-                # GSX excludes the overlapping stand from the "Reposition Aircraft" list.
-                # If we have already drilled into the stand's group and exhausted all pages (`grp is None`),
-                # automatically hop via any available stand on the current page so GSX clears the occupied
-                # radius and immediately warps to `target_gate`.
-                if warp and not hop_done and len(visited_groups) > 0:
+                # ONLY trigger an intermediate hop when the user aircraft is genuinely parked right on/overlapping
+                # `fallback_warp_coords` (<= 55m), NEVER when parked far away (where a missing stand means
+                # Couatl wingspan-filtered it out or the stand is OSM-only!).
+                is_overlapping_current_stand = False
+                if warp and fallback_warp_coords and fallback_warp_coords[0] is not None and fallback_warp_coords[1] is not None:
+                    u_lat = getattr(sc, "user_lat", None)
+                    u_lon = getattr(sc, "user_lon", None)
+                    if u_lat is not None and u_lon is not None:
+                        try:
+                            from network import haversine
+                            if haversine(float(u_lat), float(u_lon), float(fallback_warp_coords[0]), float(fallback_warp_coords[1])) <= 55.0:
+                                is_overlapping_current_stand = True
+                        except Exception:
+                            pass
+
+                if warp and not hop_done and is_overlapping_current_stand and len(visited_groups) > 0:
                     hop_idx = None
                     hop_lbl = ""
                     for idx_h, opt_h in non_empty_opts:
@@ -1845,7 +3121,7 @@ class GSXArrivalAutomator:
                             if run_id == self._active_run_id:
                                 self.status_label = f"GSX PRO: CLEARING OVERLAP FOR {target_gate}..."
                         self._log(
-                            f"Target stand '{target_gate}' hidden by GSX proximity filter; "
+                            f"Target stand '{target_gate}' hidden by GSX proximity filter (<55m); "
                             f"selecting intermediate hop stand [{hop_idx}] '{hop_lbl}' first..."
                         )
                         select_menu_choice(hop_idx, f"Intermediate Hop Stand -> '{hop_lbl}'", cur_sig, menu_mtime)
@@ -1853,8 +3129,15 @@ class GSXArrivalAutomator:
                         continue
 
                 # 7E. If all options on the current menu page have been exhausted (`grp is None`),
-                # re-open the GSX root menu after 1.8s so we never spin idle until timeout.
-                if (now - last_action_ts) >= 1.8 and (now - last_open_attempt_ts) >= 1.5:
+                # immediately fall back to native Slew/SimVars warp when `warp=True` (`exhausted_tree_passes >= 1`),
+                # or re-open the GSX root menu after 1.8s for non-warp arrival sync.
+                exhaust_wait_s = 0.65 if warp else 1.8
+                if (now - last_action_ts) >= exhaust_wait_s and (warp or (now - last_open_attempt_ts) >= 1.5):
+                    exhausted_tree_passes += 1
+                    if warp and not warp_clicked and exhausted_tree_passes >= 1:
+                        close_gsx_menu_window(cancel_choice=True, post_warp=False)
+                        if _try_native_warp_fallback("stand_not_in_gsx_menu"):
+                            return
                     open_gsx_menu(menu_mtime)
                     time.sleep(0.06)
                     continue
@@ -1862,6 +3145,8 @@ class GSXArrivalAutomator:
             time.sleep(0.05)
 
         close_gsx_menu_window(cancel_choice=True, post_warp=False)
+        if not warp_clicked and _try_native_warp_fallback("gsx_timeout"):
+            return
         self._log(f"GSX Arrival sync timed out after {timeout_sec:.0f}s for {icao} Stand {target_gate}.")
         self._finish(run_id, False, f"GSX PRO: RETRY SYNC ({target_gate})", "#F59E0B")
 
@@ -1933,7 +3218,7 @@ class BeyondATCWatcher:
             re.IGNORECASE
         )
         self._re_taxi_to_gate = re.compile(
-            r'\[Instruction\].*?\b(?:taxi|proceed|continue|reassigned|assigned|change|expect|approved)\s+(?:to\s+|for\s+)?(?:(?:Gate|Stand|Ramp|Parking|Dock)\s+)+([A-Z]{0,4}\s*\d+[A-Z]?)\b',
+            r'\[Instruction\].*?\b(?:taxi|proceed|continue|reassigned|assigned|change|expect|approved)\s+(?:to\s+|for\s+)?(?:(?:Terminal|Apron|Pier|Concourse|North|South|East|West|Main|Cargo)\s+[A-Z0-9]{1,3}\s+)*(?:(?:Gate|Stand|Ramp|Parking|Dock)\s+)+([A-Z]{0,4}\s*\d+[A-Z]?)\b',
             re.IGNORECASE
         )
         self._re_gate_approved = re.compile(
@@ -2442,6 +3727,7 @@ class SayIntentionsWatcher:
         self.is_active: bool = False
         self._cached_flight_json: Optional[Dict[str, Any]] = None
         self._last_observed_gate: Dict[str, str] = {"departure": "", "arrival": ""}
+        self._last_json_assigned_gate: Dict[str, str] = {"departure": "", "arrival": ""}
         self._last_observed_rwy: Dict[str, str] = {"departure": "", "arrival": ""}
         self._last_observed_via: Dict[str, List[str]] = {"departure": [], "arrival": []}
         self._last_taxi_path_sig: Any = None
@@ -2464,6 +3750,27 @@ class SayIntentionsWatcher:
             tok = clean_gate_token(raw_gate)
             if tok:
                 self._last_sapi_pushed[phase] = f"{icao.strip().upper()}:{tok}"
+
+    def _mark_current_json_gate_seen(self, phase: str, icao: str):
+        """
+        Records whatever `assigned_gate` string is currently sitting in `flight.json` as already
+        observed/superseded for `phase` so a stale, un-updated `flight.json` field (e.g. SayIntentions
+        leaving `'Terminal 2 Gate E12'` in `flight.json` after SAPI / Ground ATC cleared `'Gate 10'`)
+        never ping-pongs and overwrites the active gate.
+        """
+        if phase not in ("departure", "arrival") or not icao:
+            return
+        try:
+            data = self._cached_flight_json
+            if isinstance(data, dict):
+                cf = (data.get("flight_details") or {}).get("current_flight") or {}
+                ag = str(cf.get("assigned_gate") or "").strip()
+                if ag:
+                    tok = clean_gate_token(ag)
+                    if tok:
+                        self._last_json_assigned_gate[phase] = f"{icao.strip().upper()}:{tok}"
+        except Exception:
+            pass
 
     def get_api_key(self) -> str:
         cfg_key = str(self.hub.config.settings.get("sayintentions_api_key") or "").strip()
@@ -2493,6 +3800,7 @@ class SayIntentionsWatcher:
         self._last_mtime = 0.0
         self._cached_flight_json = None
         self._last_observed_gate = {"departure": "", "arrival": ""}
+        self._last_json_assigned_gate = {"departure": "", "arrival": ""}
         self._last_observed_rwy = {"departure": "", "arrival": ""}
         self._last_observed_via = {"departure": [], "arrival": []}
         self._sapi_confirmed_gate = {"departure": "", "arrival": ""}
@@ -2752,8 +4060,12 @@ class SayIntentionsWatcher:
                         self._last_observed_rwy["departure"] = rwy_key
                         self.hub.on_external_atc_runway_detected("departure", target_icao, rwy_from_tp, GateSource.SAY_INTENTIONS)
 
-            # 2. If arrival taxi_path ends at a stand and no gate was explicitly assigned yet, detect that stand
-            elif phase == "arrival" and not str(cf.get("assigned_gate") or "").strip():
+            # 2. If arrival taxi_path ends at a stand, detect that stand when either:
+            #    - `assigned_gate` in `flight.json` is empty, OR
+            #    - `assigned_gate` in `flight.json` is stale and points >80m away from the active
+            #      ground taxi clearance endpoint (e.g. `Terminal 2 Gate E12` left in `flight.json`
+            #      while Ground cleared `taxi_path` directly to Terminal 1 Stand `10`).
+            elif phase == "arrival":
                 best_st_ref = ""
                 best_st_d = 32.0
                 for st in (chart.get("stands") or []):
@@ -2763,15 +4075,47 @@ class SayIntentionsWatcher:
                             best_st_d = d_st
                             best_st_ref = str(st.get("ref") or "").strip()
                 if best_st_ref:
-                    self.hub.on_external_atc_gate_detected(
-                        phase="arrival",
-                        icao=target_icao,
-                        raw_gate=best_st_ref,
-                        source=GateSource.SAY_INTENTIONS,
-                        lat=latn,
-                        lon=lonn,
-                        force_override=True
-                    )
+                    raw_ag = str(cf.get("assigned_gate") or "").strip()
+                    ag_is_stale = False
+                    if not raw_ag:
+                        ag_is_stale = True
+                    elif not gate_tokens_match(raw_ag, best_st_ref):
+                        ag_dist: Optional[float] = None
+                        try:
+                            if cf.get("assigned_gate_lat") and cf.get("assigned_gate_lon"):
+                                ag_dist = haversine_m(
+                                    latn, lonn,
+                                    float(cf["assigned_gate_lat"]),
+                                    float(cf["assigned_gate_lon"])
+                                )
+                        except (ValueError, TypeError):
+                            ag_dist = None
+                        if ag_dist is None and target_icao:
+                            _, ag_coords, _ = self.hub.backend.resolve_stand_in_airport_db(target_icao, raw_ag)
+                            if ag_coords and ag_coords[0] is not None and ag_coords[1] is not None:
+                                ag_dist = haversine_m(latn, lonn, float(ag_coords[0]), float(ag_coords[1]))
+                        if ag_dist is not None and ag_dist > 80.0:
+                            ag_is_stale = True
+
+                    if ag_is_stale:
+                        if raw_ag and target_icao:
+                            ag_tok = clean_gate_token(raw_ag)
+                            if ag_tok:
+                                self._last_json_assigned_gate["arrival"] = f"{target_icao}:{ag_tok}"
+                        tp_gate_key = f"{target_icao}:{clean_gate_token(best_st_ref)}"
+                        self._sapi_confirmed_gate["arrival"] = tp_gate_key
+                        self._last_observed_gate["arrival"] = tp_gate_key
+                        cur_arr_dec = self.hub.active_decision.get("arrival")
+                        if not cur_arr_dec or not gate_tokens_match(cur_arr_dec.gate_id, best_st_ref):
+                            self.hub.on_external_atc_gate_detected(
+                                phase="arrival",
+                                icao=target_icao,
+                                raw_gate=best_st_ref,
+                                source=GateSource.SAY_INTENTIONS,
+                                lat=latn,
+                                lon=lonn,
+                                force_override=True
+                            )
 
             # 3. Project taxi_path points onto taxiways in `chart` (including unnamed ways as competitors
             #    so breadcrumbs on unnamed apron taxilanes never snap sideways onto curved side-exit fillets)
@@ -2928,16 +4272,17 @@ class SayIntentionsWatcher:
                     if not msg_icao:
                         continue
 
-                    # 1. Check pilot request for a specific gate (e.g. "request taxi to gate 142")
+                    # 1. Check pilot request for a specific gate (e.g. "request taxi to Terminal 1 Gate 10")
                     if in_msg:
                         m_pil_gate = re.search(
-                            r'\brequest\s+(?:progressive\s+)?taxi\s+to\s+(?:(?:gate|stand|ramp|parking|dock)\s+)+([A-Z]{0,4}[\s_\-]*\d+[A-Z]?)\b',
+                            r'\brequest\s+(?:progressive\s+)?taxi\s+to\s+(?:(?:terminal|apron|pier|concourse|north|south|east|west|main|cargo)\s+[A-Z0-9]{1,3}\s+)*(?:(?:gate|stand|ramp|parking|dock)\s+)+([A-Z]{0,4}[\s_\-]*\d+[A-Z]?)\b',
                             in_msg,
                             re.IGNORECASE
                         )
                         if m_pil_gate:
                             g_req = m_pil_gate.group(1).strip()
                             g_req_key = f"{msg_icao}:{clean_gate_token(g_req)}"
+                            self._mark_current_json_gate_seen(msg_phase, msg_icao)
                             self._sapi_confirmed_gate[msg_phase] = g_req_key
                             self._last_observed_gate[msg_phase] = g_req_key
                             self.hub.on_external_atc_gate_detected(
@@ -2974,15 +4319,16 @@ class SayIntentionsWatcher:
                                     self._last_observed_rwy[r_phase] = rwy_key
                                     self.hub.on_external_atc_runway_detected(r_phase, r_icao, r_clean, GateSource.SAY_INTENTIONS)
 
-                    # 3. Check ATC gate assignment in outgoing_message ("taxi to Gate 142 via ...")
+                    # 3. Check ATC gate assignment in outgoing_message ("Taxi to Terminal 1 Gate 10 via ...")
                     m_gate = re.search(
-                        r'\b(?:taxi|proceed|continue|assigned|expect|approved)\s+(?:to\s+|for\s+)?(?:(?:gate|stand|ramp|parking|dock)\s+)+([A-Z]{0,4}[\s_\-]*\d+[A-Z]?)\b',
+                        r'\b(?:taxi|proceed|continue|assigned|expect|approved)\s+(?:to\s+|for\s+)?(?:(?:terminal|apron|pier|concourse|north|south|east|west|main|cargo)\s+[A-Z0-9]{1,3}\s+)*(?:(?:gate|stand|ramp|parking|dock)\s+)+([A-Z]{0,4}[\s_\-]*\d+[A-Z]?)\b',
                         out_msg,
                         re.IGNORECASE
                     )
                     if m_gate:
                         g_raw = m_gate.group(1).strip()
                         g_raw_key = f"{msg_icao}:{clean_gate_token(g_raw)}"
+                        self._mark_current_json_gate_seen(msg_phase, msg_icao)
                         self._sapi_confirmed_gate[msg_phase] = g_raw_key
                         self._last_observed_gate[msg_phase] = g_raw_key
                         self.hub.on_external_atc_gate_detected(
@@ -3022,6 +4368,7 @@ class SayIntentionsWatcher:
                 self._last_mtime = 0.0
                 self._cached_flight_json = None
                 self._last_observed_gate = {"departure": "", "arrival": ""}
+                self._last_json_assigned_gate = {"departure": "", "arrival": ""}
                 self._last_observed_rwy = {"departure": "", "arrival": ""}
                 self._last_observed_via = {"departure": [], "arrival": []}
                 self._last_taxi_path_sig = None
@@ -3074,6 +4421,7 @@ class SayIntentionsWatcher:
                 # A new flight just started in SayIntentions (`flight.json`); reset confirmation
                 # state so GateFinder pushes its smart arrival stand via `sapi/assignGate` instead
                 # of letting SayIntentions' un-synced initial default stand overwrite GateFinder!
+                self._last_json_assigned_gate["arrival"] = ""
                 self._sapi_confirmed_gate["arrival"] = ""
                 self._sapi_push_attempts["arrival"] = 0
                 self._last_sapi_retry_ts = 0.0
@@ -3202,6 +4550,7 @@ class SayIntentionsWatcher:
                     obs_key = f"{target_icao}:{clean_gate_token(assigned_gate)}"
                     if cur_dec and clean_gate_token(cur_dec.gate_id) == clean_gate_token(assigned_gate):
                         # `flight.json` already matches our current gate decision -> mark confirmed!
+                        self._last_json_assigned_gate[target_phase] = obs_key
                         self._sapi_confirmed_gate[target_phase] = obs_key
                         self._last_observed_gate[target_phase] = obs_key
                     else:
@@ -3228,18 +4577,61 @@ class SayIntentionsWatcher:
                                 self._last_sapi_retry_ts = now_poll
                                 self.hub._sync_gate_to_sayintentions_on_change(cur_dec, previous_gate=None, force_sapi=True)
                         elif not (getattr(self, "_in_resync", False) and cur_dec and cur_dec.source == GateSource.USER_MANUAL):
-                            if self._last_observed_gate.get(target_phase) != obs_key:
-                                self._last_observed_gate[target_phase] = obs_key
-                                self._sapi_confirmed_gate[target_phase] = obs_key
-                                self.hub.on_external_atc_gate_detected(
-                                    phase=target_phase,
-                                    icao=target_icao,
-                                    raw_gate=assigned_gate,
-                                    source=GateSource.SAY_INTENTIONS,
-                                    lat=gate_lat,
-                                    lon=gate_lon,
-                                    force_override=True
-                                )
+                            # Only react if `assigned_gate` inside `flight.json` actually changed to a NEW value
+                            # (prevents infinite ping-pong when SAPI / `getCommsHistory` / `taxi_path` confirmed
+                            # a different gate while `flight.json` kept an older stale `assigned_gate` string).
+                            if (
+                                self._last_json_assigned_gate.get(target_phase) != obs_key
+                                and self._last_observed_gate.get(target_phase) != obs_key
+                            ):
+                                # Safety lock: if the aircraft is already parked & stationary at the active arrival
+                                # stand (<55m) and `flight.json` carries a distant stand (>100m away), never hijack
+                                # GSX mid-deboarding!
+                                parked_hijack = False
+                                if target_phase == "arrival" and cur_has_valid_gate:
+                                    sc_live = getattr(self.hub.backend, "simconnect_manager", None)
+                                    if (
+                                        sc_live
+                                        and sc_live.connected
+                                        and sc_live.user_on_ground is True
+                                        and sc_live.user_lat is not None
+                                        and sc_live.user_lon is not None
+                                        and float(sc_live.user_gs or 0.0) < 3.0
+                                        and cur_dec.lat is not None
+                                        and cur_dec.lon is not None
+                                    ):
+                                        from network import haversine
+                                        d_cur_m = haversine(
+                                            sc_live.user_lat, sc_live.user_lon,
+                                            float(cur_dec.lat), float(cur_dec.lon)
+                                        )
+                                        if d_cur_m <= 55.0:
+                                            d_new_m: Optional[float] = None
+                                            if gate_lat is not None and gate_lon is not None:
+                                                d_new_m = haversine(sc_live.user_lat, sc_live.user_lon, gate_lat, gate_lon)
+                                            else:
+                                                _, ag_c, _ = self.hub.backend.resolve_stand_in_airport_db(target_icao, assigned_gate)
+                                                if ag_c and ag_c[0] is not None and ag_c[1] is not None:
+                                                    d_new_m = haversine(
+                                                        sc_live.user_lat, sc_live.user_lon,
+                                                        float(ag_c[0]), float(ag_c[1])
+                                                    )
+                                            if d_new_m is None or d_new_m > 100.0:
+                                                parked_hijack = True
+
+                                self._last_json_assigned_gate[target_phase] = obs_key
+                                if not parked_hijack:
+                                    self._last_observed_gate[target_phase] = obs_key
+                                    self._sapi_confirmed_gate[target_phase] = obs_key
+                                    self.hub.on_external_atc_gate_detected(
+                                        phase=target_phase,
+                                        icao=target_icao,
+                                        raw_gate=assigned_gate,
+                                        source=GateSource.SAY_INTENTIONS,
+                                        lat=gate_lat,
+                                        lon=gate_lon,
+                                        force_override=True
+                                    )
 
         except Exception as exc:
             print(f"[SayIntentionsWatcher] Poll warning: {exc}")
@@ -3288,7 +4680,9 @@ class InteroperabilityHub:
         self._last_sapi_call_ts: float = 0.0
         self._gsx_watch_menu_mtime: float = 0.0
         self._couatl_err_offset: Optional[int] = None
+        self._couatl_transition_offset: Optional[int] = None
         self._last_gsx_warp_ts: float = 0.0
+        self._last_native_warp_ts: float = 0.0
         self._last_user_manual_gate_ts: float = 0.0
         self._last_ground_gps: Optional[Tuple[float, float]] = None
         self._was_airborne_for_arrival: bool = False
@@ -3410,16 +4804,20 @@ class InteroperabilityHub:
         elif source == GateSource.VATSIM_REASSIGNED:
             src_prefix = "Traffic Sync  •  "
 
-        if event_type == "GSX_WARP":
+        if event_type == "SIMCONNECT_WARP":
+            gsx_tag = "Aircraft Repositioned"
+        elif event_type == "STAND_SELECTED":
+            gsx_tag = "Gate Active"
+        elif event_type == "GSX_WARP" and gsx_installed:
             gsx_tag = "GSX Pro Reposition"
+        elif not gsx_installed:
+            gsx_tag = "Gate Active"
         elif event_type == "GSX_SYNCED" or source == GateSource.GSX_LIVE or (
             gsx_state == "SYNCED" and gate_tokens_match(getattr(self.gsx_automator, "synced_gate", ""), gate_id)
         ):
             gsx_tag = "GSX Pro Synced"
         elif event_type == "GSX_MANUAL_START" or gsx_state == "INJECTING":
             gsx_tag = "GSX Pro Active"
-        elif not gsx_installed:
-            gsx_tag = "Gate Active"
         else:
             gsx_tag = "GSX Pro Armed"
 
@@ -3539,6 +4937,10 @@ class InteroperabilityHub:
             # Avoid echoing back a gate that came from SayIntentions itself
             return
 
+        orig_source = decision.source
+        if orig_source in (GateSource.USER_MANUAL, GateSource.GSX_LIVE):
+            self.si_watcher._mark_current_json_gate_seen(decision.phase, decision.icao)
+
         if (
             self.si_watcher.is_active
             and not self.batc_watcher.is_active
@@ -3603,6 +5005,7 @@ class InteroperabilityHub:
                                         self.si_watcher._sapi_push_attempts.get("arrival", 0) + 1
                                     )
                             else:
+                                self.si_watcher._mark_current_json_gate_seen("arrival", decision.icao)
                                 self.si_watcher._sapi_confirmed_gate["arrival"] = want_key
                                 self.si_watcher._last_observed_gate["arrival"] = want_key
                                 self.si_watcher._sapi_push_attempts["arrival"] = 0
@@ -3703,11 +5106,97 @@ class InteroperabilityHub:
         via GSX Pro, GateFinder automatically updates its stand and taxi route to match.
         """
         panel_dir = self.gsx_automator._find_gsx_panel_dir()
-        couatl_err = os.path.expandvars(r"%APPDATA%\virtuali\Couatl.err")
+        if not panel_dir:
+            return
+        couatl_err = self.gsx_automator.couatl_err_path
 
-        # While GateFinder's own GSX automator is running (or within 6.0s of finishing),
+        # 0. Always watch `Couatl.err` for `[GSX] onEnteredAirport <ICAO>` transitions (even while
+        #    automator is running or within 6.0s of finishing!): if an arrival sync executed while
+        #    Couatl was still inside a neighboring airport (e.g. Almaza `HEAZ` right next to Cairo
+        #    `HECA` RWY 05C) and Couatl subsequently enters `HECA` (wiping GSX's selected gate),
+        #    immediately re-sync `HECA`'s arrival stand!
+        if couatl_err and os.path.isfile(couatl_err):
+            try:
+                sz_tr = os.path.getsize(couatl_err)
+                if self._couatl_transition_offset is None:
+                    self._couatl_transition_offset = sz_tr
+                else:
+                    if sz_tr < self._couatl_transition_offset:
+                        self._couatl_transition_offset = 0
+                    if sz_tr > self._couatl_transition_offset:
+                        with open(couatl_err, "r", encoding="utf-8", errors="ignore") as f_tr:
+                            f_tr.seek(self._couatl_transition_offset)
+                            tr_chunk = f_tr.read(sz_tr - self._couatl_transition_offset)
+                        self._couatl_transition_offset = sz_tr
+                        entered_arr_icao = ""
+                        arr_icao_want = self.get_phase_icao("arrival")
+                        for ln_tr in tr_chunk.splitlines():
+                            m_en = self.gsx_automator._re_couatl_enter.search(ln_tr)
+                            if m_en and arr_icao_want and m_en.group(1).strip().upper() == arr_icao_want:
+                                entered_arr_icao = arr_icao_want
+                        if entered_arr_icao and bool(self.config.settings.get("auto_inject_gsx", True)):
+                            should_resync = False
+                            resync_gate = ""
+                            resync_term = ""
+                            resync_batc = False
+                            with self.lock:
+                                arr_dec = self.active_decision.get("arrival")
+                                prev_c_icao = (self.gsx_automator.synced_couatl_icao or "").strip().upper()
+                                gsx_st = self.gsx_automator.state
+                                gsx_s_icao = (self.gsx_automator.synced_icao or "").strip().upper()
+                                on_arr_gnd = (
+                                    self._has_landed_at_arrival
+                                    or self._is_aircraft_on_ground_at_arrival()
+                                    or self._get_current_ground_phase() == "arrival"
+                                )
+                                if (
+                                    on_arr_gnd
+                                    and arr_dec
+                                    and arr_dec.gate_id
+                                    and arr_dec.gate_id not in ("N/A", "No Gate Found", "No Suitable Stand")
+                                    and gsx_s_icao == entered_arr_icao
+                                    and gsx_st in ("SYNCED", "INJECTING", "FAILED")
+                                    and prev_c_icao != entered_arr_icao
+                                ):
+                                    should_resync = True
+                                    resync_gate = arr_dec.gate_id
+                                    arr_dec.gsx_synced = False
+                                    fd_cur = self.backend.current_flight_data or {}
+                                    arr_apt_cur = fd_cur.get("arrival") or {}
+                                    arr_apt_cur["gsx_synced"] = False
+                                    resync_term = str(arr_apt_cur.get("terminal") or "")
+                                    resync_batc = bool(
+                                        arr_dec.source == GateSource.BEYOND_ATC
+                                        and (arr_dec.batc_handles_gsx or self._batc_gsx_arr)
+                                    )
+                                    self.state["arrival"] = HubState.GSX_INJECTING
+                                    if isinstance(self.gsx_injection_task, dict) and self.gsx_injection_task.get("phase") == "arrival":
+                                        self.gsx_injection_task["status"] = "INJECTING"
+                            if should_resync and resync_gate:
+                                self.gsx_automator._log(
+                                    f"Couatl just entered arrival airport {entered_arr_icao} "
+                                    f"(previous GSX sync ran under '{prev_c_icao or 'NONE'}'); "
+                                    f"re-syncing Stand '{resync_gate}' for {entered_arr_icao}!"
+                                )
+                                self.gsx_automator.start_arrival_sync(
+                                    icao=entered_arr_icao,
+                                    target_gate=resync_gate,
+                                    terminal_hint=resync_term,
+                                    manual=False,
+                                    initial_delay_sec=1.0,
+                                    wait_for_batc_gsx=resync_batc
+                                )
+                                return
+            except Exception:
+                pass
+
+        # While GateFinder's own GSX automator is running (or within 6.0s of finishing, or 8.0s of native SimConnect warp),
         # keep file cursors and GPS baseline synced so we never mistake our own automation/warp for an external change.
-        if self.gsx_automator._running or (time.time() - getattr(self.gsx_automator, "_last_finish_ts", 0.0)) < 6.0:
+        if (
+            self.gsx_automator._running
+            or (time.time() - getattr(self.gsx_automator, "_last_finish_ts", 0.0)) < 6.0
+            or (time.time() - getattr(self, "_last_native_warp_ts", 0.0)) < 8.0
+        ):
             if panel_dir:
                 mf = os.path.join(panel_dir, "menu")
                 if os.path.exists(mf):
@@ -3935,6 +5424,25 @@ class InteroperabilityHub:
             or self._has_landed_at_arrival
             or self._get_current_ground_phase() == "arrival"
         ):
+            couatl_apt = self.gsx_automator.get_couatl_active_airport()
+            want_icao_u = str(decision.icao or "").strip().upper()
+            if (
+                decision.source != GateSource.USER_MANUAL
+                and couatl_apt is not None
+                and want_icao_u
+                and couatl_apt != want_icao_u
+            ):
+                self.gsx_automator._log(
+                    f"Deferring immediate arrival GSX sync for {want_icao_u} Stand '{decision.gate_id}': "
+                    f"Couatl active airport is '{couatl_apt or 'NONE'}' (waiting for [GSX] onEnteredAirport {want_icao_u})."
+                )
+                self.gsx_automator.set_armed(
+                    decision.icao,
+                    decision.gate_id,
+                    note=f"GSX PRO: ARMED — WAITING FOR {want_icao_u}..."
+                )
+                return
+
             with self.lock:
                 self._was_airborne_for_arrival = False
                 self._has_landed_at_arrival = True
@@ -4006,6 +5514,7 @@ class InteroperabilityHub:
                 if task and task.get("phase") == "arrival" and task.get("status") in ("IDLE", "FAILED"):
                     task["status"] = "ARMED"
                     task.pop("touchdown_wait_ts", None)
+                    task.pop("couatl_apt_wait_ts", None)
                     self.gsx_automator.set_armed(task.get("icao", ""), task.get("target_gate", ""))
             return
 
@@ -4018,17 +5527,49 @@ class InteroperabilityHub:
         if gs_kt is not None and float(gs_kt) >= 55.0:
             return
 
+        couatl_apt = self.gsx_automator.get_couatl_active_airport()
+
         with self.lock:
             task = self.gsx_injection_task
             if not task or task.get("phase") != "arrival" or task.get("status") != "ARMED":
                 return
+            icao = task.get("icao", "")
+            icao_u = str(icao or "").strip().upper()
+            target_gate = task.get("target_gate", "")
+
+            # Wait for Couatl to finish exiting any neighboring airport (e.g. Almaza `HEAZ` on short
+            # final to Cairo `HECA` RWY 05C) and log `[GSX] onEnteredAirport <icao_u>` before opening GSX!
+            if couatl_apt is not None and icao_u and couatl_apt != icao_u:
+                now_w = time.time()
+                wait_ts = task.get("couatl_apt_wait_ts")
+                if wait_ts is None:
+                    wait_ts = now_w
+                    task["couatl_apt_wait_ts"] = wait_ts
+                    self.gsx_automator._log(
+                        f"Holding touchdown GSX sync for {icao_u} Stand '{target_gate}': "
+                        f"Couatl active airport is '{couatl_apt or 'NONE'}' (waiting for [GSX] onEnteredAirport {icao_u})..."
+                    )
+                max_wait = 60.0 if couatl_apt else 35.0
+                still_in_neighbor = (
+                    couatl_apt != ""
+                    and (d_arr_m > 3500.0 or (gs_kt is not None and float(gs_kt) >= 25.0))
+                )
+                if (now_w - wait_ts) < max_wait or (still_in_neighbor and (now_w - wait_ts) < 120.0):
+                    self._was_airborne_for_arrival = False
+                    self._has_landed_at_arrival = True
+                    self.gsx_automator.set_armed(
+                        icao_u,
+                        target_gate,
+                        note=f"GSX PRO: ARMED — WAITING FOR {icao_u}..."
+                    )
+                    return
+
+            task.pop("couatl_apt_wait_ts", None)
             dec = self.active_decision.get("arrival")
             self._was_airborne_for_arrival = False
             self._has_landed_at_arrival = True
             task["status"] = "INJECTING"
             self.state["arrival"] = HubState.GSX_INJECTING
-            icao = task.get("icao", "")
-            target_gate = task.get("target_gate", "")
             term_hint = task.get("terminal_hint", "")
             wait_batc = bool(dec and dec.source == GateSource.BEYOND_ATC and (dec.batc_handles_gsx or self._batc_gsx_arr))
 
@@ -4535,8 +6076,13 @@ class InteroperabilityHub:
 
     def reposition_aircraft_to_gate(self, phase: str, raw_gate: str) -> Optional[GateDecision]:
         """
-        Selects `raw_gate` in GateFinder AND executes GSX Pro's 'Reposition Aircraft' ->
-        'Just warp me there' flow to physically teleport/reposition the aircraft onto that stand.
+        Selects `raw_gate` in GateFinder AND physically repositions the user aircraft onto that stand:
+          1. When GSX Pro is installed AND Couatl is actively running on the ground at that airport,
+             executes GSX Pro's headless 'Reposition Aircraft' -> 'Just warp me there' flow via
+             Couatl Remote API v2 / `L:FSDT_GSX_SET_REMOTECONTROL` (with instant fallback to native
+             SimConnect Slew/SimVars ground warp if the stand is OSM-only or filtered out by GSX).
+          2. When GSX Pro is NOT installed or Couatl is not running, repositions the aircraft directly
+             via native SimConnect Slew/SimVars ground warp without any GSX messaging or flight reload.
         """
         with self.lock:
             self._last_user_manual_gate_ts = time.time()
@@ -4563,45 +6109,97 @@ class InteroperabilityHub:
                 batc_handles_gsx=False
             )
             self.active_decision[phase] = dec
-            self.state[phase] = HubState.GSX_INJECTING
             self.backend.apply_hub_gate_override(phase, resolved_gate, resolved_coords, gate_meta, GateSource.USER_MANUAL)
             self._sync_gate_to_sayintentions_on_change(dec, previous_gate=prev_gate)
 
             fd = self.backend.current_flight_data or {}
             apt = fd.get(phase) or {}
             term_hint = str(apt.get("terminal") or "")
-            tokens = parse_gsx_gate_tokens(resolved_gate)
-            if phase == "arrival" or (self.gsx_injection_task and self.gsx_injection_task.get("phase") == phase):
-                self.gsx_injection_task = {
-                    "task_id": int(time.time() * 1000),
-                    "phase": phase,
-                    "icao": icao,
-                    "target_gate": resolved_gate,
-                    "terminal_hint": term_hint,
-                    "prefix": tokens["prefix"],
-                    "number": tokens["number"],
-                    "suffix": tokens["suffix"],
-                    "search_query": tokens["search_query"],
-                    "request_follow_me": False,
-                    "status": "INJECTING"
-                }
+            stand_hdg = None
+            if hasattr(self.backend, "resolve_stand_heading"):
+                stand_hdg = self.backend.resolve_stand_heading(
+                    icao, resolved_gate, lat=lat, lon=lon, apt=apt, gate_meta=gate_meta
+                )
+            elif isinstance(gate_meta, dict) and gate_meta.get("heading") is not None:
+                stand_hdg = gate_meta.get("heading")
+            bgl_raw_hint = (
+                str(gate_meta.get("raw_name") or "").strip()
+                if isinstance(gate_meta, dict) and gate_meta.get("raw_name")
+                else None
+            )
 
-        self.gsx_automator.start_arrival_sync(
-            icao=icao,
-            target_gate=resolved_gate,
-            terminal_hint=term_hint,
-            manual=True,
-            initial_delay_sec=0.0,
-            wait_for_batc_gsx=False,
-            warp=True
-        )
-        self._emit_gate_toast(
-            phase=phase,
-            icao=icao,
-            gate_id=resolved_gate,
-            source=GateSource.USER_MANUAL,
-            event_type="GSX_WARP"
-        )
+            sc = getattr(self.backend, "simconnect_manager", None)
+            gsx_installed = self.gsx_automator.is_gsx_installed()
+            couatl_proc = is_process_running_win32((
+                "couatl64_msfs2024.exe", "couatl64_msfs.exe", "couatl64.exe", "couatl.exe"
+            ))
+            couatl_lvar_ok = bool(
+                sc and sc.connected and float((getattr(sc, "gsx_lvars", {}) or {}).get("couatl_started", 0.0) or 0.0) > 0.0
+            )
+            can_phys_warp = True
+            if sc and hasattr(sc, "can_warp_user_aircraft_to") and lat is not None and lon is not None:
+                can_phys_warp, _ = sc.can_warp_user_aircraft_to(lat, lon)
+            elif not sc or not sc.connected or self._is_airborne_now():
+                can_phys_warp = False
+
+            use_gsx_warp = bool(gsx_installed and (couatl_proc or couatl_lvar_ok) and can_phys_warp)
+            if use_gsx_warp:
+                self.state[phase] = HubState.GSX_INJECTING
+                tokens = parse_gsx_gate_tokens(resolved_gate)
+                if phase == "arrival" or (self.gsx_injection_task and self.gsx_injection_task.get("phase") == phase):
+                    self.gsx_injection_task = {
+                        "task_id": int(time.time() * 1000),
+                        "phase": phase,
+                        "icao": icao,
+                        "target_gate": resolved_gate,
+                        "terminal_hint": term_hint,
+                        "prefix": tokens["prefix"],
+                        "number": tokens["number"],
+                        "suffix": tokens["suffix"],
+                        "search_query": tokens["search_query"],
+                        "request_follow_me": False,
+                        "status": "INJECTING"
+                    }
+            else:
+                self.state[phase] = HubState.GATE_LOCKED
+                if not gsx_installed:
+                    self.gsx_automator.set_not_installed()
+
+        if use_gsx_warp:
+            self.gsx_automator.start_arrival_sync(
+                icao=icao,
+                target_gate=resolved_gate,
+                terminal_hint=term_hint,
+                manual=True,
+                initial_delay_sec=0.0,
+                wait_for_batc_gsx=False,
+                warp=True,
+                fallback_warp_coords=(lat, lon, stand_hdg),
+                bgl_gate_hint=bgl_raw_hint
+            )
+            self._emit_gate_toast(
+                phase=phase,
+                icao=icao,
+                gate_id=resolved_gate,
+                source=GateSource.USER_MANUAL,
+                event_type="GSX_WARP"
+            )
+        else:
+            warped_native = False
+            if sc and hasattr(sc, "warp_user_aircraft") and lat is not None and lon is not None:
+                warped_native = bool(sc.warp_user_aircraft(lat, lon, heading=stand_hdg))
+                if warped_native:
+                    self._last_native_warp_ts = time.time()
+                    self._last_ground_gps = (float(lat), float(lon))
+            if not warped_native and phase == "arrival":
+                self._queue_gsx_injection_on_change(dec, previous_gate=prev_gate)
+            self._emit_gate_toast(
+                phase=phase,
+                icao=icao,
+                gate_id=resolved_gate,
+                source=GateSource.USER_MANUAL,
+                event_type="SIMCONNECT_WARP" if warped_native else "STAND_SELECTED"
+            )
         return dec
 
     def _apply_gate_decision(self, phase: str, icao: str, gate_id: str,

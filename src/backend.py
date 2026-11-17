@@ -32,6 +32,8 @@ from SimConnect.scdefs import (
     DATATYPE_FLOAT64,
     DATATYPE_INT32,
     DATATYPE_STRING256,
+    DATATYPE_INITPOSITION,
+    DATA_INITPOSITION,
     DATA_REQUEST_FLAG_CHANGED,
     DATA_REQUEST_FLAG_TAGGED,
 )
@@ -2116,6 +2118,12 @@ class SimConnectManager:
         self.user_atc_airline = ""
         self.user_livery_name = ""
         self.user_camera_state = None
+        self.user_alt_ft = None
+        self.user_ground_alt_ft = None
+        self.user_static_cg_ft = None
+        self.user_static_pitch_deg = None
+        self.user_strut_cg_ft = None
+        self.user_is_slew = False
         self._tarmac_anchor_coords = None
         self._tarmac_stable_since = None
         self.tarmac_stable_duration = 0.0
@@ -2136,6 +2144,10 @@ class SimConnectManager:
         self._event_write_queue = []
         self._lvar_def_ids = {}
         self._lvar_next_def_id = 900
+        self._user_initpos_def_id = None
+        self._user_warp_pos_def_id = None
+        self._pending_user_warp = None
+        self._active_slew_warp = None
         self.gsx_lvars = {
             "couatl_started": 0.0,
             "couatl_alive": 0.0,
@@ -2144,6 +2156,7 @@ class SimConnectManager:
             "search_gen": 0.0,
         }
         self.gsx_dd = None
+        self.user_dd = None
         self._msfs_was_running = False
         self._sim_quit_received = False
         self._last_proc_alive_check = 0.0
@@ -2162,6 +2175,9 @@ class SimConnectManager:
         self.connected = False
         self.user_dd = None
         self.gsx_dd = None
+        self._user_initpos_def_id = None
+        self._user_warp_pos_def_id = None
+        self._active_slew_warp = None
         if self.sm is not None:
             try:
                 self.sm.Close()
@@ -2296,18 +2312,244 @@ class SimConnectManager:
             batch.append(("L:FSDT_GSX_SEARCH_GEN", next_gen))
         self.set_lvars_batch(batch)
 
+    def can_warp_user_aircraft_to(self, lat, lon, max_dist_m: float = 25000.0):
+        if not self.connected or not self.sm:
+            return False, "simconnect_disconnected"
+        if lat is None or lon is None:
+            return False, "missing_coords"
+        if self.in_menu:
+            return False, "in_menu"
+        if self.user_on_ground is False:
+            return False, "airborne"
+        if self.user_lat is not None and self.user_lon is not None:
+            dist_m = self._haversine(self.user_lat, self.user_lon, float(lat), float(lon))
+            if dist_m > float(max_dist_m):
+                return False, f"too_far ({dist_m / 1000.0:.1f} km)"
+        return True, "ok"
+
+    def warp_user_aircraft(self, lat, lon, heading=None, max_dist_m: float = 25000.0) -> bool:
+        """
+        Queues a thread-safe, zero-reset native SimConnect Slew/Freeze + SimVar ground teleport
+        onto `(lat, lon)` aligned to `heading` (degrees true), avoiding `SIMCONNECT_DATA_INITPOSITION`
+        so MSFS does NOT fire `SimStop`/`SimStart` or reset complex WASM aircraft systems.
+        """
+        ok, reason = self.can_warp_user_aircraft_to(lat, lon, max_dist_m=max_dist_m)
+        if not ok:
+            self._log(f"Native SimConnect warp skipped ({reason}) for target=({lat}, {lon}).")
+            return False
+        t_lat = float(lat)
+        t_lon = float(lon)
+        t_hdg = (float(heading) % 360.0) if heading is not None else float(self.user_hdg or 0.0)
+        try:
+            if self.backend.config.settings.get("auto_clear_ai", True):
+                self._query_and_clear_gate((t_lat, t_lon), radius=250)
+        except Exception:
+            pass
+        with self.lock:
+            self._pending_user_warp = (t_lat, t_lon, t_hdg)
+        return True
+
+    def _ensure_user_warp_pos_def(self) -> int:
+        def_id = self._user_warp_pos_def_id
+        if def_id is None:
+            def_id = self._lvar_next_def_id
+            self._lvar_next_def_id += 1
+            warp_fields = [
+                ("PLANE LATITUDE", "degrees"),
+                ("PLANE LONGITUDE", "degrees"),
+                ("PLANE ALTITUDE", "feet"),
+                ("PLANE HEADING DEGREES TRUE", "degrees"),
+                ("PLANE PITCH DEGREES", "degrees"),
+                ("PLANE BANK DEGREES", "degrees"),
+                ("VELOCITY BODY X", "feet per second"),
+                ("VELOCITY BODY Y", "feet per second"),
+                ("VELOCITY BODY Z", "feet per second"),
+            ]
+            for idx_w, (sv_name, sv_unit) in enumerate(warp_fields):
+                self.sm.AddToDataDefinition(def_id, sv_name, sv_unit, DATATYPE_FLOAT64, 0, idx_w)
+            self._user_warp_pos_def_id = def_id
+        return def_id
+
+    def _write_user_warp_simvars(self, w_lat: float, w_lon: float, w_alt_ft: float, w_hdg: float, w_pitch: float):
+        import ctypes
+        def_id = self._ensure_user_warp_pos_def()
+        vec = (ctypes.c_double * 9)(
+            float(w_lat),
+            float(w_lon),
+            float(w_alt_ft),
+            float(w_hdg),
+            float(w_pitch),
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        )
+        self.sm.SetDataOnSimObject(
+            def_id,
+            OBJECT_ID_USER,
+            0,
+            0,
+            ctypes.sizeof(vec),
+            ctypes.cast(ctypes.byref(vec), ctypes.c_void_p)
+        )
+
+    def _release_slew_warp_freeze(self, was_slew: bool):
+        for ev_n, ev_v in (
+            ("FREEZE_ATTITUDE_SET", 0),
+            ("FREEZE_LATITUDE_LONGITUDE_SET", 0),
+        ):
+            try:
+                self.sm.send_event(ev_n, ev_v)
+            except Exception:
+                pass
+        if not was_slew:
+            try:
+                self.sm.send_event("SLEW_OFF", 0)
+            except Exception:
+                pass
+
     def _flush_lvar_writes(self):
         if not self.connected or not self.sm:
             return
         with self.lock:
-            if not self._lvar_write_queue and not self._event_write_queue:
+            has_work = bool(
+                self._lvar_write_queue
+                or self._event_write_queue
+                or self._pending_user_warp is not None
+                or self._active_slew_warp is not None
+            )
+            if not has_work:
                 return
             pending = list(self._lvar_write_queue)
             self._lvar_write_queue.clear()
             pending_events = list(self._event_write_queue)
             self._event_write_queue.clear()
+            pending_warp = self._pending_user_warp
+            self._pending_user_warp = None
 
         import ctypes
+        # Stage 0: Immediate non-reset Slew/Freeze coordinate & attitude injection (< 30ms)
+        if pending_warp is not None:
+            if self._active_slew_warp is not None:
+                self._release_slew_warp_freeze(bool(self._active_slew_warp.get("was_slew", False)))
+                self._active_slew_warp = None
+            w_lat, w_lon, w_hdg = pending_warp
+            was_slew = bool(self.user_is_slew)
+            strut_cg = self.user_strut_cg_ft
+            if strut_cg is not None and 1.5 <= float(strut_cg) <= 35.0:
+                cg_ft = float(strut_cg)
+            elif self.user_static_cg_ft is not None and 1.5 <= float(self.user_static_cg_ft) <= 35.0:
+                cg_ft = float(self.user_static_cg_ft)
+            else:
+                cg_ft = 9.5
+            st_pitch = max(-5.0, min(5.0, float(self.user_static_pitch_deg or 0.0)))
+            if self.user_ground_alt_ft is not None:
+                init_alt_ft = float(self.user_ground_alt_ft) + cg_ft + 0.12
+            elif self.user_alt_ft is not None:
+                init_alt_ft = float(self.user_alt_ft) + 0.12
+            else:
+                init_alt_ft = cg_ft + 10.0
+
+            try:
+                if not was_slew:
+                    try:
+                        self.sm.send_event("SLEW_ON", 1)
+                    except Exception:
+                        pass
+                for ev_n, ev_v in (
+                    ("FREEZE_LATITUDE_LONGITUDE_SET", 1),
+                    ("FREEZE_ATTITUDE_SET", 1),
+                ):
+                    try:
+                        self.sm.send_event(ev_n, ev_v)
+                    except Exception:
+                        pass
+
+                self._write_user_warp_simvars(w_lat, w_lon, init_alt_ft, w_hdg, st_pitch)
+                self.user_lat = float(w_lat)
+                self.user_lon = float(w_lon)
+                self.user_hdg = float(w_hdg)
+                self.user_on_ground = True
+                self.user_gs = 0.0
+                self._active_slew_warp = {
+                    "lat": float(w_lat),
+                    "lon": float(w_lon),
+                    "hdg": float(w_hdg),
+                    "cg_ft": float(cg_ft),
+                    "pitch": float(st_pitch),
+                    "init_alt_ft": float(init_alt_ft),
+                    "was_slew": was_slew,
+                    "ts": time.time(),
+                }
+            except Exception as slew_err:
+                self._release_slew_warp_freeze(was_slew)
+                self._active_slew_warp = None
+                self._log(f"Slew SimVar warp failed ({slew_err}); falling back to DATA_INITPOSITION.")
+                try:
+                    def_id = self._user_initpos_def_id
+                    if def_id is None:
+                        def_id = self._lvar_next_def_id
+                        self._lvar_next_def_id += 1
+                        self.sm.AddToDataDefinition(def_id, "Initial Position", None, DATATYPE_INITPOSITION, 0, 0)
+                        self._user_initpos_def_id = def_id
+                    init_pos = DATA_INITPOSITION()
+                    init_pos.Latitude = float(w_lat)
+                    init_pos.Longitude = float(w_lon)
+                    init_pos.Altitude = 0.0
+                    init_pos.Pitch = 0.0
+                    init_pos.Bank = 0.0
+                    init_pos.Heading = float(w_hdg)
+                    init_pos.OnGround = 1
+                    init_pos.Airspeed = 0
+                    self.sm.SetDataOnSimObject(
+                        def_id,
+                        OBJECT_ID_USER,
+                        0,
+                        0,
+                        ctypes.sizeof(init_pos),
+                        ctypes.cast(ctypes.byref(init_pos), ctypes.c_void_p)
+                    )
+                    self.user_lat = float(w_lat)
+                    self.user_lon = float(w_lon)
+                    self.user_hdg = float(w_hdg)
+                    self.user_on_ground = True
+                    self.user_gs = 0.0
+                except Exception as e:
+                    self._log(f"Native SimConnect user warp fallback failed for ({w_lat}, {w_lon}, hdg={w_hdg}): {e}")
+
+        # Stage 1: Settle exact custom-scenery ground elevation (~65ms after Stage 0) and release Slew/Freeze
+        elif self._active_slew_warp is not None:
+            sw = self._active_slew_warp
+            if (time.time() - sw["ts"]) >= 0.065:
+                self._active_slew_warp = None
+                w_lat = sw["lat"]
+                w_lon = sw["lon"]
+                w_hdg = sw["hdg"]
+                cg_ft = sw["cg_ft"]
+                st_pitch = sw["pitch"]
+                was_slew = sw["was_slew"]
+                live_gnd = None
+                u_dd = getattr(self, "user_dd", None)
+                if u_dd and getattr(u_dd, "simdata", None):
+                    live_gnd = u_dd.simdata.get("GROUND ALTITUDE")
+                if live_gnd is None:
+                    live_gnd = self.user_ground_alt_ft
+                settled_alt_ft = (float(live_gnd) + cg_ft + 0.03) if live_gnd is not None else sw["init_alt_ft"]
+                try:
+                    self._write_user_warp_simvars(w_lat, w_lon, settled_alt_ft, w_hdg, st_pitch)
+                except Exception as st_err:
+                    self._log(f"Slew SimVar ground-settle warning: {st_err}")
+                finally:
+                    self._release_slew_warp_freeze(was_slew)
+                self.user_lat = float(w_lat)
+                self.user_lon = float(w_lon)
+                self.user_hdg = float(w_hdg)
+                self.user_on_ground = True
+                self.user_gs = 0.0
+                self._log(
+                    f"[SimConnect Slew Warp] Repositioned user aircraft seamlessly to "
+                    f"lat={w_lat:.6f}, lon={w_lon:.6f}, alt={settled_alt_ft:.1f}ft, hdg={w_hdg:.1f}° (no flight reset)"
+                )
         for lvar_name, val in pending:
             try:
                 def_id = self._lvar_def_ids.get(lvar_name)
@@ -2682,6 +2924,12 @@ class SimConnectManager:
                         except Exception:
                             pass
                     DataDefinition._instances.clear()
+                    try:
+                        from SimConnect import datadef as _sc_datadef
+                        if hasattr(_sc_datadef, "_event_ids"):
+                            _sc_datadef._event_ids.clear()
+                    except Exception:
+                        pass
                     self._sim_quit_received = False
                     self.sm = SC(name="GateFinder V2.0")
                     self.connected = True
@@ -2712,9 +2960,14 @@ class SimConnectManager:
                     user_simvars = [
                         {"name": "PLANE LATITUDE", "units": "degrees"},
                         {"name": "PLANE LONGITUDE", "units": "degrees"},
+                        {"name": "PLANE ALTITUDE", "units": "feet"},
+                        {"name": "GROUND ALTITUDE", "units": "feet"},
+                        {"name": "STATIC CG TO GROUND", "units": "feet"},
+                        {"name": "STATIC PITCH", "units": "degrees"},
                         {"name": "PLANE HEADING DEGREES TRUE", "units": "degrees"},
                         {"name": "GROUND VELOCITY", "units": "knots"},
                         {"name": "SIM ON GROUND", "units": "bool"},
+                        {"name": "IS SLEW ACTIVE", "units": "bool"},
                         {"name": "GENERAL ENG COMBUSTION:1", "units": "bool"},
                         {"name": "GENERAL ENG COMBUSTION:2", "units": "bool"},
                         {"name": "WING SPAN", "units": "feet"},
@@ -2723,6 +2976,9 @@ class SimConnectManager:
                     self.user_dd = self.sm.subscribe_simdata(user_simvars, period=PERIOD_SIM_FRAME, interval=4)
                     self._lvar_def_ids = {}
                     self._lvar_next_def_id = 900
+                    self._user_initpos_def_id = None
+                    self._user_warp_pos_def_id = None
+                    self._active_slew_warp = None
                     try:
                         ac_str_defs = [
                             ("TITLE", None, DATATYPE_STRING256),
@@ -2851,10 +3107,25 @@ class SimConnectManager:
                 if self.user_dd and self.user_dd.simdata:
                     raw_lat = self.user_dd.simdata.get("PLANE LATITUDE")
                     raw_lon = self.user_dd.simdata.get("PLANE LONGITUDE")
+                    raw_alt = self.user_dd.simdata.get("PLANE ALTITUDE")
+                    raw_gnd = self.user_dd.simdata.get("GROUND ALTITUDE")
+                    raw_scg = self.user_dd.simdata.get("STATIC CG TO GROUND")
+                    raw_spitch = self.user_dd.simdata.get("STATIC PITCH")
                     raw_hdg = self.user_dd.simdata.get("PLANE HEADING DEGREES TRUE")
                     raw_gs = self.user_dd.simdata.get("GROUND VELOCITY")
                     og = self.user_dd.simdata.get("SIM ON GROUND")
                     og_bool = bool(og) if og is not None else None
+                    raw_slew = self.user_dd.simdata.get("IS SLEW ACTIVE")
+                    slew_bool = bool(raw_slew) if raw_slew is not None else False
+                    self.user_is_slew = slew_bool
+                    if raw_alt is not None:
+                        self.user_alt_ft = float(raw_alt)
+                    if raw_gnd is not None:
+                        self.user_ground_alt_ft = float(raw_gnd)
+                    if raw_scg is not None and 0.5 <= float(raw_scg) <= 45.0:
+                        self.user_static_cg_ft = float(raw_scg)
+                    if raw_spitch is not None and -15.0 <= float(raw_spitch) <= 15.0:
+                        self.user_static_pitch_deg = float(raw_spitch)
                     eng1 = self.user_dd.simdata.get("GENERAL ENG COMBUSTION:1")
                     eng2 = self.user_dd.simdata.get("GENERAL ENG COMBUSTION:2")
                     if eng1 is not None or eng2 is not None:
@@ -2871,6 +3142,18 @@ class SimConnectManager:
                             pass
 
                     gs_val = float(raw_gs or 0.0)
+                    if (
+                        og_bool is True
+                        and not slew_bool
+                        and self._active_slew_warp is None
+                        and gs_val <= 5.0
+                        and raw_alt is not None
+                        and raw_gnd is not None
+                    ):
+                        strut_diff = float(raw_alt) - float(raw_gnd)
+                        if 1.5 <= strut_diff <= 35.0:
+                            self.user_strut_cg_ft = strut_diff
+
                     raw_cam = self.user_dd.simdata.get("CAMERA STATE")
                     cam_state = int(round(float(raw_cam))) if raw_cam is not None else None
                     self.user_camera_state = cam_state
@@ -2880,7 +3163,7 @@ class SimConnectManager:
                     #   Pre-Flight Cinematic (14), or MSFS 2024 Menu/Briefing (24..35).
                     # - Active flight/tarmac cameras (including ChasePlane & Walkaround) are 2..9 and 21.
                     # - MSFS 2024 World Map / Menu also parks the preview SimObject at KBFI (Boeing Field, 47.53, -122.30) or (0, 0) / (0, 90).
-                    # - Or SIM ON GROUND is False while stationary/slow (< 35 kt) with engines off.
+                    # - Or SIM ON GROUND is False while stationary/slow (< 35 kt) with engines off (unless Slew/Warp is active).
                     is_menu_cam = bool(cam_state is not None and (cam_state == 11 or (12 <= cam_state <= 20) or cam_state >= 22))
                     is_kbfi_staging = False
                     if raw_lat is not None and raw_lon is not None:
@@ -2900,7 +3183,12 @@ class SimConnectManager:
                         or (abs(float(raw_lat)) < 0.05 and (abs(float(raw_lon)) < 0.05 or abs(abs(float(raw_lon)) - 90.0) < 0.05))
                         or is_kbfi_staging
                     )
-                    is_menu_state = bool(is_dummy_coords or is_menu_cam or (og_bool is False and gs_val < 35.0 and not eng_running))
+                    is_slew_or_warp = bool(slew_bool or self._active_slew_warp is not None)
+                    is_menu_state = bool(
+                        is_dummy_coords
+                        or is_menu_cam
+                        or (og_bool is False and not is_slew_or_warp and gs_val < 35.0 and not eng_running)
+                    )
                     self.in_menu = is_menu_state
                     # Pre-warm GPS airport resolution in background ONLY when stationary/slow on ground or during MSFS tarmac intro camera
                     if (
@@ -2944,7 +3232,7 @@ class SimConnectManager:
                         self.user_lon = raw_lon
                         self.user_hdg = raw_hdg
                         self.user_gs = gs_val
-                        self.user_on_ground = og_bool
+                        self.user_on_ground = True if self._active_slew_warp is not None else og_bool
                         self.user_engines_running = eng_running
                         if (
                             og_bool is True
@@ -2982,7 +3270,10 @@ class SimConnectManager:
                     self.tarmac_stable_duration = 0.0
 
                 self._tick()
-                time.sleep(0.03 if (self.user_on_ground is not False and not self.in_menu) else 0.08)
+                if self._active_slew_warp is not None:
+                    time.sleep(0.015)
+                else:
+                    time.sleep(0.03 if (self.user_on_ground is not False and not self.in_menu) else 0.08)
             except Exception as e:
                 self._log(f"Exception in run loop: {e}")
                 self.connected = False
@@ -10231,6 +10522,8 @@ class GateFinderBackend:
                             "name": s_ref,
                             "lat": best_st.get("lat"),
                             "lon": best_st.get("lon"),
+                            "heading": best_st.get("heading"),
+                            "terminal": best_st.get("terminal", ""),
                             "has_jetway": best_st.get("has_jetway", True),
                             "wingspan": best_st.get("wingspan", 999.0)
                         }
@@ -10269,6 +10562,8 @@ class GateFinderBackend:
                                         "name": s_ref,
                                         "lat": st.get("lat"),
                                         "lon": st.get("lon"),
+                                        "heading": st.get("heading"),
+                                        "terminal": st.get("terminal", ""),
                                         "has_jetway": st.get("has_jetway", True),
                                         "wingspan": st.get("wingspan", 999.0)
                                     }
@@ -10281,6 +10576,78 @@ class GateFinderBackend:
         pretty_label = re.sub(r'[\s_\-]+NONE$', '', pretty_label, flags=re.IGNORECASE).strip() or str(raw_gate).strip()
         fb_coords = (fallback_lat, fallback_lon) if (fallback_lat is not None and fallback_lon is not None) else None
         return pretty_label, fb_coords, {"name": pretty_label, "lat": fallback_lat, "lon": fallback_lon}
+
+    def resolve_stand_heading(self, icao, gate_id, lat=None, lon=None, apt=None, gate_meta=None):
+        """
+        Resolves the true parking heading (degrees 0..360) for `(icao, gate_id)` from
+        `gate_meta`, `apt`, `coherent_airports`, or `chart_data['stands']`.
+        """
+        if isinstance(gate_meta, dict) and gate_meta.get("heading") is not None:
+            try:
+                return float(gate_meta["heading"]) % 360.0
+            except Exception:
+                pass
+        icao_u = str(icao or "").strip().upper()
+        target_tok = clean_gate_token(str(gate_id or ""))
+        coherent_map = getattr(self, "coherent_airports", {}) or {}
+        for db in (coherent_map.get(icao_u), self.data.get(icao_u), self.builtin_data.get(icao_u)):
+            if not db:
+                continue
+            for al_list in db.values():
+                for g in al_list:
+                    if g.get("heading") is None:
+                        continue
+                    g_tok = clean_gate_token(g.get("name", ""))
+                    r_tok = clean_gate_token(g.get("raw_name", ""))
+                    o_tok = clean_gate_token(g.get("osm_ref", ""))
+                    if target_tok and (
+                        (g_tok and gate_tokens_match(g_tok, target_tok))
+                        or (r_tok and gate_tokens_match(r_tok, target_tok))
+                        or (o_tok and gate_tokens_match(o_tok, target_tok))
+                    ):
+                        try:
+                            return float(g["heading"]) % 360.0
+                        except Exception:
+                            pass
+
+        chart_candidates = []
+        if isinstance(apt, dict) and apt.get("chart_data"):
+            chart_candidates.append(apt["chart_data"])
+        if self.current_flight_data:
+            for ph in ("departure", "arrival"):
+                ph_apt = self.current_flight_data.get(ph) or {}
+                if ph_apt.get("icao") == icao_u and ph_apt.get("chart_data"):
+                    if ph_apt["chart_data"] not in chart_candidates:
+                        chart_candidates.append(ph_apt["chart_data"])
+
+        best_prox_hdg = None
+        best_prox_d = 18.0
+        for ch in chart_candidates:
+            for st in (ch.get("stands") or []):
+                if st.get("heading") is None:
+                    continue
+                s_tok = clean_gate_token(str(st.get("ref") or ""))
+                if target_tok and s_tok and gate_tokens_match(s_tok, target_tok):
+                    try:
+                        return float(st["heading"]) % 360.0
+                    except Exception:
+                        pass
+                if lat is not None and lon is not None and st.get("lat") is not None and st.get("lon") is not None:
+                    d = haversine(float(lat), float(lon), float(st["lat"]), float(st["lon"]))
+                    if d < best_prox_d:
+                        best_prox_d = d
+                        try:
+                            best_prox_hdg = float(st["heading"]) % 360.0
+                        except Exception:
+                            pass
+        if best_prox_hdg is not None:
+            return best_prox_hdg
+        if isinstance(apt, dict) and apt.get("heading") is not None:
+            try:
+                return float(apt["heading"]) % 360.0
+            except Exception:
+                pass
+        return None
 
     def apply_hub_gate_override(self, phase, gate_id, coords, gate_meta=None, source=None):
         """
@@ -10311,8 +10678,14 @@ class GateFinderBackend:
                 apt["has_jetway"] = bool(gate_meta["has_jetway"])
             if gate_meta.get("wingspan"):
                 apt["max_wingspan"] = float(gate_meta["wingspan"])
-            if "heading" in gate_meta:
+            if "heading" in gate_meta and gate_meta["heading"] is not None:
                 apt["heading"] = gate_meta["heading"]
+            else:
+                res_hdg = self.resolve_stand_heading(
+                    apt.get("icao"), gate_id, lat=apt.get("lat"), lon=apt.get("lon"), apt=apt, gate_meta=gate_meta
+                )
+                if res_hdg is not None:
+                    apt["heading"] = res_hdg
             if "no_pushback" in gate_meta:
                 apt["no_pushback"] = bool(gate_meta["no_pushback"])
 
@@ -10847,7 +11220,7 @@ class GateFinderBackend:
             fd["aircraft_version"] = re.sub(r"\s*•\s*", " - ", str(fd["aircraft_version"]))
         fd["camaieu_palette"] = self.get_airline_camaieu_palette(al_code_cam)
         fd["default_mismatch_action"] = str(self.config.settings.get("default_mismatch_action", "ask") or "ask")
-        fd["app_version"] = "2.0.8"
+        fd["app_version"] = "2.1.0"
         return fd
 
     def scan_gsx_profiles(self):
@@ -11108,7 +11481,7 @@ class GateFinderBackend:
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <title>GateFinder V2.0.8 - Live Web EFB</title>
+    <title>GateFinder V2.1.0 - Live Web EFB</title>
     <link rel="stylesheet" href="/GateFinderPanel.css?v=44" />
     <style>
         html, body {
@@ -11454,11 +11827,11 @@ class GateFinderBackend:
             display: none !important;
         }
     </style>
-    <script type="text/javascript" src="/GateFinderPanel.js?v=208"></script>
+    <script type="text/javascript" src="/GateFinderPanel.js?v=210"></script>
 </head>
 <body class="border-box color-white">
     <gsx-gatefinder-panel>
-        <ingame-ui id="GSX_GateFinder" panel-id="PANEL_GATEFINDER" title="GATEFINDER V2.0.8">
+        <ingame-ui id="GSX_GateFinder" panel-id="PANEL_GATEFINDER" title="GATEFINDER V2.1.0">
             <div id="MainDisplay">
                 <div id="StatusMessage" class="status-message-box">
                     <h2 id="StatusTitle" class="status-title">Awaiting Flight Data</h2>
@@ -11718,7 +12091,7 @@ class GateFinderBackend:
                             raw_bytes = f.read()
                         if fname.endswith('.html'):
                             ts_b = str(int(time.time())).encode('ascii')
-                            raw_bytes = raw_bytes.replace(b'?v=208', b'?v=' + ts_b).replace(b'?v=207', b'?v=' + ts_b).replace(b'?v=206', b'?v=' + ts_b).replace(b'?v=205', b'?v=' + ts_b).replace(b'?v=204', b'?v=' + ts_b).replace(b'?v=203', b'?v=' + ts_b)
+                            raw_bytes = raw_bytes.replace(b'?v=210', b'?v=' + ts_b).replace(b'?v=209', b'?v=' + ts_b).replace(b'?v=208', b'?v=' + ts_b).replace(b'?v=207', b'?v=' + ts_b).replace(b'?v=206', b'?v=' + ts_b).replace(b'?v=205', b'?v=' + ts_b).replace(b'?v=204', b'?v=' + ts_b).replace(b'?v=203', b'?v=' + ts_b)
                         self.wfile.write(raw_bytes)
                         return
 
